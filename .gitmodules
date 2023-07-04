@@ -1,0 +1,3 @@
+[submodule "vendor/ContactPose"]
+	path = vendor/ContactPose
+	url = git@github.com:facebookresearch/ContactPose.git

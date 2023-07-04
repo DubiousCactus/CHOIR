@@ -14,7 +14,7 @@ transforming it may be extended through class inheritance in a specific dataset 
 
 
 import abc
-from typing import Tuple, Union
+from typing import Any, List, Tuple, Union
 
 from torch.utils.data import Dataset
 
@@ -24,18 +24,27 @@ class BaseDataset(Dataset, abc.ABC):
         self,
         dataset_root: str,
         augment: bool,
-        normalize: bool,
         split: str,
         tiny: bool = False,
+        scaling: str = "hand_object",
+        seed: int = 0,
+        debug: bool = False,
     ) -> None:
         super().__init__()
-        self._samples, self._labels = self._load(dataset_root, tiny, split)
+        self._mm_unit = 1.0
         self._augment = augment and split == "train"
-        self._normalize = normalize
+        self._scaling = scaling
+        self._debug = debug
+        objects, grasps, dataset_name = self._load_objects_and_grasps(
+            tiny, split, seed=seed
+        )
+        self._samples, self._labels = self._load(
+            dataset_root, tiny, split, objects, grasps
+        )
 
     @abc.abstractmethod
     def _load(
-        self, dataset_root: str, tiny: bool, split: str
+        self, dataset_root: str, tiny: bool, split: str, objects: List, grasps: List
     ) -> Tuple[Union[dict, list], Union[dict, list]]:
         # Implement this
         raise NotImplementedError
@@ -45,3 +54,11 @@ class BaseDataset(Dataset, abc.ABC):
 
     def disable_augs(self) -> None:
         self._augment = False
+
+    def _load_objects_and_grasps(
+        self, tiny: bool, split: str, seed: int = 0
+    ) -> Tuple[List[Any], List[Any], str]:
+        raise NotImplementedError
+
+    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
+        return self._samples[idx], self._labels[idx]
