@@ -1,0 +1,10 @@
+hydra-zen
+unique-names-generator
+torchmetrics
+plotext
+tqdm
+wandb
+isort
+black
+autoflake
+pre-commit
