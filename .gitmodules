@@ -1,3 +1,6 @@
 [submodule "vendor/ContactPose"]
 	path = vendor/ContactPose
 	url = git@github.com:facebookresearch/ContactPose.git
+[submodule "vendor/manotorch"]
+	path = vendor/manotorch
+	url = git@github.com:lixiny/manotorch.git
