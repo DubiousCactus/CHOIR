@@ -36,6 +36,7 @@ def compute_choir(
     pointcloud: torch.Tensor,
     anchors: torch.Tensor,
     pointclouds_mean: Optional[torch.Tensor] = None,
+    bps_dim: int = 1024,
 ) -> Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor]:
     """
     For each BPS point, get the reference object point and compute the distance to the
@@ -46,7 +47,7 @@ def compute_choir(
     """
     bps = bps_torch(
         bps_type="random_uniform",
-        n_bps_points=1024,
+        n_bps_points=bps_dim,
         radius=1.0,
         n_dims=3,
         custom_basis=None,
@@ -54,7 +55,7 @@ def compute_choir(
     # TODO: Investigate why parts of the pointcloud (i.e. in the wine glass) are ignored during
     # sampling, especially when reducing the dimensionality of the BPS representation.
     normalized_pointcloud, pcl_mean, pcl_scalar = normalize(
-        pointcloud.unsqueeze(0), x_mean=pointclouds_mean
+        pointcloud.unsqueeze(0), x_mean=pointclouds_mean.unsqueeze(0)
     )
     bps_enc: Dict[str, Any] = bps.encode(
         normalized_pointcloud,

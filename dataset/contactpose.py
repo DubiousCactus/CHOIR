@@ -47,6 +47,7 @@ class ContactPoseDataset(BaseDataset):
         validation_objects: int = 5,
         perturbation_level: float = 0,
         obj_ptcld_size: int = 3000,
+        bps_dim: int = 1024,
         scaling: str = "none",
         unit_cube: bool = True,
         positive_unit_cube: bool = False,
@@ -67,6 +68,7 @@ class ContactPoseDataset(BaseDataset):
         self._positive_unit_cube = positive_unit_cube
         self._unit_cube = unit_cube
         self._perturbation_level = perturbation_level
+        self._bps_dim = bps_dim
         super().__init__(
             dataset_root="",
             augment=augment,
@@ -235,11 +237,12 @@ class ContactPoseDataset(BaseDataset):
         grasps: List,
     ) -> Tuple[Union[dict, list], Union[dict, list]]:
         samples, labels = [], []
-        affine_mano: torch.nn.Module = to_cuda_(AffineMANO())  # type: ignore
-        anchor_layer = AnchorLayer(anchor_root="assets/anchor").cuda()
+        affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
+        anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor").cuda()
         # First of all, compute the pointclouds mean for all the objects in the dataset.
         pointclouds = []
         meshes = []
+        print("[*] Computing object pointclouds mean...")
         for object_with_contacts_pth in objects:
             obj_mesh = o3dio.read_triangle_mesh(object_with_contacts_pth)
             obj_ptcld = torch.from_numpy(
@@ -249,16 +252,25 @@ class ContactPoseDataset(BaseDataset):
             )
             pointclouds.append(obj_ptcld)
             meshes.append(obj_mesh)  # For visualization
-        pointclouds_mean = torch.stack(pointclouds, dim=0).mean(dim=0)
+        pointclouds_mean = torch.stack(pointclouds, dim=0).mean(dim=0).mean(dim=0)
         # For each object-grasp pair, compute the CHOIR field.
         # TODO: Vectorize this after loading grasps one by one. Or not? It's more convenient to
         # have lists of samples than a single big tensor. Eeeh I don't need efficiency here.
         has_visualized = False
+        print("[*] Computing CHOIR fields...")
         for object_ptcld, mesh, grasp_pth in zip(pointclouds, meshes, grasps):
             # Load the object mesh and MANO params
-            grasp = pickle.load(open(grasp_pth, "rb"))
-            # grasp: ({'pose': _, 'betas': _, 'hTm': _}, {'vertices': _, 'faces': _, 'joints': _})
-            mano_params = grasp[0]
+            grasp_data = pickle.load(open(grasp_pth, "rb"))
+            """
+            {
+                'grasp': (
+                    {'pose': _, 'betas': _, 'hTm': _},
+                    {'vertices': _, 'faces': _, 'joints': _}
+                ),
+                'p_num': _, 'intent': _, 'obj_name': _, 'hand_idx': _
+            }
+            """
+            mano_params = grasp_data["grasp"][0]
             hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
             verts, joints = affine_mano(
                 torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
@@ -274,10 +286,13 @@ class ContactPoseDataset(BaseDataset):
             # Compute the CHOIR field
             anchors = anchor_layer(verts)
             choir, pcl_mean, pcl_scalar, ref_pts = compute_choir(
-                to_cuda_(object_ptcld), anchors, pointclouds_mean=pointclouds_mean  # type: ignore
+                to_cuda_(object_ptcld),
+                to_cuda_(anchors),
+                pointclouds_mean=to_cuda_(pointclouds_mean),
+                bps_dim=self._bps_dim,  # type: ignore
             )
             # Compute the dense MANO contact map
-            hand_contacts = compute_hand_contacts_simple(ref_pts, verts)
+            hand_contacts = compute_hand_contacts_simple(ref_pts.float(), verts.float())
             samples.append({"choir": choir, "hand_contacts": hand_contacts})
             labels.append(
                 {

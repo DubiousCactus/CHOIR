@@ -22,7 +22,7 @@ class AffineMANO(torch.nn.Module):
         super().__init__()
         # MANO is shipped with 15 components but you can use less.
         self.mano_layer = ManoLayer(
-            mano_assets_root="assets/mano",
+            mano_assets_root="vendor/manotorch/assets/mano",
             use_pca=True,
             flat_hand_mean=False,
             ncomps=ncomps,
