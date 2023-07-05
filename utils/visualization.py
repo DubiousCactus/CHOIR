@@ -136,7 +136,6 @@ def visualize_CHOIR_prediction(
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
     pose, shape, rot_6d, trans = tuple(mano_params_gt.values())
-    print(pose.shape, shape.shape)
     verts, _ = affine_mano(pose, shape, rot_6d, trans)
     V = verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
