@@ -39,12 +39,18 @@ class BaseDataset(Dataset, abc.ABC):
             tiny, split, seed=seed
         )
         self._samples, self._labels = self._load(
-            dataset_root, tiny, split, objects, grasps
+            dataset_root, tiny, split, objects, grasps, dataset_name
         )
 
     @abc.abstractmethod
     def _load(
-        self, dataset_root: str, tiny: bool, split: str, objects: List, grasps: List
+        self,
+        dataset_root: str,
+        tiny: bool,
+        split: str,
+        objects: List,
+        grasps: List,
+        dataset_name: str,
     ) -> Tuple[Union[dict, list], Union[dict, list]]:
         # Implement this
         raise NotImplementedError

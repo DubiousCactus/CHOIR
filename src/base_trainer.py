@@ -21,9 +21,10 @@ from torchmetrics import MeanMetric
 from tqdm import tqdm
 
 from conf import project as project_conf
+from src.losses.hoi import CHOIRLoss, DualHOILoss
 from utils import blink_pbar, to_cuda, update_pbar_str
 from utils.helpers import BestNModelSaver
-from utils.training import visualize_model_predictions
+from utils.visualization import visualize_model_predictions
 
 
 class BaseTrainer:
@@ -56,6 +57,10 @@ class BaseTrainer:
             project_conf.BEST_N_MODELS_TO_KEEP, self._save_checkpoint
         )
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
+        self._training_loss = CHOIRLoss()
+        self._tto_loss = DualHOILoss(
+            train_loader.dataset.bps_dim
+        )  # For test-time optimization
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -70,10 +75,10 @@ class BaseTrainer:
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        # x, y = batch
-        # y_hat = self._model(x)
-        # return torch.nn.functional.mse_loss(y_hat, y)
-        raise NotImplementedError
+        x, y = batch
+        y_hat = self._model(x["noisy_choir"])
+        loss = self._training_loss(y["choir"], y_hat)  # {'distances': _, 'anchors': _}
+        return loss["distances"] + loss["anchors"]
 
     def _train_epoch(self, description: str, epoch: int) -> float:
         """Perform a single training epoch.

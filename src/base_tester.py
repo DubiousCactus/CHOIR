@@ -20,7 +20,7 @@ from tqdm import tqdm
 from conf import project as project_conf
 from src.base_trainer import BaseTrainer
 from utils import update_pbar_str
-from utils.training import visualize_model_predictions
+from utils.visualization import visualize_model_predictions
 
 
 class BaseTester(BaseTrainer):

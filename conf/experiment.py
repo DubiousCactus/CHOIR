@@ -15,20 +15,13 @@ from typing import Optional
 
 import torch
 from hydra.conf import HydraConf, JobConf, RunDir
-from hydra_zen import (
-    MISSING,
-    ZenStore,
-    builds,
-    make_config,
-    make_custom_builds_fn,
-    store,
-)
+from hydra_zen import MISSING, ZenStore, builds, make_custom_builds_fn, store
 from torch.utils.data import DataLoader
 from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
-from dataset.example import ExampleDataset
-from model.example import ExampleModel
+from dataset.contactpose import ContactPoseDataset
+from model.baseline import BaselineModel
 from src.base_trainer import BaseTrainer
 from train import launch_experiment
 
@@ -50,38 +43,27 @@ pbuilds = make_custom_builds_fn(zen_partial=True, populate_full_signature=False)
 
 " ================== Dataset ================== "
 
+
 # Dataclasses are a great and simple way to define a base config group with default values.
 @dataclass
-class ExampleDatasetConf:
-    dataset_root: str = "data/a"
+class GraspingDatasetConf:
+    split: str = "train"
     tiny: bool = False
-    normalize: bool = True
     augment: bool = False
-    img_dim: int = ExampleDataset.IMG_SIZE[0]
+    validation_objects: int = 5
+    perturbation_level: float = 0.0
+    scaling: str = "none"
+    unit_cube: bool = False
+    positive_unit_cube: bool = False
+    right_hand_only: bool = True
+    bps_dim: int = 1024
+    obj_ptcld_size: int = 3000
 
 
 # Pre-set the group for store's dataset entries
 dataset_store = store(group="dataset")
 dataset_store(
-    pbuilds(ExampleDataset, builds_bases=(ExampleDatasetConf,)), name="image_a"
-)
-
-dataset_store(
-    pbuilds(
-        ExampleDataset,
-        builds_bases=(ExampleDatasetConf,),
-        dataset_root="data/b",
-        img_dim=64,
-    ),
-    name="image_b",
-)
-dataset_store(
-    pbuilds(
-        ExampleDataset,
-        builds_bases=(ExampleDatasetConf,),
-        tiny=True,
-    ),
-    name="image_a_tiny",
+    pbuilds(ContactPoseDataset, builds_bases=(GraspingDatasetConf,)), name="contactpose"
 )
 
 " ================== Dataloader & sampler ================== "
@@ -89,14 +71,14 @@ dataset_store(
 
 @dataclass
 class SamplerConf:
-    batch_size: int = 16
+    batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
 
 
 @dataclass
 class DataloaderConf:
-    batch_size: int = 16
+    batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
 
@@ -109,23 +91,13 @@ model_store = store(group="model")
 # the launch_experiment function.
 model_store(
     pbuilds(
-        ExampleModel,
-        encoder_dim=128,
-        decoder_dim=64,
-        latent_dim=32,
-        decoder_output_dim=8,
-    ),
-    name="model_a",
-)
-model_store(
-    pbuilds(
-        ExampleModel,
-        encoder_dim=256,
-        decoder_dim=128,
+        BaselineModel,
+        bps_dim=MISSING,
+        encoder_layer_dims=[512, 256, 128],
         latent_dim=64,
-        decoder_output_dim=8,
+        decoder_layer_dims=[128, 256, 512],
     ),
-    name="model_b",
+    name="baseline",
 )
 
 
@@ -207,8 +179,8 @@ Experiment = builds(
     hydra_defaults=[
         "_self_",
         {"trainer": "base"},
-        {"dataset": "image_a"},
-        {"model": "model_a"},
+        {"dataset": "contactpose"},
+        {"model": "baseline"},
         {"optimizer": "adam"},
         {"scheduler": "step"},
         {"training": "default"},
@@ -229,30 +201,6 @@ store(Experiment, name="base_experiment")
 # - must be stored under the _global_ package
 # - must inherit from `Experiment`
 experiment_store = store(group="experiment", package="_global_")
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "model_a"},
-            {"override /dataset": "image_a"},
-        ],
-        # training=dict(epochs=100),
-        bases=(Experiment,),
-    ),
-    name="exp_a",
-)
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "model_b"},
-            {"override /dataset": "image_b"},
-        ],
-        bases=(Experiment,),
-    ),
-    name="exp_b",
-)
-
 
 " ================== Model testing ================== "
 
@@ -274,8 +222,8 @@ ExperimentEvaluation = builds(
     populate_full_signature=True,
     hydra_defaults=[
         "_self_",
-        {"dataset": "image_a"},
-        {"model": "model_a"},
+        {"dataset": "contactpose"},
+        {"model": "baseline"},
         {"testing": "default"},
     ],
     dataset=MISSING,
@@ -291,25 +239,3 @@ store(ExperimentEvaluation, name="base_experiment_evaluation")
 # - must be stored under the _global_ package
 # - must inherit from `Experiment`
 experiment_store = store(group="experiment_evaluation", package="_global_")
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "model_a"},
-            {"override /dataset": "image_a"},
-        ],
-        bases=(ExperimentEvaluation,),
-    ),
-    name="exp_a",
-)
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "model_b"},
-            {"override /dataset": "image_b"},
-        ],
-        bases=(ExperimentEvaluation,),
-    ),
-    name="exp_b",
-)
