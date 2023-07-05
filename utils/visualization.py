@@ -64,7 +64,7 @@ def visualize_CHOIR_prediction(
         reference_obj_points = bps.decode(x_deltas=choir[:, :, 1:4])
         reference_obj_points = denormalize(reference_obj_points, pcl_mean, pcl_scalar)
         plot.add_points(
-            reference_obj_points.cpu().numpy(),
+            reference_obj_points[0].cpu().numpy(),
             color="blue",
             name="target_points",
             opacity=0.9,
@@ -99,9 +99,7 @@ def visualize_CHOIR_prediction(
     choir_gt = choir_gt[0].unsqueeze(0)
     pcl_mean = pcl_mean[0].unsqueeze(0)
     pcl_scalar = pcl_scalar[0].unsqueeze(0)
-    print(mano_params_gt)
     mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
-    print(mano_params_gt)
     # =============================================================
 
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
