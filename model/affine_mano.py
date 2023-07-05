@@ -12,6 +12,7 @@ MANO with an affine transformation on its vertices.
 from typing import Tuple
 
 import torch
+from manotorch.anchorlayer import AnchorLayer
 from manotorch.manolayer import ManoLayer, MANOOutput
 
 from utils.dataset import transform_verts
@@ -27,6 +28,7 @@ class AffineMANO(torch.nn.Module):
             flat_hand_mean=False,
             ncomps=ncomps,
         )
+        self.anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor")
 
     def forward(self, pose, shape, rot_6d, trans) -> Tuple[torch.Tensor, torch.Tensor]:
         mano_output: MANOOutput = self.mano_layer(pose, shape)
@@ -39,3 +41,6 @@ class AffineMANO(torch.nn.Module):
     @property
     def faces(self) -> torch.Tensor:
         return self.mano_layer.th_faces  # type: ignore
+
+    def get_anchors(self, verts: torch.Tensor) -> torch.Tensor:
+        return self.anchor_layer(verts)

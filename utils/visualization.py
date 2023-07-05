@@ -60,7 +60,7 @@ def visualize_CHOIR_prediction(
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
 ):
-    def add_choir_to_plot(plot, choir, hand_mesh):
+    def add_choir_to_plot(plot, choir, hand_mesh, anchors):
         reference_obj_points = bps.decode(x_deltas=choir[:, :, 1:4])
         reference_obj_points = denormalize(reference_obj_points, pcl_mean, pcl_scalar)
         plot.add_points(
@@ -93,6 +93,17 @@ def visualize_CHOIR_prediction(
             name="hand_mesh",
             smooth_shading=True,
         )
+        for i in range(anchors.shape[1]):
+            plot.add_mesh(
+                pv.Cube(
+                    center=anchors[0, i].cpu().numpy(),
+                    x_length=3e-3,
+                    y_length=3e-3,
+                    z_length=3e-3,
+                ),
+                color="yellow",
+                name=f"anchor{i}",
+            )
 
     # ============ Get the first element of the batch ============
     choir_pred = choir_pred[0].unsqueeze(0)
@@ -129,7 +140,7 @@ def visualize_CHOIR_prediction(
     V = verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, choir_pred, hand_mesh)
+    add_choir_to_plot(pl, choir_pred, hand_mesh, anchors)
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
@@ -138,7 +149,8 @@ def visualize_CHOIR_prediction(
     V = verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, choir_gt, hand_mesh)
+    gt_anchors = affine_mano.get_anchors(verts)
+    add_choir_to_plot(pl, choir_gt, hand_mesh, gt_anchors)
     pl.link_views()
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()

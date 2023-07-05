@@ -55,7 +55,8 @@ def compute_choir(
     # TODO: Investigate why parts of the pointcloud (i.e. in the wine glass) are ignored during
     # sampling, especially when reducing the dimensionality of the BPS representation.
     normalized_pointcloud, pcl_mean, pcl_scalar = normalize(
-        pointcloud.unsqueeze(0), x_mean=pointclouds_mean.unsqueeze(0)
+        pointcloud.unsqueeze(0),
+        x_mean=pointclouds_mean.unsqueeze(0) if pointclouds_mean is not None else None,
     )
     bps_enc: Dict[str, Any] = bps.encode(
         normalized_pointcloud,
