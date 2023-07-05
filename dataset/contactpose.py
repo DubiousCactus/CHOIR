@@ -313,13 +313,21 @@ class ContactPoseDataset(BaseDataset):
                     pointclouds_mean=to_cuda_(pointclouds_mean),
                     bps_dim=self._bps_dim,  # type: ignore
                 )
-                choir = choir.squeeze(0)
-                pcl_mean = pcl_mean.squeeze(0)
-                pcl_scalar = pcl_scalar.squeeze(0)
                 # Compute the dense MANO contact map
                 hand_contacts = compute_hand_contacts_simple(
                     ref_pts.float(), verts.float()
                 )
+
+                # Remove batch dimension
+                choir = choir.squeeze(0)
+                pcl_mean = pcl_mean.squeeze(0)
+                pcl_scalar = pcl_scalar.squeeze(0)
+                hand_contacts = hand_contacts.squeeze(0)
+                joints = joints.squeeze(0)
+                anchors = anchors.squeeze(0)
+                rot_6d = rot_6d.squeeze(0)
+                trans = trans.squeeze(0)
+
                 samples.append(
                     {
                         "noisy_choir": choir,
@@ -336,8 +344,8 @@ class ContactPoseDataset(BaseDataset):
                         "joints": joints,
                         "anchors": anchors,
                         "mano_params": {
-                            "pose": mano_params["pose"],
-                            "betas": mano_params["betas"],
+                            "pose": torch.tensor(mano_params["pose"]),
+                            "betas": torch.tensor(mano_params["betas"]),
                             "rot_6d": rot_6d,
                             "trans": trans,
                         },

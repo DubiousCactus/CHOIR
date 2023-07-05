@@ -44,11 +44,13 @@ def seed_everything(seed: int):
 def to_cuda_(x: Any) -> Union[Tuple, List, torch.Tensor, torch.nn.Module]:
     if project_conf.USE_CUDA_IF_AVAILABLE and torch.cuda.is_available():
         if isinstance(x, torch.Tensor) or isinstance(x, torch.nn.Module):
-            x = x.cuda()
+            x = x.cuda().float()
         elif isinstance(x, tuple):
             x = tuple(to_cuda_(t) for t in x)
         elif isinstance(x, list):
             x = [to_cuda_(t) for t in x]
+        elif isinstance(x, dict):
+            x = {key: to_cuda_(value) for key, value in x.items()}
     return x
 
 
