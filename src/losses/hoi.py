@@ -70,12 +70,41 @@ class DualHOILoss(torch.nn.Module):
         tgt_points = self.bps.decode(x_deltas=choir[:, :, 1:4])
         tgt_points = denormalize(tgt_points, bps_mean, bps_scalar)
         anchor_distances = torch.cdist(tgt_points, anchors, p=2)
-        # Step 2: Mask the distances by the anchor indices in the choir field
-        anchor_distances = anchor_distances.gather(
-            dim=2, index=choir[:, :, -1].long().unsqueeze(dim=2)
-        ).squeeze(dim=2)
-        # Step 3: Compute the MSE between the masked distances and the encoded distances in the choir field
-        choir_loss = torch.nn.functional.mse_loss(anchor_distances, choir[:, :, -2])
+
+        if self._anchor_assignment in [
+            "closest",
+            "random",
+            "batched_closest_and_farthest",
+        ]:
+            choir_one_hot = choir[:, :, -32:]
+            index = torch.argmax(choir_one_hot, dim=-1)
+            assigned_anchor_distances = anchor_distances.gather(
+                dim=2, index=index.unsqueeze(dim=2)
+            ).squeeze(dim=2)
+            # Step 3: Compute the MSE between the masked distances and the encoded distances in the choir field
+            choir_loss = torch.nn.functional.mse_loss(
+                assigned_anchor_distances, choir[:, :, -33]
+            )
+        elif self._anchor_assignment == "closest_and_farthest":
+            closest_one_hot = choir[:, :, 5:37]
+            closest_index = torch.argmax(closest_one_hot, dim=-1)
+            lowest_anchor_distances = anchor_distances.gather(
+                dim=2, index=closest_index.unsqueeze(dim=2)
+            ).squeeze(dim=2)
+            farthest_one_hot = choir[:, :, -32:]
+            farthest_index = torch.argmax(farthest_one_hot, dim=-1)
+            highest_anchor_distances = anchor_distances.gather(
+                dim=2, index=farthest_index.unsqueeze(dim=2)
+            ).squeeze(dim=2)
+            choir_loss = torch.nn.functional.mse_loss(
+                lowest_anchor_distances, choir[:, :, 4]
+            ) + torch.nn.functional.mse_loss(highest_anchor_distances, choir[:, :, -33])
+        elif self._anchor_assignment == "batched_closest_and_farthest":
+            raise NotImplementedError
+        else:
+            raise ValueError(
+                f"Unknown anchor assignment method: {self._anchor_assignment}"
+            )
         # Now add the hand contact loss
         hand_contact_loss = (
             torch.nn.functional.mse_loss(

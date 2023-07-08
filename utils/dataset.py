@@ -37,13 +37,20 @@ def compute_choir(
     anchors: torch.Tensor,
     pointclouds_mean: Optional[torch.Tensor] = None,
     bps_dim: int = 1024,
+    anchor_assignment="random",
 ) -> Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor]:
     """
     For each BPS point, get the reference object point and compute the distance to the
     nearest MANO anchor. Append the anchor index to the BPS point value as well as the
-    signed distance to the anchor: [BPS dists, BPS deltas, signed_distance, anchor_index]
+    distance to the anchor: [BPS dists, BPS deltas, distance, one_hot_anchor_id]
     Note that we need the deltas to be able to fit MANO, since we'll need to reconstruct the
     pointcloud to compute the anchor distances!
+
+    Args:
+        pointcloud: Shape (N, 3)
+        anchors: Shape (N_ANCHORS, 3)
+        anchor_assignment: How to assign anchors to BPS points. Must be one of: "random",
+        "closest", "closest_and_farthest", "batched_closest_and_farthest".
     """
     bps = bps_torch(
         bps_type="random_uniform",
@@ -70,25 +77,64 @@ def compute_choir(
         ref_pts[0, :]
     ), "ref_pts[0, :] != pointcloud[ref_ids[0], :]"
     # Compute the distances between the reference points and the anchors:
-    # TODO: Compute SIGNED distances! (hmm really? It works great without)
     anchor_distances = torch.cdist(
         ref_pts.float(), anchors.float()
     )  # Shape: (B, BPS_LEN, N_ANCHORS)
-    # Find the index of the closest anchor for each reference point:
-    closest_anchor_ids = torch.argmin(anchor_distances, dim=2)
-    lowest_distances = torch.gather(
-        anchor_distances, 2, closest_anchor_ids.unsqueeze(-1)
-    ).squeeze(-1)
-    assert torch.allclose(
-        lowest_distances[:, :3], anchor_distances[:, :3, :].min(dim=2).values
-    ), "lowest_distances[:, :3] != distances[:, :3, :].min(dim=2).values"
+    anchor_encodings = []
+    if anchor_assignment == "random":
+        # Randomly sample an anchor for each reference point:
+        anchor_ids = torch.randint(
+            0,
+            anchors.shape[1],
+            (
+                1,
+                ref_pts.shape[0],
+            ),
+            device=ref_pts.device,
+        )
+        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
+            -1
+        )
+        anchor_encodings = [
+            distances.unsqueeze(-1),
+            torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
+        ]
+    elif anchor_assignment == "closest":
+        anchor_ids = torch.argmin(anchor_distances, dim=2)
+        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
+            -1
+        )
+        anchor_encodings = [
+            distances.unsqueeze(-1),
+            torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
+        ]
+    elif anchor_assignment == "closest_and_farthest":
+        closest_anchor_ids = torch.argmin(anchor_distances, dim=2)
+        closest_distances = torch.gather(
+            anchor_distances, 2, closest_anchor_ids.unsqueeze(-1)
+        ).squeeze(-1)
+        farthest_anchor_ids = torch.argmax(anchor_distances, dim=2)
+        farthest_distances = torch.gather(
+            anchor_distances, 2, farthest_anchor_ids.unsqueeze(-1)
+        ).squeeze(-1)
+        anchor_encodings = [
+            closest_distances.unsqueeze(-1),
+            torch.nn.functional.one_hot(
+                closest_anchor_ids, num_classes=anchors.shape[1]
+            ),
+            farthest_distances.unsqueeze(-1),
+            torch.nn.functional.one_hot(
+                farthest_anchor_ids, num_classes=anchors.shape[1]
+            ),
+        ]
+    elif anchor_assignment == "batched_closest_and_farthest":
+        raise NotImplementedError
     # Build the CHOIR representation:
     choir = torch.cat(
         [
             bps_enc["dists"].unsqueeze(-1),
             bps_enc["deltas"],
-            lowest_distances.unsqueeze(-1),
-            closest_anchor_ids.unsqueeze(-1),
+            *anchor_encodings,
         ],
         dim=-1,
     )

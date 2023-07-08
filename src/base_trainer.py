@@ -63,6 +63,20 @@ class BaseTrainer:
         )  # For test-time optimization
         signal.signal(signal.SIGINT, self._terminator)
 
+    def _visualize(
+        self,
+        batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
+    ) -> None:
+        """Visualize the model predictions.
+        Args:
+            batch: The batch to process.
+            epoch: The current epoch.
+        """
+        visualize_model_predictions(
+            self._model, batch, epoch
+        )  # User implementation goes here (utils/training.py)
+
     @to_cuda
     def _train_val_iteration(
         self,
@@ -80,7 +94,7 @@ class BaseTrainer:
         loss = self._training_loss(y["choir"], y_hat)  # {'distances': _, 'anchors': _}
         return loss["distances"] + loss["anchors"]
 
-    def _train_epoch(self, description: str, epoch: int) -> float:
+    def _train_epoch(self, description: str, visualize: bool, epoch: int) -> float:
         """Perform a single training epoch.
         Args:
             description (str): Description of the epoch for tqdm.
@@ -92,6 +106,7 @@ class BaseTrainer:
         self._pbar.reset()
         self._pbar.set_description(description)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
+        has_visualized = False
         " ==================== Training loop for one epoch ==================== "
         for batch in self._train_loader:
             if (
@@ -114,6 +129,9 @@ class BaseTrainer:
                 + f" min_val_loss={self._model_saver.min_val_loss:.4f}]",
                 color_code,
             )
+            if visualize and not has_visualized:
+                self._visualize(batch, epoch)
+                has_visualized = True
             self._pbar.update()
         epoch_loss = epoch_loss.compute().item()
         if project_conf.USE_WANDB:
@@ -128,6 +146,7 @@ class BaseTrainer:
         Returns:
             float: Average validation loss for the epoch.
         """
+        has_visualized = False
         "==================== Validation loop for one epoch ===================="
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.VALIDATION.value]
         with torch.no_grad():
@@ -153,10 +172,9 @@ class BaseTrainer:
                     color_code,
                 )
                 " ==================== Visualization ==================== "
-                if visualize:
-                    visualize_model_predictions(
-                        self._model, batch, epoch
-                    )  # User implementation goes here (utils/training.py)
+                if visualize and not has_visualized:
+                    self._visualize(batch, epoch)
+                    has_visualized = True
             val_loss = val_loss.compute().item()
             if project_conf.USE_WANDB:
                 wandb.log({"val_loss": val_loss}, step=epoch)
@@ -167,13 +185,15 @@ class BaseTrainer:
         self,
         epochs: int = 10,
         val_every: int = 1,  # Validate every n epochs
-        visualize_every: int = 10,  # Visualize every n validations
+        visualize_every: int = 0,  # Visualize every n validation epochs
+        visualize_train_every: int = 0,  # Visualize every n training epochs
         model_ckpt_path: Optional[str] = None,
     ):
         """Train the model for a given number of epochs.
         Args:
             epochs (int): Number of epochs to train for.
             val_every (int): Validate every n epochs.
+            visualize_train_every (int): Visualize every n training epochs.
             visualize_every (int): Visualize every n validations.
         Returns:
             None
@@ -192,7 +212,12 @@ class BaseTrainer:
             self._model.train()
             self._pbar.colour = project_conf.Theme.TRAINING.value
             train_losses.append(
-                self._train_epoch(f"Epoch {epoch}/{epochs}: Training", epoch)
+                self._train_epoch(
+                    f"Epoch {epoch}/{epochs}: Training",
+                    visualize_train_every > 0
+                    and (epoch + 1) % visualize_train_every == 0,
+                    epoch,
+                )
             )
             if epoch % val_every == 0:
                 self._model.eval()

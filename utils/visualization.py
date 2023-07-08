@@ -48,7 +48,8 @@ def visualize_model_predictions(
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
         # wandb.log({"pointcloud": wandb.Object3D(ptcld)}, step=step)
-        raise NotImplementedError("Visualization is not implemented for wandb.")
+        # raise NotImplementedError("Visualization is not implemented for wandb.")
+        pass
 
 
 @to_cuda
@@ -59,6 +60,7 @@ def visualize_CHOIR_prediction(
     pcl_scalar: torch.Tensor,
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
+    anchor_assignment: str,
 ):
     def add_choir_to_plot(plot, choir, hand_mesh, anchors):
         reference_obj_points = bps.decode(x_deltas=choir[:, :, 1:4])
@@ -69,24 +71,60 @@ def visualize_CHOIR_prediction(
             name="target_points",
             opacity=0.9,
         )
-        for i in range(reference_obj_points.shape[1]):
-            anchor = anchors[0, int(choir[0, i, -1]), :]
+        if anchor_assignment == "closest_and_farthest":
+            min_dist = min(choir[0, :, -33].min(), choir[0, :, 4].min())
+            max_dist = max(choir[0, :, -33].max(), choir[0, :, 4].max())
+        elif anchor_assignment in ["closest", "random", "batched_closest_and_farthest"]:
+            min_dist, max_dist = choir[0, :, -33].min(), choir[0, :, -33].max()
+        else:
+            raise NotImplementedError
+        for i in range(0, reference_obj_points.shape[0], 1):
             # The color is proportional to the distance to the anchor. It is in hex format.
             # It is obtained from min-max normalization of the distance in the choir field,
             # without known range. The color range is 0 to 16777215.
-            color = int(
-                (choir[0, i, 0] - choir[0, :, 0].min())
-                / (choir[0, :, 0].max() - choir[0, :, 0].min())
-                * 16777215
-            )
-            plot.add_lines(
-                np.array(
-                    [reference_obj_points[0, i, :].cpu().numpy(), anchor.cpu().numpy()]
-                ),
-                width=1,
-                color="#" + hex(color)[2:].zfill(6),
-                name=f"ray{i}",
-            )
+            if anchor_assignment in [
+                "closest",
+                "closest_and_farthest",
+                "random",
+                "batched_closest_and_farthest",
+            ]:
+                choir_one_hot = choir[0, i, 5:37]
+                index = torch.argmax(choir_one_hot, dim=-1)
+                closest_anchor = anchors[0, index, :]
+                color = int(
+                    (choir[0, i, 4] - min_dist) / (max_dist - min_dist) * 16777215
+                )
+                plot.add_lines(
+                    np.array(
+                        [
+                            reference_obj_points[i, :].cpu().numpy(),
+                            closest_anchor.cpu().numpy(),
+                        ]
+                    ),
+                    width=1,
+                    color="#" + hex(color)[2:].zfill(6),
+                    name=f"closest_ray{i}",
+                )
+                if anchor_assignment == "closest_and_farthest":
+                    choir_one_hot = choir[0, i, -32:]
+                    index = torch.argmax(choir_one_hot, dim=-1)
+                    farthest_anchor = anchors[0, index, :]
+                    color = int(
+                        (choir[0, i, -33] - min_dist) / (max_dist - min_dist) * 16777215
+                    )
+                    plot.add_lines(
+                        np.array(
+                            [
+                                reference_obj_points[i, :].cpu().numpy(),
+                                farthest_anchor.cpu().numpy(),
+                            ]
+                        ),
+                        width=1,
+                        color="#" + hex(color)[2:].zfill(6),
+                        name=f"farthest_ray{i}",
+                    )
+            else:
+                raise NotImplementedError
         plot.add_mesh(
             hand_mesh,
             opacity=0.4,
