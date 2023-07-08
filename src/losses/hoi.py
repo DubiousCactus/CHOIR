@@ -19,25 +19,30 @@ from utils.dataset import compute_hand_contacts_simple
 
 
 class CHOIRLoss(torch.nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, anchor_assignment: str) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
         self._cross_entropy = torch.nn.CrossEntropyLoss()
+        self._anchor_assignment = anchor_assignment
 
     def forward(
         self,
         y,
         y_hat,
     ) -> torch.Tensor:
+        if self._anchor_assignment not in ["random", "closest"]:
+            raise NotImplementedError(
+                f"Anchor assignment {self._anchor_assignment} not implemented."
+            )
         loss = {
-            "distances": self._mse(y[:, :, :-1], y_hat[:, :, :-1]),
-            "anchors": self._cross_entropy(y[:, :, -1], y_hat[:, :, -1]),
+            "distances": self._mse(y[:, :, 4], y_hat[:, :, 4]),
+            "anchors": self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:]),
         }
         return loss
 
 
 class DualHOILoss(torch.nn.Module):
-    def __init__(self, bps_dim: int):
+    def __init__(self, bps_dim: int, anchor_assignment: str):
         super().__init__()
         self.bps = bps_torch(
             bps_type="random_uniform",
@@ -46,6 +51,7 @@ class DualHOILoss(torch.nn.Module):
             n_dims=3,
             custom_basis=None,
         )
+        self._anchor_assignment = anchor_assignment
 
     def forward(
         self,

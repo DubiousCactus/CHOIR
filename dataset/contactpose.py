@@ -49,6 +49,7 @@ class ContactPoseDataset(BaseDataset):
         perturbation_level: float = 0,
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
+        anchor_assignment: str = "random",
         scaling: str = "none",
         unit_cube: bool = True,
         positive_unit_cube: bool = False,
@@ -70,6 +71,7 @@ class ContactPoseDataset(BaseDataset):
         self._unit_cube = unit_cube
         self._perturbation_level = perturbation_level
         self._bps_dim = bps_dim
+        self._anchor_assignment = anchor_assignment
         super().__init__(
             dataset_root="",
             augment=augment,
@@ -83,6 +85,10 @@ class ContactPoseDataset(BaseDataset):
     @property
     def bps_dim(self) -> int:
         return self._bps_dim
+
+    @property
+    def anchor_assignment(self) -> str:
+        return self._anchor_assignment
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
@@ -129,7 +135,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 15 if tiny else 51
+        n_participants = 35 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         if not osp.isdir(self._cache_dir):

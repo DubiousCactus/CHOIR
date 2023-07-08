@@ -25,6 +25,7 @@ def optimize_pose_pca_from_choir(
     bps_dim: int,
     x_mean: torch.Tensor,
     x_scalar: float,
+    anchor_assignment: str,
     hand_contacts: Optional[torch.Tensor] = None,
     loss_thresh: float = 1e-12,
     max_iterations=8000,
@@ -34,7 +35,7 @@ def optimize_pose_pca_from_choir(
     ncomps = 15
     affine_mano = AffineMANO(ncomps).cuda()
     anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor").cuda()
-    choir_loss = DualHOILoss(bps_dim).cuda()
+    choir_loss = DualHOILoss(bps_dim, anchor_assignment).cuda()
     B = choir.shape[0]
     if initial_params is None:
         fingers_pose = (torch.rand((1, ncomps + 3))).cuda().requires_grad_(True)

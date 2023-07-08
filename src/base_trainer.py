@@ -57,9 +57,10 @@ class BaseTrainer:
             project_conf.BEST_N_MODELS_TO_KEEP, self._save_checkpoint
         )
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
-        self._training_loss = CHOIRLoss()
+        self._anchor_assignment = train_loader.dataset.anchor_assignment
+        self._training_loss = CHOIRLoss(self._anchor_assignment)
         self._tto_loss = DualHOILoss(
-            train_loader.dataset.bps_dim
+            train_loader.dataset.bps_dim, self._anchor_assignment
         )  # For test-time optimization
         signal.signal(signal.SIGINT, self._terminator)
 
@@ -74,7 +75,7 @@ class BaseTrainer:
             epoch: The current epoch.
         """
         visualize_model_predictions(
-            self._model, batch, epoch
+            self._model, batch, epoch, anchor_assignment=self._anchor_assignment
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda

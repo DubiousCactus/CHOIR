@@ -26,7 +26,7 @@ from utils.training import optimize_pose_pca_from_choir
 
 
 def visualize_model_predictions(
-    model: torch.nn.Module, batch: Union[Tuple, List, torch.Tensor], step: int
+    model: torch.nn.Module, batch: Union[Tuple, List, torch.Tensor], step: int, **kwargs
 ) -> None:
     x, y = batch  # type: ignore
     if not project_conf.HEADLESS:
@@ -44,6 +44,7 @@ def visualize_model_predictions(
             pcl_scalar,
             mano_params_gt,
             bps_dim=x["bps_dim"].squeeze()[0].long().item(),
+            anchor_assignment=kwargs["anchor_assignment"],
         )
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
@@ -168,6 +169,7 @@ def visualize_CHOIR_prediction(
     with torch.set_grad_enabled(True):
         pose, shape, rot_6d, trans, anchors = optimize_pose_pca_from_choir(
             choir_pred,
+            anchor_assignment=anchor_assignment,
             hand_contacts=None,
             bps_dim=bps_dim,
             x_mean=pcl_mean,

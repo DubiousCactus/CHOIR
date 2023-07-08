@@ -52,6 +52,7 @@ class GraspingDatasetConf:
     augment: bool = False
     validation_objects: int = 5
     perturbation_level: float = 0.0
+    anchor_assignment: str = "random"
     scaling: str = "none"
     unit_cube: bool = False
     positive_unit_cube: bool = False
@@ -162,6 +163,7 @@ class TrainingConfig:
     seed: int = 42
     val_every: int = 1
     viz_every: int = 10
+    viz_train_every: int = 0
     load_from_path: Optional[str] = None
     load_from_run: Optional[str] = None
 

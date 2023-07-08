@@ -55,7 +55,7 @@ def launch_experiment(
 
     "============ Partials instantiation ============"
     model_inst = model(
-        bps_dim=just(dataset).bps_dim
+        bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
     )  # Use just() to get the config out of the Zen-Partial
     print(model_inst)
     print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
@@ -132,6 +132,7 @@ def launch_experiment(
         epochs=training.epochs,
         val_every=training.val_every,
         visualize_every=training.viz_every,
+        visualize_train_every=training.viz_train_every,
         model_ckpt_path=model_ckpt_path,
     )
 
