@@ -14,7 +14,8 @@ transforming it may be extended through class inheritance in a specific dataset 
 
 
 import abc
-from typing import Any, List, Tuple, Union
+import pickle
+from typing import Any, List, Tuple
 
 from torch.utils.data import Dataset
 
@@ -38,7 +39,7 @@ class BaseDataset(Dataset, abc.ABC):
         objects, grasps, dataset_name = self._load_objects_and_grasps(
             tiny, split, seed=seed
         )
-        self._samples, self._labels = self._load(
+        self._sample_paths = self._load(
             dataset_root, tiny, split, objects, grasps, dataset_name
         )
 
@@ -51,12 +52,12 @@ class BaseDataset(Dataset, abc.ABC):
         objects: List,
         grasps: List,
         dataset_name: str,
-    ) -> Tuple[Union[dict, list], Union[dict, list]]:
+    ) -> List[str]:
         # Implement this
         raise NotImplementedError
 
     def __len__(self) -> int:
-        return len(self._samples)
+        return len(self._sample_paths)
 
     def disable_augs(self) -> None:
         self._augment = False
@@ -67,4 +68,6 @@ class BaseDataset(Dataset, abc.ABC):
         raise NotImplementedError
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
-        return self._samples[idx], self._labels[idx]
+        with open(self._sample_paths[idx], "rb") as f:
+            sample, label = pickle.load(f)
+        return sample, label

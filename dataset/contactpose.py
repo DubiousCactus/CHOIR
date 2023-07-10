@@ -15,7 +15,7 @@ import pickle
 import random
 import sys
 from contextlib import redirect_stdout
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -50,6 +50,7 @@ class ContactPoseDataset(BaseDataset):
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
         anchor_assignment: str = "random",
+        n_random_choir_per_sample: int = 1000,
         scaling: str = "none",
         unit_cube: bool = True,
         positive_unit_cube: bool = False,
@@ -72,6 +73,9 @@ class ContactPoseDataset(BaseDataset):
         self._perturbation_level = perturbation_level
         self._bps_dim = bps_dim
         self._anchor_assignment = anchor_assignment
+        self._n_random_choir_per_sample = (
+            n_random_choir_per_sample if anchor_assignment == "random" else 1
+        )
         super().__init__(
             dataset_root="",
             augment=augment,
@@ -135,7 +139,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 35 if tiny else 51
+        n_participants = 15 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         if not osp.isdir(self._cache_dir):
@@ -247,8 +251,10 @@ class ContactPoseDataset(BaseDataset):
         objects: List[str],
         grasps: List,
         dataset_name: str,
-    ) -> Tuple[Union[dict, list], Union[dict, list]]:
-        samples, labels = [], []
+    ) -> List[str]:
+        sample_paths = []
+        # TODO: We should just hash all the class properties and use that as the cache key. This is
+        # a bit hacky and not scalable.
         samples_labels_pickle_pth = osp.join(
             self._cache_dir,
             "samples_and_labels",
@@ -256,23 +262,29 @@ class ContactPoseDataset(BaseDataset):
             + f"perturbed-{self._perturbation_level}_"
             + f"{self._anchor_assignment}-assigned_"
             + f"{self._bps_dim}-bps_"
-            + f"{split}.pkl",
+            + f"{split}",
         )
-        if not osp.isdir(osp.dirname(samples_labels_pickle_pth)):
-            os.makedirs(osp.dirname(samples_labels_pickle_pth))
-        if osp.isfile(samples_labels_pickle_pth):
-            with open(samples_labels_pickle_pth, "rb") as f:
-                samples, labels = pickle.load(f)
+        if not osp.isdir(samples_labels_pickle_pth):
+            os.makedirs(samples_labels_pickle_pth)
+        affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
+        anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor").cuda()
+        # First of all, compute the pointclouds mean for all the objects in the dataset.
+        pointcloud_mean_pth = osp.join(
+            samples_labels_pickle_pth, f"pointcloud_mean_{self._obj_ptcld_size}-pts.pkl"
+        )
+        pointclouds_pth = osp.join(
+            samples_labels_pickle_pth, f"pointclouds_{self._obj_ptcld_size}-pts.pkl"
+        )
+        pointclouds, meshes = [], []
+        pointclouds_mean = None
+        if osp.isfile(pointcloud_mean_pth) and osp.isfile(pointclouds_pth):
+            with open(pointcloud_mean_pth, "rb") as f:
+                pointclouds_mean = pickle.load(f)
+            with open(pointclouds_pth, "rb") as f:
+                pointclouds = pickle.load(f)
         else:
-            affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
-            anchor_layer = AnchorLayer(
-                anchor_root="vendor/manotorch/assets/anchor"
-            ).cuda()
-            # First of all, compute the pointclouds mean for all the objects in the dataset.
-            pointclouds = []
-            meshes = []
-            print("[*] Computing object pointclouds mean...")
-            for object_with_contacts_pth in objects:
+            print("[*] Computing object pointclouds...")
+            for object_with_contacts_pth in tqdm(objects):
                 obj_mesh = o3dio.read_triangle_mesh(object_with_contacts_pth)
                 obj_ptcld = torch.from_numpy(
                     np.asarray(
@@ -282,23 +294,48 @@ class ContactPoseDataset(BaseDataset):
                 pointclouds.append(obj_ptcld)
                 meshes.append(obj_mesh)  # For visualization
             pointclouds_mean = torch.stack(pointclouds, dim=0).mean(dim=0).mean(dim=0)
-            # For each object-grasp pair, compute the CHOIR field.
-            # TODO: Vectorize this after loading grasps one by one. Or not? It's more convenient to
-            # have lists of samples than a single big tensor. Eeeh I don't need efficiency here.
-            has_visualized = False
-            print("[*] Computing CHOIR fields...")
-            for object_ptcld, mesh, grasp_pth in zip(pointclouds, meshes, grasps):
-                # Load the object mesh and MANO params
-                grasp_data = pickle.load(open(grasp_pth, "rb"))
-                """
-                {
-                    'grasp': (
-                        {'pose': _, 'betas': _, 'hTm': _},
-                        {'vertices': _, 'faces': _, 'joints': _}
-                    ),
-                    'p_num': _, 'intent': _, 'obj_name': _, 'hand_idx': _
-                }
-                """
+            with open(pointcloud_mean_pth, "wb") as f:
+                pickle.dump(pointclouds_mean, f)
+            with open(pointclouds_pth, "wb") as f:
+                pickle.dump(pointclouds, f)
+        # For each object-grasp pair, compute the CHOIR field.
+        has_visualized = False
+        print("[*] Computing CHOIR fields...")
+        for object_ptcld, mesh_pth, grasp_pth in tqdm(
+            zip(pointclouds, objects, grasps), total=len(objects)
+        ):
+            # Load the object mesh and MANO params
+            mesh = o3dio.read_triangle_mesh(mesh_pth)
+            grasp_data = pickle.load(open(grasp_pth, "rb"))
+            """
+            {
+                'grasp': (
+                    {'pose': _, 'betas': _, 'hTm': _},
+                    {'vertices': _, 'faces': _, 'joints': _}
+                ),
+                'p_num': _, 'intent': _, 'obj_name': _, 'hand_idx': _
+            }
+            """
+            obj_name, p_num, intent, hand_idx = (
+                grasp_data["obj_name"],
+                grasp_data["p_num"],
+                grasp_data["intent"],
+                grasp_data["hand_idx"],
+            )
+            grasp_name = f"{obj_name}_{p_num}_{intent}_{hand_idx}"
+            if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
+                os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
+            if (
+                len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
+                >= self._n_random_choir_per_sample
+            ):
+                sample_paths += [
+                    osp.join(
+                        samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
+                    )
+                    for i in range(self._n_random_choir_per_sample)
+                ]
+            else:
                 mano_params = grasp_data["grasp"][0]
                 hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
                 rot_6d = matrix_to_rotation_6d(hTm[:, :3, :3])
@@ -315,39 +352,46 @@ class ContactPoseDataset(BaseDataset):
                     raise NotImplementedError
 
                 # Compute the CHOIR field
-                anchors = anchor_layer(verts)
-                choir, pcl_mean, pcl_scalar, ref_pts = compute_choir(
-                    to_cuda_(object_ptcld),
-                    to_cuda_(anchors),
-                    pointclouds_mean=to_cuda_(pointclouds_mean),
-                    bps_dim=self._bps_dim,  # type: ignore
+                visualize = (
+                    self._debug and not has_visualized and (random.random() < 0.25)
                 )
-                # Compute the dense MANO contact map
-                hand_contacts = compute_hand_contacts_simple(
-                    ref_pts.float(), verts.float()
-                )
+                for i in range(self._n_random_choir_per_sample):
+                    sample_pth = osp.join(
+                        samples_labels_pickle_pth, f"sample_{i:06d}.pkl"
+                    )
+                    if osp.isfile(sample_pth):
+                        sample_paths.append(sample_pth)
+                        continue
+                    anchors = anchor_layer(verts)
+                    choir, pcl_mean, pcl_scalar, ref_pts = compute_choir(
+                        to_cuda_(object_ptcld),
+                        to_cuda_(anchors),
+                        pointclouds_mean=to_cuda_(pointclouds_mean),
+                        bps_dim=self._bps_dim,  # type: ignore
+                    )
+                    # Compute the dense MANO contact map
+                    hand_contacts = compute_hand_contacts_simple(
+                        ref_pts.float(), verts.float()
+                    )
 
-                # Remove batch dimension
-                choir = choir.squeeze(0)
-                pcl_mean = pcl_mean.squeeze(0)
-                pcl_scalar = pcl_scalar.squeeze(0)
-                hand_contacts = hand_contacts.squeeze(0)
-                joints = joints.squeeze(0)
-                anchors = anchors.squeeze(0)
-                rot_6d = rot_6d.squeeze(0)
-                trans = trans.squeeze(0)
+                    # Remove batch dimension
+                    choir = choir.squeeze(0)
+                    pcl_mean = pcl_mean.squeeze(0)
+                    pcl_scalar = pcl_scalar.squeeze(0)
+                    hand_contacts = hand_contacts.squeeze(0)
+                    joints = joints.squeeze(0)
+                    anchors = anchors.squeeze(0)
+                    rot_6d = rot_6d.squeeze(0)
+                    trans = trans.squeeze(0)
 
-                samples.append(
-                    {
+                    sample = {
                         "noisy_choir": choir,
                         "noisy_hand_contacts": hand_contacts,
                         "pcl_mean": pcl_mean,
                         "pcl_scalar": pcl_scalar,
                         "bps_dim": self._bps_dim,
                     }
-                )
-                labels.append(
-                    {
+                    label = {
                         "choir": choir,
                         "hand_contacts": hand_contacts,
                         "joints": joints,
@@ -359,19 +403,19 @@ class ContactPoseDataset(BaseDataset):
                             "trans": trans,
                         },
                     }
-                )
-                if self._debug and not has_visualized and (random.random() < 0.25):
-                    visualize_CHOIR(
-                        choir,
-                        hand_contacts,
-                        verts,
-                        anchors,
-                        mesh,
-                        object_ptcld,
-                        ref_pts,
-                        affine_mano,
-                    )
-                    has_visualized = True
-            with open(samples_labels_pickle_pth, "wb") as f:
-                pickle.dump((samples, labels), f)
-        return samples, labels
+                    with open(sample_pth, "wb") as f:
+                        pickle.dump((sample, label), f)
+                    sample_paths.append(sample_pth)
+                    if visualize:
+                        visualize_CHOIR(
+                            choir,
+                            hand_contacts,
+                            verts,
+                            anchors,
+                            mesh,
+                            object_ptcld,
+                            ref_pts,
+                            affine_mano,
+                        )
+                        has_visualized = True
+        return sample_paths

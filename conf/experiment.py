@@ -51,6 +51,7 @@ class GraspingDatasetConf:
     tiny: bool = False
     augment: bool = False
     validation_objects: int = 5
+    n_random_choir_per_sample: int = 100
     perturbation_level: float = 0.0
     anchor_assignment: str = "random"
     scaling: str = "none"
@@ -95,8 +96,8 @@ model_store = store(group="model")
 @dataclass
 class BaselineModelConf:
     bps_dim: int
-    encoder_layer_dims: Tuple[int] = (1024, 512)
-    decoder_layer_dims: Tuple[int] = (512, 1024)
+    encoder_layer_dims: Tuple[int] = (1024, 512, 256)
+    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
     latent_dim: int = 128
 
 
