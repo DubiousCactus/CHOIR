@@ -11,7 +11,7 @@ Configurations for the experiments and config groups, using hydra-zen.
 
 from dataclasses import dataclass
 from test import launch_test
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 from hydra.conf import HydraConf, JobConf, RunDir
@@ -21,7 +21,7 @@ from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
 from dataset.contactpose import ContactPoseDataset
-from model.baseline import BaselineModel
+from model.baseline import BaselineModel, BaselineUNetModel
 from src.base_trainer import BaseTrainer
 from train import launch_experiment
 
@@ -90,17 +90,32 @@ model_store = store(group="model")
 
 # Not that encoder_input_dim depend on dataset.img_dim, so we need to use a partial to set them in
 # the launch_experiment function.
+
+
+@dataclass
+class BaselineModelConf:
+    bps_dim: int
+    encoder_layer_dims: Tuple[int] = (1024, 512)
+    decoder_layer_dims: Tuple[int] = (512, 1024)
+    latent_dim: int = 128
+
+
 model_store(
     pbuilds(
         BaselineModel,
+        builds_bases=(BaselineModelConf,),
         bps_dim=MISSING,
-        encoder_layer_dims=[512, 256, 128],
-        latent_dim=64,
-        decoder_layer_dims=[128, 256, 512],
     ),
     name="baseline",
 )
-
+model_store(
+    pbuilds(
+        BaselineUNetModel,
+        builds_bases=(BaselineModelConf,),
+        bps_dim=MISSING,
+    ),
+    name="baseline_unet",
+)
 
 " ================== Optimizer ================== "
 

@@ -93,7 +93,7 @@ class BaseTrainer:
         x, y = batch
         y_hat = self._model(x["noisy_choir"])
         loss = self._training_loss(y["choir"], y_hat)  # {'distances': _, 'anchors': _}
-        return loss["distances"] + loss["anchors"]
+        return loss["distances"]  # + loss["anchors"]
 
     def _train_epoch(self, description: str, visualize: bool, epoch: int) -> float:
         """Perform a single training epoch.
@@ -131,7 +131,8 @@ class BaseTrainer:
                 color_code,
             )
             if visualize and not has_visualized:
-                self._visualize(batch, epoch)
+                with torch.no_grad():
+                    self._visualize(batch, epoch)
                 has_visualized = True
             self._pbar.update()
         epoch_loss = epoch_loss.compute().item()

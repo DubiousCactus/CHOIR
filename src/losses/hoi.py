@@ -35,8 +35,8 @@ class CHOIRLoss(torch.nn.Module):
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
         loss = {
-            "distances": self._mse(y[:, :, 4], y_hat[:, :, 4]),
-            "anchors": self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:]),
+            "distances": self._mse(y[:, :, 4], y_hat[:, :, 4]) * 1000,
+            # "anchors": self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:]),
         }
         return loss
 

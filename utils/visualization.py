@@ -76,10 +76,11 @@ def visualize_CHOIR_prediction(
             min_dist = min(choir[0, :, -33].min(), choir[0, :, 4].min())
             max_dist = max(choir[0, :, -33].max(), choir[0, :, 4].max())
         elif anchor_assignment in ["closest", "random", "batched_closest_and_farthest"]:
-            min_dist, max_dist = choir[0, :, -33].min(), choir[0, :, -33].max()
+            min_dist, max_dist = choir[0, :, 4].min(), choir[0, :, 4].max()
         else:
             raise NotImplementedError
-        for i in range(0, reference_obj_points.shape[0], 1):
+        max_dist = max_dist + 1e-6
+        for i in range(0, reference_obj_points.shape[1], 1):
             # The color is proportional to the distance to the anchor. It is in hex format.
             # It is obtained from min-max normalization of the distance in the choir field,
             # without known range. The color range is 0 to 16777215.
@@ -98,7 +99,7 @@ def visualize_CHOIR_prediction(
                 plot.add_lines(
                     np.array(
                         [
-                            reference_obj_points[i, :].cpu().numpy(),
+                            reference_obj_points[0, i, :].cpu().numpy(),
                             closest_anchor.cpu().numpy(),
                         ]
                     ),
@@ -116,7 +117,7 @@ def visualize_CHOIR_prediction(
                     plot.add_lines(
                         np.array(
                             [
-                                reference_obj_points[i, :].cpu().numpy(),
+                                reference_obj_points[0, i, :].cpu().numpy(),
                                 farthest_anchor.cpu().numpy(),
                             ]
                         ),
@@ -175,6 +176,7 @@ def visualize_CHOIR_prediction(
             x_mean=pcl_mean,
             x_scalar=pcl_scalar,
             objective="anchors",
+            max_iterations=1000,
         )
     verts, _ = affine_mano(pose, shape, rot_6d, trans)
     V = verts[0].cpu().numpy()

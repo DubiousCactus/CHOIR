@@ -253,6 +253,9 @@ class ContactPoseDataset(BaseDataset):
             self._cache_dir,
             "samples_and_labels",
             f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
+            + f"perturbed-{self._perturbation_level}_"
+            + f"{self._anchor_assignment}-assigned_"
+            + f"{self._bps_dim}-bps_"
             + f"{split}.pkl",
         )
         if not osp.isdir(osp.dirname(samples_labels_pickle_pth)):
