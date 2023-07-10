@@ -357,7 +357,7 @@ class ContactPoseDataset(BaseDataset):
                 )
                 for i in range(self._n_random_choir_per_sample):
                     sample_pth = osp.join(
-                        samples_labels_pickle_pth, f"sample_{i:06d}.pkl"
+                        samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
                     )
                     if osp.isfile(sample_pth):
                         sample_paths.append(sample_pth)
