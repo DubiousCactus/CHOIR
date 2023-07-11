@@ -75,7 +75,7 @@ def visualize_CHOIR_prediction(
         if anchor_assignment == "closest_and_farthest":
             min_dist = min(choir[0, :, -33].min(), choir[0, :, 4].min())
             max_dist = max(choir[0, :, -33].max(), choir[0, :, 4].max())
-        elif anchor_assignment in ["closest", "random", "batched_closest_and_farthest"]:
+        elif anchor_assignment in ["closest", "random", "batched_fixed"]:
             min_dist, max_dist = choir[0, :, 4].min(), choir[0, :, 4].max()
         else:
             raise NotImplementedError
@@ -88,7 +88,7 @@ def visualize_CHOIR_prediction(
                 "closest",
                 "closest_and_farthest",
                 "random",
-                "batched_closest_and_farthest",
+                "batched_fixed",
             ]:
                 choir_one_hot = choir[0, i, 5:37]
                 index = torch.argmax(choir_one_hot, dim=-1)

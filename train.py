@@ -72,6 +72,7 @@ def launch_experiment(
 
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
+    # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
     if project_conf.USE_WANDB:
@@ -138,6 +139,7 @@ def launch_experiment(
 
 
 if __name__ == "__main__":
+    torch.set_num_threads(1)
     "============ Hydra-Zen ============"
     store.add_to_hydra_store(
         overwrite_ok=True

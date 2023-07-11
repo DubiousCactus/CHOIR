@@ -50,7 +50,7 @@ def compute_choir(
         pointcloud: Shape (N, 3)
         anchors: Shape (N_ANCHORS, 3)
         anchor_assignment: How to assign anchors to BPS points. Must be one of: "random",
-        "closest", "closest_and_farthest", "batched_closest_and_farthest".
+        "closest", "closest_and_farthest", "batched_fixed".
     """
     bps = bps_torch(
         bps_type="random_uniform",
@@ -127,7 +127,7 @@ def compute_choir(
                 farthest_anchor_ids, num_classes=anchors.shape[1]
             ),
         ]
-    elif anchor_assignment == "batched_closest_and_farthest":
+    elif anchor_assignment == "batched_fixed":
         raise NotImplementedError
     # Build the CHOIR representation:
     choir = torch.cat(

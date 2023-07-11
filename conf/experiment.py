@@ -83,6 +83,8 @@ class DataloaderConf:
     batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
+    num_workers: int = 8
+    pin_memory: bool = True
 
 
 " ================== Model ================== "
@@ -97,7 +99,7 @@ model_store = store(group="model")
 class BaselineModelConf:
     bps_dim: int
     encoder_layer_dims: Tuple[int] = (1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
+    decoder_layer_dims: Tuple[int] = (256, 512, 512)
     latent_dim: int = 128
 
 

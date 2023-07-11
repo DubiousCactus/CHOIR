@@ -290,10 +290,12 @@ class ContactPoseDataset(BaseDataset):
                     np.asarray(
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
-                )
+                ).cpu()
                 pointclouds.append(obj_ptcld)
                 meshes.append(obj_mesh)  # For visualization
-            pointclouds_mean = torch.stack(pointclouds, dim=0).mean(dim=0).mean(dim=0)
+            pointclouds_mean = (
+                torch.stack(pointclouds, dim=0).mean(dim=0).mean(dim=0).cpu()
+            )
             with open(pointcloud_mean_pth, "wb") as f:
                 pickle.dump(pointclouds_mean, f)
             with open(pointclouds_pth, "wb") as f:
@@ -370,43 +372,55 @@ class ContactPoseDataset(BaseDataset):
                         bps_dim=self._bps_dim,  # type: ignore
                     )
                     # Compute the dense MANO contact map
-                    hand_contacts = compute_hand_contacts_simple(
-                        ref_pts.float(), verts.float()
-                    )
+                    # hand_contacts = compute_hand_contacts_simple(
+                    # ref_pts.float(), verts.float()
+                    # )
 
                     # Remove batch dimension
-                    choir = choir.squeeze(0)
-                    pcl_mean = pcl_mean.squeeze(0)
-                    pcl_scalar = pcl_scalar.squeeze(0)
-                    hand_contacts = hand_contacts.squeeze(0)
-                    joints = joints.squeeze(0)
-                    anchors = anchors.squeeze(0)
-                    rot_6d = rot_6d.squeeze(0)
-                    trans = trans.squeeze(0)
+                    choir = choir.squeeze(0).cpu()
+                    pcl_mean = pcl_mean.squeeze(0).cpu()
+                    pcl_scalar = pcl_scalar.squeeze(0).cpu()
+                    # hand_contacts = hand_contacts.squeeze(0).cpu()
+                    joints = joints.squeeze(0).cpu()
+                    anchors = anchors.squeeze(0).cpu()
+                    rot_6d = rot_6d.squeeze(0).cpu()
+                    trans = trans.squeeze(0).cpu()
 
                     sample = {
                         "noisy_choir": choir,
-                        "noisy_hand_contacts": hand_contacts,
+                        # "noisy_hand_contacts": hand_contacts,
                         "pcl_mean": pcl_mean,
                         "pcl_scalar": pcl_scalar,
                         "bps_dim": self._bps_dim,
                     }
                     label = {
                         "choir": choir,
-                        "hand_contacts": hand_contacts,
+                        # "hand_contacts": hand_contacts,
                         "joints": joints,
                         "anchors": anchors,
                         "mano_params": {
-                            "pose": torch.tensor(mano_params["pose"]),
-                            "betas": torch.tensor(mano_params["betas"]),
+                            "pose": torch.tensor(mano_params["pose"]).cpu(),
+                            "betas": torch.tensor(mano_params["betas"]).cpu(),
                             "rot_6d": rot_6d,
                             "trans": trans,
                         },
                     }
+
+                    for k, v in sample.items():
+                        if isinstance(v, torch.Tensor):
+                            assert v.device == torch.device("cpu"), f"{k} is not on cpu"
+                    for k, v in label.items():
+                        if isinstance(v, torch.Tensor):
+                            assert v.device == torch.device("cpu"), f"{k} is not on cpu"
                     with open(sample_pth, "wb") as f:
                         pickle.dump((sample, label), f)
                     sample_paths.append(sample_pth)
                     if visualize:
+                        hand_contacts = (
+                            compute_hand_contacts_simple(ref_pts.float(), verts.float())
+                            .squeeze(0)
+                            .cpu()
+                        )
                         visualize_CHOIR(
                             choir,
                             hand_contacts,
