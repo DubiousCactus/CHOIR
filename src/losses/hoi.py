@@ -30,7 +30,7 @@ class CHOIRLoss(torch.nn.Module):
         y,
         y_hat,
     ) -> torch.Tensor:
-        if self._anchor_assignment not in ["random", "closest"]:
+        if self._anchor_assignment not in ["random", "closest", "batched_fixed"]:
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
@@ -44,6 +44,10 @@ class CHOIRLoss(torch.nn.Module):
 class DualHOILoss(torch.nn.Module):
     def __init__(self, bps_dim: int, anchor_assignment: str):
         super().__init__()
+        if anchor_assignment == "batched_fixed":
+            assert (
+                bps_dim % 32 == 0
+            ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment"
         self.bps = bps_torch(
             bps_type="random_uniform",
             n_bps_points=bps_dim,
@@ -80,7 +84,6 @@ class DualHOILoss(torch.nn.Module):
         if self._anchor_assignment in [
             "closest",
             "random",
-            "batched_closest_and_farthest",
         ]:
             choir_one_hot = choir[:, :, -32:]
             index = torch.argmax(choir_one_hot, dim=-1)
@@ -105,8 +108,20 @@ class DualHOILoss(torch.nn.Module):
             choir_loss = torch.nn.functional.mse_loss(
                 lowest_anchor_distances, choir[:, :, 4]
             ) + torch.nn.functional.mse_loss(highest_anchor_distances, choir[:, :, -33])
-        elif self._anchor_assignment == "batched_closest_and_farthest":
-            raise NotImplementedError
+        elif self._anchor_assignment == "batched_fixed":
+            anchor_ids = (
+                torch.arange(
+                    0,
+                    anchors.shape[1],
+                    device=choir.device,
+                )
+                .repeat((choir.shape[1] // 32,))
+                .unsqueeze(0)
+            )
+            distances = torch.gather(
+                anchor_distances, 2, anchor_ids.unsqueeze(-1)
+            ).squeeze(-1)
+            choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
         else:
             raise ValueError(
                 f"Unknown anchor assignment method: {self._anchor_assignment}"

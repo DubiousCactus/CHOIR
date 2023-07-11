@@ -128,7 +128,28 @@ def compute_choir(
             ),
         ]
     elif anchor_assignment == "batched_fixed":
-        raise NotImplementedError
+        # Assign all ordered 32 anchors to a batch of BPS points and repeat for all available
+        # batches. The number of batches is determined by the number of BPS points, and the latter
+        # must be a multiple of 32.
+        assert (
+            bps_dim % 32 == 0
+        ), "The number of BPS points must be a multiple of 32 for batched_fixed anchor assignment."
+        anchor_ids = (
+            torch.arange(
+                0,
+                anchors.shape[1],
+                device=ref_pts.device,
+            )
+            .repeat((ref_pts.shape[0] // 32,))
+            .unsqueeze(0)
+        )
+        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
+            -1
+        )
+        # Here we won't need the anchor index since it's a fixed pattern!
+        anchor_encodings = [
+            distances.unsqueeze(-1),
+        ]
     # Build the CHOIR representation:
     choir = torch.cat(
         [

@@ -24,8 +24,13 @@ class BaselineModel(torch.nn.Module):
         latent_dim: int,
     ) -> None:
         super().__init__()
-        self.single_anchor = anchor_assignment in ["closest", "random"]
-        self.choir_dim = 37 if self.single_anchor else 4 + (33 * 2)
+        self.single_anchor = anchor_assignment in ["closest", "random", "batched_fixed"]
+        if anchor_assignment == "batched_fixed":
+            self.choir_dim = (
+                5  # No index for the anchor, it's a fixed repeating pattern
+            )
+        else:
+            self.choir_dim = 37 if self.single_anchor else 4 + (33 * 2)
         encoder: List[torch.nn.Module] = [
             torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[0]),
             torch.nn.BatchNorm1d(encoder_layer_dims[0]),
@@ -95,13 +100,12 @@ class BaselineModel(torch.nn.Module):
                 )
             else:
                 raise NotImplementedError
-        # choir = torch.cat([bps_dist, bps_deltas, anchor_dist, anchor_class], dim=-1)
         choir = torch.cat(
             [
                 _x.view(B, P, self.choir_dim)[:, :, :4].requires_grad_(False),
                 anchor_dist,
-                anchor_class,
-            ],
+            ]
+            + ([anchor_class] if self.choir_dim > 5 else []),
             dim=-1,
         )
         assert choir.shape == input_shape, f"{choir.shape} != {input_shape}"
@@ -118,8 +122,13 @@ class BaselineUNetModel(torch.nn.Module):
         latent_dim: int,
     ) -> None:
         super().__init__()
-        self.single_anchor = anchor_assignment in ["closest", "random"]
-        self.choir_dim = 37 if self.single_anchor else 4 + (33 * 2)
+        self.single_anchor = anchor_assignment in ["closest", "random", "batched_fixed"]
+        if anchor_assignment == "batched_fixed":
+            self.choir_dim = (
+                5  # No index for the anchor, it's a fixed repeating pattern
+            )
+        else:
+            self.choir_dim = 37 if self.single_anchor else 4 + (33 * 2)
         encoder_mlp: List[torch.nn.Module] = [
             torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[0]),
         ]
@@ -202,13 +211,12 @@ class BaselineUNetModel(torch.nn.Module):
                 )
             else:
                 raise NotImplementedError
-        # choir = torch.cat([bps_dist, bps_deltas, anchor_dist, anchor_class], dim=-1)
         choir = torch.cat(
             [
                 _x.view(B, P, self.choir_dim)[:, :, :4].requires_grad_(False),
                 anchor_dist,
-                anchor_class,
-            ],
+            ]
+            + ([anchor_class] if self.choir_dim > 5 else []),
             dim=-1,
         )
         assert choir.shape == input_shape, f"{choir.shape} != {input_shape}"

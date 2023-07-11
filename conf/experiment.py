@@ -60,6 +60,7 @@ class GraspingDatasetConf:
     right_hand_only: bool = True
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
+    debug: bool = False
 
 
 # Pre-set the group for store's dataset entries
@@ -99,7 +100,7 @@ model_store = store(group="model")
 class BaselineModelConf:
     bps_dim: int
     encoder_layer_dims: Tuple[int] = (1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512, 512)
+    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
     latent_dim: int = 128
 
 

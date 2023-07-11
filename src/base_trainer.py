@@ -64,6 +64,7 @@ class BaseTrainer:
         )  # For test-time optimization
         signal.signal(signal.SIGINT, self._terminator)
 
+    @to_cuda
     def _visualize(
         self,
         batch: Union[Tuple, List, torch.Tensor],

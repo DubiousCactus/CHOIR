@@ -90,9 +90,15 @@ def visualize_CHOIR_prediction(
                 "random",
                 "batched_fixed",
             ]:
-                choir_one_hot = choir[0, i, 5:37]
-                index = torch.argmax(choir_one_hot, dim=-1)
-                closest_anchor = anchors[0, index, :]
+                if anchor_assignment == "batched_fixed":
+                    assert (
+                        bps_dim % 32 == 0
+                    ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment."
+                    index = i % (bps_dim // 32)
+                else:
+                    choir_one_hot = choir[0, i, 5:37]
+                    index = torch.argmax(choir_one_hot, dim=-1)
+                anchor = anchors[0, index, :]
                 color = int(
                     (choir[0, i, 4] - min_dist) / (max_dist - min_dist) * 16777215
                 )
@@ -100,7 +106,7 @@ def visualize_CHOIR_prediction(
                     np.array(
                         [
                             reference_obj_points[0, i, :].cpu().numpy(),
-                            closest_anchor.cpu().numpy(),
+                            anchor.cpu().numpy(),
                         ]
                     ),
                     width=1,
@@ -208,8 +214,9 @@ def visualize_CHOIR(
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
     affine_mano: AffineMANO,
+    anchor_assignment: str,
 ):
-    n_anchors = anchors.shape[1]
+    n_anchors = anchors.shape[0]
     faces = affine_mano.faces
     V = verts[0].cpu().numpy()
     F = faces.cpu().numpy()
@@ -234,7 +241,7 @@ def visualize_CHOIR(
     for i in range(n_anchors):
         pl.add_mesh(
             pv.Cube(
-                center=anchors[0, i].cpu().numpy(),
+                center=anchors[i].cpu().numpy(),
                 x_length=3e-3,
                 y_length=3e-3,
                 z_length=3e-3,
@@ -256,14 +263,23 @@ def visualize_CHOIR(
     pl.add_points(
         obj_pointcloud.cpu().numpy(), color="red", name="base_ptcld", opacity=0.2
     )
+    bps_dim = reference_obj_points.shape[0]
     for i in range(0, reference_obj_points.shape[0], 1):
-        anchor = anchors[0, int(choir[0, i, -1]), :]
+        if anchor_assignment in ["closest", "random"]:
+            index = torch.argmax(choir[i, -32:])
+        elif anchor_assignment == "batched_fixed":
+            index = i % (bps_dim // 32)
+        else:
+            raise NotImplementedError(
+                f"Anchor assignment {anchor_assignment} not implemented."
+            )
+        anchor = anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
         # without known range. The color range is 0 to 16777215.
         color = int(
-            (choir[0, i, 0] - choir[0, :, 0].min())
-            / (choir[0, :, 0].max() - choir[0, :, 0].min())
+            (choir[i, 0] - choir[:, 0].min())
+            / (choir[:, 0].max() - choir[:, 0].min())
             * 16777215
         )
         pl.add_lines(

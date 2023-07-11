@@ -139,7 +139,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 15 if tiny else 51
+        n_participants = 25 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         if not osp.isdir(self._cache_dir):
@@ -194,24 +194,10 @@ class ContactPoseDataset(BaseDataset):
                         self._cache_dir,
                         f"{obj_name}_{p_num}_{intent}_{hand}-hand.pkl",
                     )
-                    # Make sure the hand_pose_seq_pth is not in the list of failures in missing.txt.
-                    # I know it's a very stupid way of doing it but because I load the dataset
-                    # twice (train and eval) I don't want to have to recompute the missing ones, and
-                    # I can't store them in memory because I instantiate this class twice.
-                    missing = False
-                    with open(osp.join(self._cache_dir, "missing.txt"), "r") as f:
-                        for line in f:
-                            if grasp_path in line:
-                                missing = True
-                                break
-                    if missing:
-                        continue
                     data = load_contact_pose_data(
                         p_num, intent, obj_name, hand_indices[hand]
                     )
                     if data is None:
-                        with open(osp.join(self._cache_dir, "missing.txt"), "a") as f:
-                            f.write(grasp_path + "\n")
                         continue
                     obj_mesh_path, grasp = data
                     with open(grasp_path, "wb") as f:
@@ -301,7 +287,6 @@ class ContactPoseDataset(BaseDataset):
             with open(pointclouds_pth, "wb") as f:
                 pickle.dump(pointclouds, f)
         # For each object-grasp pair, compute the CHOIR field.
-        has_visualized = False
         print("[*] Computing CHOIR fields...")
         for object_ptcld, mesh_pth, grasp_pth in tqdm(
             zip(pointclouds, objects, grasps), total=len(objects)
@@ -354,9 +339,8 @@ class ContactPoseDataset(BaseDataset):
                     raise NotImplementedError
 
                 # Compute the CHOIR field
-                visualize = (
-                    self._debug and not has_visualized and (random.random() < 0.25)
-                )
+                visualize = self._debug and (random.random() < 0.1)
+                has_visualized = False
                 for i in range(self._n_random_choir_per_sample):
                     sample_pth = osp.join(
                         samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
@@ -370,6 +354,7 @@ class ContactPoseDataset(BaseDataset):
                         to_cuda_(anchors),
                         pointclouds_mean=to_cuda_(pointclouds_mean),
                         bps_dim=self._bps_dim,  # type: ignore
+                        anchor_assignment=self._anchor_assignment,
                     )
                     # Compute the dense MANO contact map
                     # hand_contacts = compute_hand_contacts_simple(
@@ -415,7 +400,7 @@ class ContactPoseDataset(BaseDataset):
                     with open(sample_pth, "wb") as f:
                         pickle.dump((sample, label), f)
                     sample_paths.append(sample_pth)
-                    if visualize:
+                    if visualize and not has_visualized:
                         hand_contacts = (
                             compute_hand_contacts_simple(ref_pts.float(), verts.float())
                             .squeeze(0)
@@ -430,6 +415,7 @@ class ContactPoseDataset(BaseDataset):
                             object_ptcld,
                             ref_pts,
                             affine_mano,
+                            self._anchor_assignment,
                         )
                         has_visualized = True
         return sample_paths
