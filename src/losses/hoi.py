@@ -34,8 +34,18 @@ class CHOIRLoss(torch.nn.Module):
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
+        (
+            choir_gt,
+            anchor_deltas,
+            joints_gt,
+            anchors_gt,
+            pose_gt,
+            beta_gt,
+            rot_gt,
+            trans_gt,
+        ) = y
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
-        choir_gt, target_anchor_deltas = y["choir"], y["anchor_deltas"]
+        choir_gt, target_anchor_deltas = choir_gt, anchor_deltas
         pred_anchor_deltas = orientations_pred * choir_pred[:, :, 4].unsqueeze(-1)
         loss = {
             "distances": self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4]) * 1000,

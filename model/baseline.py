@@ -184,14 +184,17 @@ class BaselineUNetModel(torch.nn.Module):
         self.decoder_bn = torch.nn.ModuleList(decoder_bn)
 
         anchor_orientation_decoder: List[torch.nn.Module] = [
-            torch.nn.Linear(latent_dim, decoder_layer_dims[0]),
+            torch.nn.Linear(latent_dim + encoder_layer_dims[-1], decoder_layer_dims[0]),
         ]
         anchor_orientation_decoder_bn: List[torch.nn.Module] = [
             torch.nn.BatchNorm1d(decoder_layer_dims[0]),
         ]
         for i in range(len(decoder_layer_dims) - 1):
             anchor_orientation_decoder.append(
-                torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
+                torch.nn.Linear(
+                    decoder_layer_dims[i] + encoder_layer_dims[-2 - i],
+                    decoder_layer_dims[i + 1],
+                )
             )
             anchor_orientation_decoder_bn.append(
                 torch.nn.BatchNorm1d(decoder_layer_dims[i + 1])
@@ -238,10 +241,13 @@ class BaselineUNetModel(torch.nn.Module):
         latent = self.encoder_mlp[-1](x)  # Latent embedding
         x = latent
         for i, (linear, bn) in enumerate(
-            zip(self.anchor_orientation_decoder, self.anchor_orientation_decoder_bn)
+            zip(
+                self.anchor_orientation_decoder[:-1], self.anchor_orientation_decoder_bn
+            )
         ):
             x = torch.cat([x, encoder_outputs[-1 - i]], dim=-1)
             x = bn(torch.nn.functional.relu(linear(x)))
+        x = self.anchor_orientation_decoder[-1](x)
         anchor_orientations = x.view(B, P, 3)
         anchor_orientations = torch.nn.functional.normalize(anchor_orientations, dim=-1)
         x = latent

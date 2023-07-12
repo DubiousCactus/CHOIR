@@ -29,22 +29,38 @@ def visualize_model_predictions(
     model: torch.nn.Module, batch: Union[Tuple, List, torch.Tensor], step: int, **kwargs
 ) -> None:
     x, y = batch  # type: ignore
+    noisy_choir, pcl_mean, pcl_scalar, bps_dim = x
+    (
+        choir_gt,
+        anchor_deltas,
+        joints_gt,
+        anchors_gt,
+        pose_gt,
+        beta_gt,
+        rot_gt,
+        trans_gt,
+    ) = y
     if not project_conf.HEADLESS:
         noisy_choir, pcl_mean, pcl_scalar = (
-            x["noisy_choir"],
-            x["pcl_mean"],
-            x["pcl_scalar"],
+            noisy_choir,
+            pcl_mean,
+            pcl_scalar,
         )
         pred = model(noisy_choir)
         choir_pred, orientations_pred = pred["choir"], pred["orientations"]
-        gt_choir, mano_params_gt = y["choir"], y["mano_params"]
+        mano_params_gt = {
+            "pose": pose_gt,
+            "beta": beta_gt,
+            "rot_6d": rot_gt,
+            "trans": trans_gt,
+        }
         visualize_CHOIR_prediction(
             choir_pred,
-            gt_choir,
+            choir_gt,
             pcl_mean,
             pcl_scalar,
             mano_params_gt,
-            bps_dim=x["bps_dim"].squeeze()[0].long().item(),
+            bps_dim=bps_dim.squeeze()[0].long().item(),
             anchor_assignment=kwargs["anchor_assignment"],
         )
     if project_conf.USE_WANDB:
@@ -176,7 +192,7 @@ def visualize_CHOIR_prediction(
     F = faces.cpu().numpy()
     # ============ Optimize MANO on the predicted CHOIR field to visualize it ============
     with torch.set_grad_enabled(True):
-        pose, shape, rot_6d, trans, anchors = optimize_pose_pca_from_choir(
+        pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
             choir_pred,
             anchor_assignment=anchor_assignment,
             hand_contacts=None,
@@ -186,21 +202,50 @@ def visualize_CHOIR_prediction(
             objective="anchors",
             max_iterations=1000,
         )
-    verts, _ = affine_mano(pose, shape, rot_6d, trans)
-    V = verts[0].cpu().numpy()
+    # ====== Metrics and qualitative comparison ======
+    gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+    gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+    gt_anchors = affine_mano.get_anchors(gt_verts)
+    verts_pred, joints_pred = affine_mano(pose, shape, rot_6d, trans)
+    # === Anchor error ===
+    print(
+        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+    )
+    # === MPJPE ===
+    pjpe = torch.linalg.vector_norm(
+        gt_joints - joints_pred, ord=2, dim=-1
+    )  # Per-joint position error (B, N, 21)
+    mpjpe = torch.mean(pjpe, dim=-1).item()  # Mean per-joint position error (B, N)
+    print(f"MPJPE (mm): {mpjpe * 1000:.2f}")
+    root_aligned_pjpe = torch.linalg.vector_norm(
+        (gt_joints - gt_joints[:, 0, :]) - (joints_pred - joints_pred[:, 0, :]),
+        ord=2,
+        dim=-1,
+    )  # Per-joint position error (B, N, 21)
+    root_aligned_mpjpe = torch.mean(
+        root_aligned_pjpe, dim=-1
+    ).item()  # Mean per-joint position error (B, N)
+    print(f"Root-aligned MPJPE (mm): {root_aligned_mpjpe * 1000:.2f}")
+    # ====== MPVPE ======
+    # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
+    # hand meshes.
+    pvpe = torch.linalg.vector_norm(
+        gt_verts - verts_pred, ord=2, dim=-1
+    )  # Per-vertex position error (B, N, 778)
+    mpvpe = torch.mean(pvpe, dim=-1).item()  # Mean per-vertex position error (B, N)
+    print(f"MPVPE (mm): {mpvpe * 1000:.2f}")
+
+    V = verts_pred[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, choir_pred, hand_mesh, anchors)
+    add_choir_to_plot(pl, choir_pred, hand_mesh, anchors_pred)
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
-    pose, shape, rot_6d, trans = tuple(mano_params_gt.values())
-    verts, _ = affine_mano(pose, shape, rot_6d, trans)
-    V = verts[0].cpu().numpy()
+    V = gt_verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
-    hand_mesh = pv.wrap(tmesh)
-    gt_anchors = affine_mano.get_anchors(verts)
-    add_choir_to_plot(pl, choir_gt, hand_mesh, gt_anchors)
+    gt_hand_mesh = pv.wrap(tmesh)
+    add_choir_to_plot(pl, choir_gt, gt_hand_mesh, gt_anchors)
     pl.link_views()
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()

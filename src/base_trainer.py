@@ -10,16 +10,17 @@ Base trainer class.
 """
 
 import signal
-from typing import List, Optional, Tuple, Union
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
-import wandb
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 
+import wandb
 from conf import project as project_conf
 from src.losses.hoi import CHOIRLoss, DualHOILoss
 from utils import blink_pbar, to_cuda, update_pbar_str
@@ -83,7 +84,7 @@ class BaseTrainer:
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so write this code only once at the cost of many function calls!
         Args:
@@ -92,21 +93,36 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         x, y = batch
-        y_hat = self._model(x["noisy_choir"])
+        noisy_choir, pcl_mean, pcl_scalar, bps_dim = x
+        (
+            choir_gt,
+            anchor_deltas,
+            joints_gt,
+            anchors_gt,
+            pose_gt,
+            beta_gt,
+            rot_gt,
+            trans_gt,
+        ) = y
+        y_hat = self._model(noisy_choir)
         loss = self._training_loss(
             y, y_hat
         )  # {'distances': _, 'orientations': _, 'anchors': _}
         return loss["distances"] + 3 * loss["anchor_deltas"], loss
 
-    def _train_epoch(self, description: str, visualize: bool, epoch: int) -> float:
+    def _train_epoch(
+        self, description: str, visualize: bool, epoch: int, last_val_loss: float
+    ) -> float:
         """Perform a single training epoch.
         Args:
             description (str): Description of the epoch for tqdm.
+            visualize (bool): Whether to visualize the model predictions.
             epoch (int): Current epoch number.
+            last_val_loss (float): Last validation loss.
         Returns:
             float: Average training loss for the epoch.
         """
-        epoch_loss = MeanMetric()
+        epoch_loss, epoch_loss_components = MeanMetric(), defaultdict(MeanMetric)
         self._pbar.reset()
         self._pbar.set_description(description)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
@@ -127,10 +143,12 @@ class BaseTrainer:
             loss.backward()
             self._opt.step()
             epoch_loss.update(loss.item())
+            for k, v in loss_components.items():
+                epoch_loss_components[k].update(v.item())
             update_pbar_str(
                 self._pbar,
                 f"{description} [loss={epoch_loss.compute():.4f} /"
-                + f" min_val_loss={self._model_saver.min_val_loss:.4f}]",
+                + f" val_loss={last_val_loss:.4f}]",
                 color_code,
             )
             if visualize and not has_visualized:
@@ -141,6 +159,13 @@ class BaseTrainer:
         epoch_loss = epoch_loss.compute().item()
         if project_conf.USE_WANDB:
             wandb.log({"train_loss": epoch_loss}, step=epoch)
+            wandb.log(
+                {
+                    f"Detailed loss - Training/{k}": v.compute().item()
+                    for k, v in epoch_loss_components.items()
+                },
+                step=epoch,
+            )
         return epoch_loss
 
     def _val_epoch(self, description: str, visualize: bool, epoch: int) -> float:
@@ -152,10 +177,10 @@ class BaseTrainer:
             float: Average validation loss for the epoch.
         """
         has_visualized = False
-        "==================== Validation loop for one epoch ===================="
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.VALIDATION.value]
+        "==================== Validation loop for one epoch ===================="
         with torch.no_grad():
-            val_loss = MeanMetric()
+            val_loss, val_loss_components = MeanMetric(), defaultdict(MeanMetric)
             for i, batch in enumerate(self._val_loader):
                 if (
                     not self._running
@@ -170,6 +195,8 @@ class BaseTrainer:
                     batch
                 )  # User implementation goes here (train.py)
                 val_loss.update(loss.item())
+                for k, v in loss_components.items():
+                    val_loss_components[k].update(v.item())
                 update_pbar_str(
                     self._pbar,
                     f"{description} [loss={val_loss.compute():.4f} /"
@@ -183,6 +210,13 @@ class BaseTrainer:
             val_loss = val_loss.compute().item()
             if project_conf.USE_WANDB:
                 wandb.log({"val_loss": val_loss}, step=epoch)
+                wandb.log(
+                    {
+                        f"Detailed loss - Validation/{k}": v.compute().item()
+                        for k, v in val_loss_components.items()
+                    },
+                    step=epoch,
+                )
             self._model_saver(epoch, val_loss)
             return val_loss
 
@@ -222,6 +256,9 @@ class BaseTrainer:
                     visualize_train_every > 0
                     and (epoch + 1) % visualize_train_every == 0,
                     epoch,
+                    last_val_loss=val_losses[-1]
+                    if len(val_losses) > 0
+                    else float("inf"),
                 )
             )
             if epoch % val_every == 0:
@@ -241,6 +278,10 @@ class BaseTrainer:
                 self._plot(epoch, train_losses, val_losses)
         self._pbar.close()
         print(f"[*] Training finished for {self._run_name}!")
+        print(
+            f"[*] Best validation loss: {self._model_saver.min_val_loss:.4f} "
+            + f"at epoch {self._model_saver.min_val_loss_epoch}."
+        )
 
     def _setup_plot(self):
         """Setup the plot for training and validation losses."""
@@ -276,12 +317,22 @@ class BaseTrainer:
             color=project_conf.Theme.VALIDATION.value,
             label="Validation loss",
         )
+        best_metrics = (
+            "["
+            + ",".join(
+                [
+                    f"{metric_name}={metric_value:.4f} "
+                    for metric_name, metric_value in self._model_saver.best_metrics.items()
+                ]
+            )
+            + "]"
+        )
         plt.scatter(
             [self._model_saver.min_val_loss_epoch],
             [self._model_saver.min_val_loss],
             color="red",
             marker="+",
-            label="Best model",
+            label=f"Best model {best_metrics}",
             style="inverted",
         )
         plt.show()
@@ -347,9 +398,12 @@ class BaseTrainer:
             project_conf.SIGINT_BEHAVIOR
             == project_conf.TerminationBehavior.WAIT_FOR_EPOCH_END
         ):
-            print("[!] SIGINT received. Waiting for epoch to end.")
+            print(
+                f"[!] SIGINT received. Waiting for epoch to end for {self._run_name}."
+            )
         elif (
             project_conf.SIGINT_BEHAVIOR == project_conf.TerminationBehavior.ABORT_EPOCH
         ):
-            print("[!] SIGINT received. Aborting epoch.")
+            print(f"[!] SIGINT received. Aborting epoch for {self._run_name}!")
+            raise KeyboardInterrupt
         self._running = False

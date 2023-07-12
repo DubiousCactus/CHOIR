@@ -139,7 +139,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 25 if tiny else 51
+        n_participants = 15 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         if not osp.isdir(self._cache_dir):
@@ -292,8 +292,8 @@ class ContactPoseDataset(BaseDataset):
             zip(pointclouds, objects, grasps), total=len(objects)
         ):
             # Load the object mesh and MANO params
-            mesh = o3dio.read_triangle_mesh(mesh_pth)
-            grasp_data = pickle.load(open(grasp_pth, "rb"))
+            with open(grasp_pth, "rb") as f:
+                grasp_data = pickle.load(f)
             """
             {
                 'grasp': (
@@ -372,33 +372,31 @@ class ContactPoseDataset(BaseDataset):
                     rot_6d = rot_6d.squeeze(0).cpu()
                     trans = trans.squeeze(0).cpu()
 
-                    sample = {
-                        "noisy_choir": choir,
-                        # "noisy_hand_contacts": hand_contacts,
-                        "pcl_mean": pcl_mean,
-                        "pcl_scalar": pcl_scalar,
-                        "bps_dim": self._bps_dim,
-                    }
-                    label = {
-                        "choir": choir,
-                        # "hand_contacts": hand_contacts,
-                        "anchor_deltas": anchor_deltas,
-                        "joints": joints,
-                        "anchors": anchors,
-                        "mano_params": {
-                            "pose": torch.tensor(mano_params["pose"]).cpu(),
-                            "betas": torch.tensor(mano_params["betas"]).cpu(),
-                            "rot_6d": rot_6d,
-                            "trans": trans,
-                        },
-                    }
+                    sample = (
+                        choir,
+                        # hand_contacts,
+                        pcl_mean,
+                        pcl_scalar,
+                        self._bps_dim,
+                    )
+                    label = (
+                        choir,
+                        # hand_contacts,
+                        anchor_deltas,
+                        joints,
+                        anchors,
+                        torch.tensor(mano_params["pose"]).cpu(),
+                        torch.tensor(mano_params["betas"]).cpu(),
+                        rot_6d,
+                        trans,
+                    )
 
-                    for k, v in sample.items():
+                    for v in sample:
                         if isinstance(v, torch.Tensor):
-                            assert v.device == torch.device("cpu"), f"{k} is not on cpu"
-                    for k, v in label.items():
+                            assert v.device == torch.device("cpu")
+                    for v in label:
                         if isinstance(v, torch.Tensor):
-                            assert v.device == torch.device("cpu"), f"{k} is not on cpu"
+                            assert v.device == torch.device("cpu")
                     with open(sample_pth, "wb") as f:
                         pickle.dump((sample, label), f)
                     sample_paths.append(sample_pth)
@@ -408,6 +406,7 @@ class ContactPoseDataset(BaseDataset):
                             .squeeze(0)
                             .cpu()
                         )
+                        mesh = o3dio.read_triangle_mesh(mesh_pth)
                         visualize_CHOIR(
                             choir,
                             hand_contacts,
