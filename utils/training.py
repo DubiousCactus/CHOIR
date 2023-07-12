@@ -71,6 +71,10 @@ def optimize_pose_pca_from_choir(
         anchor_loss, contacts_loss = choir_loss(
             verts, anchors, choir, hand_contacts, x_mean, x_scalar
         )
+        regularizer = (
+            torch.norm(shape) ** 2
+        )  # Encourage the shape parameters to remain close to 0
+
         proc_bar.set_description(
             f"Anchors loss: {anchor_loss.item():.10f} / Contacts loss: {contacts_loss.item():.10f}"
         )
@@ -88,6 +92,7 @@ def optimize_pose_pca_from_choir(
             raise ValueError(
                 f"Unknown objective: {objective}. Must be one of 'both', 'contacts', 'anchors'"
             )
+        loss = loss + regularizer
         if torch.abs(prev_loss - loss.detach()) < loss_thresh:
             break
         prev_loss = loss.detach()

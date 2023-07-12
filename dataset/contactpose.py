@@ -349,7 +349,7 @@ class ContactPoseDataset(BaseDataset):
                         sample_paths.append(sample_pth)
                         continue
                     anchors = anchor_layer(verts)
-                    choir, pcl_mean, pcl_scalar, ref_pts = compute_choir(
+                    choir, pcl_mean, pcl_scalar, ref_pts, anchor_deltas = compute_choir(
                         to_cuda_(object_ptcld),
                         to_cuda_(anchors),
                         pointclouds_mean=to_cuda_(pointclouds_mean),
@@ -367,6 +367,7 @@ class ContactPoseDataset(BaseDataset):
                     pcl_scalar = pcl_scalar.squeeze(0).cpu()
                     # hand_contacts = hand_contacts.squeeze(0).cpu()
                     joints = joints.squeeze(0).cpu()
+                    anchor_deltas = anchor_deltas.squeeze(0).cpu()
                     anchors = anchors.squeeze(0).cpu()
                     rot_6d = rot_6d.squeeze(0).cpu()
                     trans = trans.squeeze(0).cpu()
@@ -381,6 +382,7 @@ class ContactPoseDataset(BaseDataset):
                     label = {
                         "choir": choir,
                         # "hand_contacts": hand_contacts,
+                        "anchor_deltas": anchor_deltas,
                         "joints": joints,
                         "anchors": anchors,
                         "mano_params": {
@@ -411,6 +413,7 @@ class ContactPoseDataset(BaseDataset):
                             hand_contacts,
                             verts,
                             anchors,
+                            anchor_deltas,
                             mesh,
                             object_ptcld,
                             ref_pts,

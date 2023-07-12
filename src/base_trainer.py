@@ -93,8 +93,10 @@ class BaseTrainer:
         """
         x, y = batch
         y_hat = self._model(x["noisy_choir"])
-        loss = self._training_loss(y["choir"], y_hat)  # {'distances': _, 'anchors': _}
-        return loss["distances"]  # + loss["anchors"]
+        loss = self._training_loss(
+            y, y_hat
+        )  # {'distances': _, 'orientations': _, 'anchors': _}
+        return loss["distances"] + 3 * loss["anchor_deltas"], loss
 
     def _train_epoch(self, description: str, visualize: bool, epoch: int) -> float:
         """Perform a single training epoch.
@@ -119,7 +121,7 @@ class BaseTrainer:
                 print("[!] Training aborted.")
                 break
             self._opt.zero_grad()
-            loss = self._train_val_iteration(
+            loss, loss_components = self._train_val_iteration(
                 batch
             )  # User implementation goes here (train.py)
             loss.backward()
@@ -164,7 +166,7 @@ class BaseTrainer:
                     break
                 # Blink the progress bar to indicate that the validation loop is running
                 blink_pbar(i, self._pbar, 4)
-                loss = self._train_val_iteration(
+                loss, loss_components = self._train_val_iteration(
                     batch
                 )  # User implementation goes here (train.py)
                 val_loss.update(loss.item())

@@ -100,7 +100,7 @@ model_store = store(group="model")
 class BaselineModelConf:
     bps_dim: int
     encoder_layer_dims: Tuple[int] = (1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
+    decoder_layer_dims: Tuple[int] = (256, 512)
     latent_dim: int = 128
 
 

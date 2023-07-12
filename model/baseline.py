@@ -56,6 +56,25 @@ class BaselineModel(torch.nn.Module):
             decoder.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
             decoder.append(torch.nn.ReLU())
         self.decoder = torch.nn.Sequential(*decoder)
+        anchor_orientation_decoder: List[torch.nn.Module] = [
+            torch.nn.Linear(latent_dim, decoder_layer_dims[0]),
+            torch.nn.BatchNorm1d(decoder_layer_dims[0]),
+            torch.nn.ReLU(),
+        ]
+        for i in range(len(decoder_layer_dims) - 1):
+            anchor_orientation_decoder.append(
+                torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
+            )
+            anchor_orientation_decoder.append(
+                torch.nn.BatchNorm1d(decoder_layer_dims[i + 1])
+            )
+            anchor_orientation_decoder.append(torch.nn.ReLU())
+        anchor_orientation_decoder.append(
+            torch.nn.Linear(decoder_layer_dims[-1], 3 * bps_dim)
+        )
+        self.anchor_orientation_decoder = torch.nn.Sequential(
+            *anchor_orientation_decoder
+        )
         # self._bps_dist_decoder = torch.nn.Sequential(
         # torch.nn.Linear(decoder_layer_dims[-1], bps_dim), torch.nn.ReLU()
         # )
@@ -81,8 +100,10 @@ class BaselineModel(torch.nn.Module):
         input_shape = x.shape
         B, P, _ = input_shape
         _x = x
-        x = self.encoder(x.flatten(start_dim=1))
-        x = self.decoder(x)
+        latent = self.encoder(x.flatten(start_dim=1))
+        anchor_orientations = self.anchor_orientation_decoder(latent).view(B, P, 3)
+        anchor_orientations = torch.nn.functional.normalize(anchor_orientations, dim=-1)
+        x = self.decoder(latent)
         # bps_dist = self._bps_dist_decoder(x).view(B, P, 1)  # N, 1
         # bps_deltas = self._bps_deltas_decoder(x).view(B, P, 3)  # N, 3
         sqrt_distances = self._anchor_dist_decoder(x)
@@ -109,9 +130,11 @@ class BaselineModel(torch.nn.Module):
             dim=-1,
         )
         assert choir.shape == input_shape, f"{choir.shape} != {input_shape}"
-        return choir
+        return {"choir": choir, "orientations": anchor_orientations}
 
 
+# TODO: Refactor so that it's optionally using skip connections instead of duplicating so much
+# code!
 class BaselineUNetModel(torch.nn.Module):
     def __init__(
         self,
@@ -159,6 +182,29 @@ class BaselineUNetModel(torch.nn.Module):
             decoder_bn.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
         self.decoder_mlp = torch.nn.ModuleList(decoder_mlp)
         self.decoder_bn = torch.nn.ModuleList(decoder_bn)
+
+        anchor_orientation_decoder: List[torch.nn.Module] = [
+            torch.nn.Linear(latent_dim, decoder_layer_dims[0]),
+        ]
+        anchor_orientation_decoder_bn: List[torch.nn.Module] = [
+            torch.nn.BatchNorm1d(decoder_layer_dims[0]),
+        ]
+        for i in range(len(decoder_layer_dims) - 1):
+            anchor_orientation_decoder.append(
+                torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
+            )
+            anchor_orientation_decoder_bn.append(
+                torch.nn.BatchNorm1d(decoder_layer_dims[i + 1])
+            )
+        anchor_orientation_decoder.append(
+            torch.nn.Linear(decoder_layer_dims[-1], 3 * bps_dim)
+        )
+        self.anchor_orientation_decoder = torch.nn.ModuleList(
+            anchor_orientation_decoder
+        )
+        self.anchor_orientation_decoder_bn = torch.nn.ModuleList(
+            anchor_orientation_decoder_bn
+        )
         # self._bps_dist_decoder = torch.nn.Sequential(
         # torch.nn.Linear(decoder_layer_dims[-1], bps_dim), torch.nn.ReLU()
         # )
@@ -189,7 +235,16 @@ class BaselineUNetModel(torch.nn.Module):
         for linear, bn in zip(self.encoder_mlp[:-1], self.encoder_bn):
             x = bn(torch.nn.functional.relu(linear(x)))
             encoder_outputs.append(x)
-        x = self.encoder_mlp[-1](x)  # Latent embedding
+        latent = self.encoder_mlp[-1](x)  # Latent embedding
+        x = latent
+        for i, (linear, bn) in enumerate(
+            zip(self.anchor_orientation_decoder, self.anchor_orientation_decoder_bn)
+        ):
+            x = torch.cat([x, encoder_outputs[-1 - i]], dim=-1)
+            x = bn(torch.nn.functional.relu(linear(x)))
+        anchor_orientations = x.view(B, P, 3)
+        anchor_orientations = torch.nn.functional.normalize(anchor_orientations, dim=-1)
+        x = latent
         for i, (linear, bn) in enumerate(zip(self.decoder_mlp, self.decoder_bn)):
             x = torch.cat([x, encoder_outputs[-1 - i]], dim=-1)
             x = bn(torch.nn.functional.relu(linear(x)))
@@ -220,4 +275,4 @@ class BaselineUNetModel(torch.nn.Module):
             dim=-1,
         )
         assert choir.shape == input_shape, f"{choir.shape} != {input_shape}"
-        return choir
+        return {"choir": choir, "orientations": anchor_orientations}

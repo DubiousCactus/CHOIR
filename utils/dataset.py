@@ -38,7 +38,7 @@ def compute_choir(
     pointclouds_mean: Optional[torch.Tensor] = None,
     bps_dim: int = 1024,
     anchor_assignment="random",
-) -> Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor, torch.Tensor]:
     """
     For each BPS point, get the reference object point and compute the distance to the
     nearest MANO anchor. Append the anchor index to the BPS point value as well as the
@@ -99,6 +99,13 @@ def compute_choir(
             distances.unsqueeze(-1),
             torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
         ]
+        anchors_repeats = (
+            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+            .squeeze(-2)
+            .squeeze(0)
+        )
+        anchor_deltas = anchors_repeats - ref_pts
+        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
     elif anchor_assignment == "closest":
         anchor_ids = torch.argmin(anchor_distances, dim=2)
         distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
@@ -108,6 +115,13 @@ def compute_choir(
             distances.unsqueeze(-1),
             torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
         ]
+        anchors_repeats = (
+            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+            .squeeze(-2)
+            .squeeze(0)
+        )
+        anchor_deltas = anchors_repeats - ref_pts
+        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
     elif anchor_assignment == "closest_and_farthest":
         closest_anchor_ids = torch.argmin(anchor_distances, dim=2)
         closest_distances = torch.gather(
@@ -127,6 +141,10 @@ def compute_choir(
                 farthest_anchor_ids, num_classes=anchors.shape[1]
             ),
         ]
+        anchor_deltas = torch.zeros_like(ref_pts)  # Not implemented yet!
+        raise NotImplementedError(
+            "closest_and_farthest anchor assignment is not fully implemented yet!"
+        )
     elif anchor_assignment == "batched_fixed":
         # Assign all ordered 32 anchors to a batch of BPS points and repeat for all available
         # batches. The number of batches is determined by the number of BPS points, and the latter
@@ -150,6 +168,13 @@ def compute_choir(
         anchor_encodings = [
             distances.unsqueeze(-1),
         ]
+        anchors_repeats = (
+            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+            .squeeze(-2)
+            .squeeze(0)
+        )
+        anchor_deltas = anchors_repeats - ref_pts
+        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
     # Build the CHOIR representation:
     choir = torch.cat(
         [
@@ -159,7 +184,7 @@ def compute_choir(
         ],
         dim=-1,
     )
-    return choir, pcl_mean, pcl_scalar, ref_pts  # for debugging
+    return choir, pcl_mean, pcl_scalar, ref_pts, anchor_deltas
 
 
 def compute_hand_contacts_simple(

@@ -34,10 +34,15 @@ class CHOIRLoss(torch.nn.Module):
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
+        choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
+        choir_gt, target_anchor_deltas = y["choir"], y["anchor_deltas"]
+        pred_anchor_deltas = orientations_pred * choir_pred[:, :, 4].unsqueeze(-1)
         loss = {
-            "distances": self._mse(y[:, :, 4], y_hat[:, :, 4]) * 1000,
-            # "anchors": self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:]),
+            "distances": self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4]) * 1000,
+            "anchor_deltas": self._mse(target_anchor_deltas, pred_anchor_deltas) * 1000,
         }
+        if self._anchor_assignment == "closest":
+            loss["anchors"] = self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:])
         return loss
 
 

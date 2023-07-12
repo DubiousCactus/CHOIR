@@ -35,7 +35,8 @@ def visualize_model_predictions(
             x["pcl_mean"],
             x["pcl_scalar"],
         )
-        choir_pred = model(noisy_choir)
+        pred = model(noisy_choir)
+        choir_pred, orientations_pred = pred["choir"], pred["orientations"]
         gt_choir, mano_params_gt = y["choir"], y["mano_params"]
         visualize_CHOIR_prediction(
             choir_pred,
@@ -53,6 +54,7 @@ def visualize_model_predictions(
         pass
 
 
+# TODO: Refactor the 2 following functions. It's too WET!!!
 @to_cuda
 def visualize_CHOIR_prediction(
     choir_pred: torch.Tensor,
@@ -94,7 +96,7 @@ def visualize_CHOIR_prediction(
                     assert (
                         bps_dim % 32 == 0
                     ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment."
-                    index = i % (bps_dim // 32)
+                    index = i % 32
                 else:
                     choir_one_hot = choir[0, i, 5:37]
                     index = torch.argmax(choir_one_hot, dim=-1)
@@ -210,6 +212,7 @@ def visualize_CHOIR(
     dense_contacts: torch.Tensor,
     verts: torch.Tensor,
     anchors: torch.Tensor,
+    anchor_deltas: torch.Tensor,
     obj_mesh,
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
@@ -268,7 +271,7 @@ def visualize_CHOIR(
         if anchor_assignment in ["closest", "random"]:
             index = torch.argmax(choir[i, -32:])
         elif anchor_assignment == "batched_fixed":
-            index = i % (bps_dim // 32)
+            index = i % n_anchors
         else:
             raise NotImplementedError(
                 f"Anchor assignment {anchor_assignment} not implemented."
@@ -284,9 +287,24 @@ def visualize_CHOIR(
         )
         pl.add_lines(
             np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+            # This is to check that the delta vectors are correct: (should be the same visual
+            # result as above)
+            # np.array([reference_obj_points[i, :].cpu().numpy(), (reference_obj_points[i, :].cpu() + anchor_deltas[i, :]).numpy()]),
             width=1,
             color="#" + hex(color)[2:].zfill(6),
             name=f"ray{i}",
+        )
+
+    for i in range(n_anchors):
+        pl.add_mesh(
+            pv.Cube(
+                center=anchors[i].cpu().numpy(),
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
+            ),
+            color="yellow",
+            name=f"anchor{i}",
         )
     pl.link_views()
     pl.set_background("white")  # type: ignore
