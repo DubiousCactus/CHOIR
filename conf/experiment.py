@@ -105,6 +105,7 @@ class BaselineModelConf:
     latent_dim: int = 128
     predict_anchor_orientation: bool = MISSING
     predict_mano: bool = MISSING
+    share_decoder_for_all_tasks: bool = True
 
 
 model_store(
@@ -130,13 +131,19 @@ model_store(
 
 @dataclass
 class CHOIRLossConf:
+    bps_dim: int = MISSING
     anchor_assignment: str = MISSING
-    predict_anchor_orientation: bool = True
-    predict_anchor_position: bool = True
+    predict_anchor_orientation: bool = False
+    predict_anchor_position: bool = False
     predict_mano: bool = True
-    orientation_w: float = 0.6
-    distance_w: float = 1.0
-    mano_w: float = 1.0
+    orientation_w: float = 3.0
+    distance_w: float = 1000.0
+    assignment_w: float = 1.0
+    mano_pose_w: float = 1.0
+    mano_global_pose_w: float = 1.0
+    mano_shape_w: float = 1.0
+    mano_agreement_w: float = 500.0
+    mano_anchors_w: float = 1000.0
 
 
 @dataclass

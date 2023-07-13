@@ -200,7 +200,7 @@ def visualize_CHOIR_prediction(
             x_mean=pcl_mean,
             x_scalar=pcl_scalar,
             objective="anchors",
-            max_iterations=1000,
+            max_iterations=2500,
         )
     # ====== Metrics and qualitative comparison ======
     gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())

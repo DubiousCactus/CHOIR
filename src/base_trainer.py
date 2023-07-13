@@ -9,6 +9,7 @@
 Base trainer class.
 """
 
+import random
 import signal
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Union
@@ -104,9 +105,7 @@ class BaseTrainer:
             trans_gt,
         ) = y
         y_hat = self._model(noisy_choir)
-        losses = self._training_loss(
-            y, y_hat
-        )  # {'distances': _, 'orientations': _, 'anchors': _, 'mano': _}
+        losses = self._training_loss(x, y, y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses
 
@@ -151,7 +150,7 @@ class BaseTrainer:
                 + f" val_loss={last_val_loss:.4f}]",
                 color_code,
             )
-            if visualize and not has_visualized:
+            if visualize and not has_visualized and random.Random().random() < 0.15:
                 with torch.no_grad():
                     self._visualize(batch, epoch)
                 has_visualized = True
@@ -204,7 +203,7 @@ class BaseTrainer:
                     color_code,
                 )
                 " ==================== Visualization ==================== "
-                if visualize and not has_visualized:
+                if visualize and not has_visualized and random.Random().random() < 0.15:
                     self._visualize(batch, epoch)
                     has_visualized = True
             val_loss = val_loss.compute().item()

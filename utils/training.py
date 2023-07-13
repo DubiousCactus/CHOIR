@@ -69,7 +69,7 @@ def optimize_pose_pca_from_choir(
         verts, _ = affine_mano(fingers_pose, shape, rot_6d, trans)
         anchors = anchor_layer(verts)
         anchor_loss, contacts_loss = choir_loss(
-            verts, anchors, choir, hand_contacts, x_mean, x_scalar
+            verts, anchors, choir, x_mean, x_scalar, hand_contacts=hand_contacts
         )
         regularizer = (
             torch.norm(shape) ** 2

@@ -85,7 +85,7 @@ def launch_experiment(
         scheduler_inst.T_max = training.epochs
 
     training_loss_inst = training_loss(
-        anchor_assignment=just(dataset).anchor_assignment
+        anchor_assignment=just(dataset).anchor_assignment, bps_dim=just(dataset).bps_dim
     )
     tto_loss_inst = tto_loss(
         bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment

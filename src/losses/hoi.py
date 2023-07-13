@@ -15,17 +15,25 @@ import torch
 from bps_torch.bps import bps_torch
 from bps_torch.tools import denormalize
 
+from model.affine_mano import AffineMANO
+
 
 class CHOIRLoss(torch.nn.Module):
     def __init__(
         self,
+        bps_dim: int,
         anchor_assignment: str,
         predict_anchor_orientation: bool,
         predict_anchor_position: bool,
         predict_mano: bool,
         orientation_w: float,
         distance_w: float,
-        mano_w: float,
+        assignment_w: float,
+        mano_pose_w: float,
+        mano_global_pose_w: float,
+        mano_shape_w: float,
+        mano_agreement_w: float,
+        mano_anchors_w: float,
     ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
@@ -37,10 +45,20 @@ class CHOIRLoss(torch.nn.Module):
         self._predict_mano = predict_mano
         self._orientation_w = orientation_w
         self._distance_w = distance_w
-        self._mano_w = mano_w
+        self._assignment_w = assignment_w
+        self._mano_pose_w = mano_pose_w
+        self._mano_global_pose_w = mano_global_pose_w
+        self._mano_shape_w = mano_shape_w
+        self._mano_agreement_w = mano_agreement_w
+        self._mano_anchors_w = mano_anchors_w
+        self._affine_mano = AffineMANO()
+        self._hoi_loss = (
+            DualHOILoss(bps_dim, anchor_assignment) if predict_mano else None
+        )
 
     def forward(
         self,
+        x,
         y,
         y_hat,
     ) -> torch.Tensor:
@@ -48,6 +66,7 @@ class CHOIRLoss(torch.nn.Module):
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
+        _, bps_mean, bps_scalar, _ = x
         (
             choir_gt,
             anchor_orientations,
@@ -60,14 +79,18 @@ class CHOIRLoss(torch.nn.Module):
         ) = y
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
         choir_gt, orientations_gt = choir_gt, anchor_orientations
-        loss = {
+        losses = {
             "distances": self._distance_w
             * self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4])
-            * 1000,
         }
+        if self._anchor_assignment == "closest":
+            losses["assignments"] = self._assignment_w * self._cross_entropy(
+                y[:, :, -32:], y_hat[:, :, -32:]
+            )
+        anchor_positions_pred = None
         if self._predict_anchor_orientation or self._predict_anchor_position:
             B, P, D = orientations_pred.shape
-            loss["orientations"] = self._orientation_w * self._cosine_embedding(
+            losses["orientations"] = self._orientation_w * self._cosine_embedding(
                 orientations_pred.reshape(B * P, D),
                 orientations_gt.reshape(B * P, D),
                 torch.ones(B * P, device=orientations_pred.device),
@@ -79,14 +102,40 @@ class CHOIRLoss(torch.nn.Module):
                 anchor_positions_pred = orientations_pred * choir_pred[
                     :, :, 4
                 ].unsqueeze(-1).repeat(1, 1, 3)
-                loss["positions"] = self._distance_w * self._mse(
+                losses["positions"] = self._distance_w * self._mse(
                     target_anchor_positions, anchor_positions_pred
                 )
-        if self._anchor_assignment == "closest":
-            loss["assignments"] = self._mano_w * self._cross_entropy(
-                y[:, :, -32:], y_hat[:, :, -32:]
+        if self._predict_mano:
+            mano = y_hat["mano"]
+            pose, shape, rot, trans = (
+                mano[:, :18],
+                mano[:, 18 : 18 + 10],
+                mano[:, 18 + 10 : 18 + 10 + 6],
+                mano[:, 18 + 10 + 6 :],
             )
-        return loss
+            # Penalize high shape values to avoid exploding shapes and unnatural hands:
+            shape_reg = torch.norm(shape, dim=-1).mean()  # ** 2
+            verts, _ = self._affine_mano(pose, shape, rot, trans)
+            anchors = self._affine_mano.get_anchors(verts)
+            anchor_agreement_loss, _ = self._hoi_loss(
+                verts, anchors, choir_pred, bps_mean, bps_scalar
+            )
+            losses["mano_pose"] = self._mano_pose_w * self._mse(pose, pose_gt)
+            losses["mano_shape"] = self._mano_shape_w * (
+                shape_reg + self._mse(shape, beta_gt)
+            )
+            losses["mano_global_pose"] = self._mano_global_pose_w * (
+                self._mse(rot, rot_gt) + self._mse(trans, trans_gt)
+            )
+            losses["mano_anchors"] = self._mano_anchors_w * self._mse(
+                anchors, anchors_gt
+            )
+            losses["mano_anchor_agreement"] = (
+                self._mano_agreement_w * anchor_agreement_loss
+            )
+            # TODO: Penalize MANO penetration into the object pointcloud (recoverable through the
+            # input CHOIR field).
+        return losses
 
 
 class DualHOILoss(torch.nn.Module):
@@ -110,9 +159,9 @@ class DualHOILoss(torch.nn.Module):
         verts: torch.Tensor,
         anchors: torch.Tensor,
         choir: torch.Tensor,
-        hand_contacts: Optional[torch.Tensor],
         bps_mean: torch.Tensor,
         bps_scalar: float,
+        hand_contacts: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         The choir field has shape (B, P, 3) where P is the number of points in the BPS
@@ -165,10 +214,10 @@ class DualHOILoss(torch.nn.Module):
                 )
                 .repeat((choir.shape[1] // 32,))
                 .unsqueeze(0)
+                .repeat((choir.shape[0], 1))
+                .unsqueeze(-1)
             )
-            distances = torch.gather(
-                anchor_distances, 2, anchor_ids.unsqueeze(-1)
-            ).squeeze(-1)
+            distances = torch.gather(anchor_distances, 2, anchor_ids).squeeze(-1)
             choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
         else:
             raise ValueError(
