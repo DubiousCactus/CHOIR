@@ -23,6 +23,7 @@ from unique_names_generator.data import ADJECTIVES, NAMES
 from dataset.contactpose import ContactPoseDataset
 from model.baseline import BaselineModel, BaselineUNetModel
 from src.base_trainer import BaseTrainer
+from src.losses.hoi import CHOIRLoss, DualHOILoss
 from train import launch_experiment
 
 # Set hydra.job.chdir=True using store():
@@ -123,6 +124,43 @@ model_store(
     name="baseline_unet",
 )
 
+
+" ================== Losses ================== "
+
+
+@dataclass
+class CHOIRLossConf:
+    anchor_assignment: str = MISSING
+    predict_anchor_orientation: bool = True
+    predict_mano: bool = True
+    orientation_w: float = 1.0
+    distance_w: float = 1.5
+    mano_w: float = 1.0
+
+
+@dataclass
+class DualHOILossConf:
+    bps_dim: int = MISSING
+    anchor_assignment: str = MISSING
+
+
+training_loss_store = store(group="training_loss")
+training_loss_store(
+    pbuilds(
+        CHOIRLoss,
+        builds_bases=(CHOIRLossConf,),
+    ),
+    name="choir",
+)
+tto_loss_store = store(group="tto_loss")
+tto_loss_store(
+    pbuilds(
+        DualHOILoss,
+        builds_bases=(DualHOILossConf,),
+    ),
+    name="dualhoi",
+)
+
 " ================== Optimizer ================== "
 
 
@@ -207,6 +245,8 @@ Experiment = builds(
         {"optimizer": "adam"},
         {"scheduler": "step"},
         {"training": "default"},
+        {"training_loss": "choir"},
+        {"tto_loss": "dualhoi"},
     ],
     trainer=MISSING,
     dataset=MISSING,
@@ -214,6 +254,8 @@ Experiment = builds(
     optimizer=MISSING,
     scheduler=MISSING,
     training=MISSING,
+    training_loss=MISSING,
+    tto_loss=MISSING,
     data_loader=pbuilds(
         DataLoader, builds_bases=(DataloaderConf,)
     ),  # Needs a partial because we need to set the dataset

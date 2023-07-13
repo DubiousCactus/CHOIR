@@ -15,8 +15,6 @@ import torch
 from bps_torch.bps import bps_torch
 from bps_torch.tools import denormalize
 
-from utils.dataset import compute_hand_contacts_simple
-
 
 class CHOIRLoss(torch.nn.Module):
     def __init__(
@@ -24,14 +22,20 @@ class CHOIRLoss(torch.nn.Module):
         anchor_assignment: str,
         predict_anchor_orientation: bool,
         predict_mano: bool,
+        orientation_w: float,
+        distance_w: float,
+        mano_w: float,
     ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
-        self._cosine_similarity = torch.nn.CosineSimilarity(dim=2)
+        self._cosine_embedding = torch.nn.CosineEmbeddingLoss()
         self._cross_entropy = torch.nn.CrossEntropyLoss()
         self._anchor_assignment = anchor_assignment
         self._predict_anchor_orientation = predict_anchor_orientation
         self._predict_mano = predict_mano
+        self._orientation_w = orientation_w
+        self._distance_w = distance_w
+        self._mano_w = mano_w
 
     def forward(
         self,
@@ -55,14 +59,21 @@ class CHOIRLoss(torch.nn.Module):
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
         choir_gt, target_anchor_orientations = choir_gt, anchor_orientations
         loss = {
-            "distances": self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4]) * 1000,
+            "distances": self._distance_w
+            * self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4])
+            * 1000,
         }
         if self._predict_anchor_orientation:
-            loss["orientations"] = self._cosine_similarity(
-                orientations_pred, target_anchor_orientations
+            B, P, D = orientations_pred.shape
+            loss["orientations"] = self._orientation_w * self._cosine_embedding(
+                orientations_pred.reshape(B * P, D),
+                target_anchor_orientations.reshape(B * P, D),
+                torch.ones(B * P, device=orientations_pred.device),
             )
         if self._anchor_assignment == "closest":
-            loss["anchors"] = self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:])
+            loss["anchors"] = self._mano_w * self._cross_entropy(
+                y[:, :, -32:], y_hat[:, :, -32:]
+            )
         return loss
 
 
@@ -152,11 +163,12 @@ class DualHOILoss(torch.nn.Module):
                 f"Unknown anchor assignment method: {self._anchor_assignment}"
             )
         # Now add the hand contact loss
-        hand_contact_loss = (
-            torch.nn.functional.mse_loss(
-                hand_contacts, compute_hand_contacts_simple(tgt_points, verts)
-            )
-            if hand_contacts is not None
-            else torch.tensor(0.0)
-        )
+        # hand_contact_loss = (
+        # torch.nn.functional.mse_loss(
+        # hand_contacts, compute_hand_contacts_simple(tgt_points, verts)
+        # )
+        # if hand_contacts is not None
+        # else torch.tensor(0.0)
+        # )
+        hand_contact_loss = torch.tensor(0.0)
         return choir_loss, hand_contact_loss

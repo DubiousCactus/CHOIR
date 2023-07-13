@@ -13,7 +13,6 @@ import os
 
 import hydra_zen
 import torch
-import wandb
 import yaml
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import to_absolute_path
@@ -21,6 +20,7 @@ from hydra_zen import just, store, zen
 from hydra_zen.typing import Partial
 
 import conf.experiment  # Must import the config to add all components to the store!
+import wandb
 from conf import project as project_conf
 from src.base_trainer import BaseTrainer
 from utils import colorize, seed_everything, to_cuda_
@@ -34,6 +34,8 @@ def launch_experiment(
     trainer: Partial[BaseTrainer],
     dataset: torch.utils.data.Dataset,
     model: Partial[torch.nn.Module],
+    training_loss: Partial[torch.nn.Module],
+    tto_loss: Partial[torch.nn.Module],
 ):
     run_name = os.path.basename(HydraConfig.get().runtime.output_dir)
     # Generate a random ANSI code:
@@ -70,8 +72,17 @@ def launch_experiment(
     if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
         scheduler_inst.T_max = training.epochs
 
+    training_loss_inst = training_loss(
+        anchor_assignment=just(dataset).anchor_assignment
+    )
+    tto_loss_inst = tto_loss(
+        bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
+    )
+
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
+    training_loss_inst: torch.nn.Module = to_cuda_(training_loss_inst)  # type: ignore
+    tto_loss_inst: torch.nn.Module = to_cuda_(tto_loss_inst)  # type: ignore
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
@@ -129,6 +140,8 @@ def launch_experiment(
         scheduler=scheduler_inst,
         train_loader=train_loader_inst,
         val_loader=val_loader_inst,
+        training_loss=training_loss_inst,
+        tto_loss=tto_loss_inst,
     ).train(
         epochs=training.epochs,
         val_every=training.val_every,

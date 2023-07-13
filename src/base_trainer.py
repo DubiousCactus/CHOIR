@@ -15,14 +15,13 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
-import wandb
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 
+import wandb
 from conf import project as project_conf
-from src.losses.hoi import CHOIRLoss, DualHOILoss
 from utils import blink_pbar, to_cuda, update_pbar_str
 from utils.helpers import BestNModelSaver
 from utils.visualization import visualize_model_predictions
@@ -36,6 +35,8 @@ class BaseTrainer:
         opt: Optimizer,
         train_loader: DataLoader,
         val_loader: DataLoader,
+        training_loss: torch.nn.Module,
+        tto_loss: torch.nn.Module,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     ) -> None:
         """Base trainer class.
@@ -59,10 +60,8 @@ class BaseTrainer:
         )
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
         self._anchor_assignment = train_loader.dataset.anchor_assignment
-        self._training_loss = CHOIRLoss(self._anchor_assignment)
-        self._tto_loss = DualHOILoss(
-            train_loader.dataset.bps_dim, self._anchor_assignment
-        )  # For test-time optimization
+        self._training_loss = training_loss
+        self._tto_loss = tto_loss
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -105,11 +104,11 @@ class BaseTrainer:
             trans_gt,
         ) = y
         y_hat = self._model(noisy_choir)
-        loss = self._training_loss(
+        losses = self._training_loss(
             y, y_hat
         )  # {'distances': _, 'orientations': _, 'anchors': _, 'mano': _}
-        # TODO: Compute final loss based on components returned (not all may be used)
-        return loss["distances"], loss  # + 3 * loss["anchor_deltas"], loss
+        loss = sum([v for v in losses.values()])
+        return loss, losses
 
     def _train_epoch(
         self, description: str, visualize: bool, epoch: int, last_val_loss: float
