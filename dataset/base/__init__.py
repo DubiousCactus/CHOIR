@@ -15,7 +15,7 @@ transforming it may be extended through class inheritance in a specific dataset 
 
 import abc
 import pickle
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from torch.utils.data import Dataset
 
@@ -36,11 +36,14 @@ class BaseDataset(Dataset, abc.ABC):
         self._augment = augment and split == "train"
         self._scaling = scaling
         self._debug = debug
-        objects, grasps, dataset_name = self._load_objects_and_grasps(
-            tiny, split, seed=seed
-        )
+        (
+            objects,
+            objects_w_contacts,
+            grasps,
+            dataset_name,
+        ) = self._load_objects_and_grasps(tiny, split, seed=seed)
         self._sample_paths = self._load(
-            dataset_root, tiny, split, objects, grasps, dataset_name
+            dataset_root, tiny, split, objects, objects_w_contacts, grasps, dataset_name
         )
 
     @abc.abstractmethod
@@ -49,7 +52,8 @@ class BaseDataset(Dataset, abc.ABC):
         dataset_root: str,
         tiny: bool,
         split: str,
-        objects: List,
+        objects: Dict,
+        objects_w_contacts: List,
         grasps: List,
         dataset_name: str,
     ) -> List[str]:

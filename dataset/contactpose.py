@@ -15,7 +15,7 @@ import pickle
 import random
 import sys
 from contextlib import redirect_stdout
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -96,7 +96,7 @@ class ContactPoseDataset(BaseDataset):
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
-    ) -> Tuple[list, list, str]:
+    ) -> Tuple[dict, list, list, str]:
         if not osp.isdir(osp.join(get_original_cwd(), "vendor", "ContactPose")):
             raise RuntimeError(
                 "Please clone the ContactPose dataset in the vendor/ directory as 'ContactPose'"
@@ -170,8 +170,10 @@ class ContactPoseDataset(BaseDataset):
         else:
             object_names = object_names[-self._validation_objects :]
         # Now, build the dataset.
-        objects = []
-        grasps = []
+        # objects: unique object paths
+        # objects_w_contacts: object with contacts paths
+        # grasps: MANO parameters w/ global pose pickle paths
+        objects, objects_w_contacts, grasps = {}, [], []
         print(f"[*] Loading ContactPose{' (tiny)' if tiny else ''}...")
 
         dataset_path = osp.join(
@@ -182,11 +184,8 @@ class ContactPoseDataset(BaseDataset):
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if osp.isfile(dataset_path):
-            objects, grasps = pickle.load(open(dataset_path, "rb"))
+            objects, objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
         else:
-            if not osp.isfile(osp.join(self._cache_dir, "missing.txt")):
-                with open(osp.join(self._cache_dir, "missing.txt"), "w") as f:
-                    f.write("")
             for obj_name in tqdm(object_names):
                 for p_num, intent, hand in cp_dataset[obj_name]:
                     # Generate the data since the dataset file does not exist.
@@ -199,7 +198,7 @@ class ContactPoseDataset(BaseDataset):
                     )
                     if data is None:
                         continue
-                    obj_mesh_path, grasp = data
+                    obj_mesh_w_contacts_path, grasp = data
                     with open(grasp_path, "wb") as f:
                         # Log participant no and intent in the data so we can debug later on.
                         pickle.dump(
@@ -212,9 +211,11 @@ class ContactPoseDataset(BaseDataset):
                             },
                             f,
                         )
-                    objects.append(obj_mesh_path)
+                    objects_w_contacts.append(obj_mesh_w_contacts_path)
                     grasps.append(grasp_path)
-            pickle.dump((objects, grasps), open(dataset_path, "wb"))
+                    if obj_name not in objects:
+                        objects[obj_name] = obj_mesh_w_contacts_path
+            pickle.dump((objects, objects_w_contacts, grasps), open(dataset_path, "wb"))
         print(
             f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences"
         )
@@ -226,15 +227,21 @@ class ContactPoseDataset(BaseDataset):
                 ],
             )
         )
-        assert len(objects) == len(grasps)
-        return objects, grasps, osp.basename(dataset_path.split(".")[0])
+        assert len(objects_w_contacts) == len(grasps)
+        return (
+            objects,
+            objects_w_contacts,
+            grasps,
+            osp.basename(dataset_path.split(".")[0]),
+        )
 
     def _load(
         self,
         dataset_root: str,
         tiny: bool,
         split: str,
-        objects: List[str],
+        objects: Dict[str, str],
+        objects_w_contacts: List[str],
         grasps: List,
         dataset_name: str,
     ) -> List[str]:
@@ -270,8 +277,9 @@ class ContactPoseDataset(BaseDataset):
                 pointclouds = pickle.load(f)
         else:
             print("[*] Computing object pointclouds...")
-            for object_with_contacts_pth in tqdm(objects):
-                obj_mesh = o3dio.read_triangle_mesh(object_with_contacts_pth)
+            # This is very expensive in memory so we can batch it.
+            for object_pth in tqdm(objects.values()):
+                obj_mesh = o3dio.read_triangle_mesh(object_pth)
                 obj_ptcld = torch.from_numpy(
                     np.asarray(
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
@@ -288,8 +296,8 @@ class ContactPoseDataset(BaseDataset):
                 pickle.dump(pointclouds, f)
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
-        for object_ptcld, mesh_pth, grasp_pth in tqdm(
-            zip(pointclouds, objects, grasps), total=len(objects)
+        for mesh_pth, grasp_pth in tqdm(
+            zip(objects_w_contacts, grasps), total=len(objects_w_contacts)
         ):
             # Load the object mesh and MANO params
             with open(grasp_pth, "rb") as f:
@@ -339,6 +347,12 @@ class ContactPoseDataset(BaseDataset):
                     raise NotImplementedError
 
                 # Compute the CHOIR field
+                obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                obj_ptcld = torch.from_numpy(
+                    np.asarray(
+                        obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
+                    )
+                ).cpu()
                 visualize = self._debug and (random.random() < 0.1)
                 has_visualized = False
                 for i in range(self._n_random_choir_per_sample):
@@ -350,11 +364,14 @@ class ContactPoseDataset(BaseDataset):
                         continue
                     anchors = anchor_layer(verts)
                     choir, pcl_mean, pcl_scalar, ref_pts, anchor_deltas = compute_choir(
-                        to_cuda_(object_ptcld),
+                        to_cuda_(obj_ptcld),
                         to_cuda_(anchors),
                         pointclouds_mean=to_cuda_(pointclouds_mean),
                         bps_dim=self._bps_dim,  # type: ignore
                         anchor_assignment=self._anchor_assignment,
+                    )
+                    anchor_orientations = torch.nn.functional.normalize(
+                        anchor_deltas, dim=1
                     )
                     # Compute the dense MANO contact map
                     # hand_contacts = compute_hand_contacts_simple(
@@ -367,7 +384,7 @@ class ContactPoseDataset(BaseDataset):
                     pcl_scalar = pcl_scalar.squeeze(0).cpu()
                     # hand_contacts = hand_contacts.squeeze(0).cpu()
                     joints = joints.squeeze(0).cpu()
-                    anchor_deltas = anchor_deltas.squeeze(0).cpu()
+                    anchor_orientations = anchor_orientations.squeeze(0).cpu()
                     anchors = anchors.squeeze(0).cpu()
                     rot_6d = rot_6d.squeeze(0).cpu()
                     trans = trans.squeeze(0).cpu()
@@ -382,7 +399,7 @@ class ContactPoseDataset(BaseDataset):
                     label = (
                         choir,
                         # hand_contacts,
-                        anchor_deltas,
+                        anchor_orientations,
                         joints,
                         anchors,
                         torch.tensor(mano_params["pose"]).cpu(),
@@ -412,9 +429,9 @@ class ContactPoseDataset(BaseDataset):
                             hand_contacts,
                             verts,
                             anchors,
-                            anchor_deltas,
+                            anchor_orientations,
                             mesh,
-                            object_ptcld,
+                            obj_ptcld,
                             ref_pts,
                             affine_mano,
                             self._anchor_assignment,

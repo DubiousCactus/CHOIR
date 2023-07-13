@@ -47,7 +47,7 @@ def visualize_model_predictions(
             pcl_scalar,
         )
         pred = model(noisy_choir)
-        choir_pred, orientations_pred = pred["choir"], pred["orientations"]
+        choir_pred = pred["choir"]
         mano_params_gt = {
             "pose": pose_gt,
             "beta": beta_gt,
@@ -257,7 +257,7 @@ def visualize_CHOIR(
     dense_contacts: torch.Tensor,
     verts: torch.Tensor,
     anchors: torch.Tensor,
-    anchor_deltas: torch.Tensor,
+    anchor_orientations: torch.Tensor,
     obj_mesh,
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
@@ -326,15 +326,26 @@ def visualize_CHOIR(
         # It is obtained from min-max normalization of the distance in the choir field,
         # without known range. The color range is 0 to 16777215.
         color = int(
-            (choir[i, 0] - choir[:, 0].min())
-            / (choir[:, 0].max() - choir[:, 0].min())
+            (choir[i, 4] - choir[:, 4].min())
+            / (choir[:, 4].max() - choir[:, 4].min())
             * 16777215
+        )
+        # This is to check that the delta vectors are correct: (should be the same visual
+        # result as above)
+        assert np.allclose(
+            np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+            np.array(
+                [
+                    reference_obj_points[i, :].cpu().numpy(),
+                    (
+                        reference_obj_points[i, :].cpu()
+                        + (choir[i, 4] * anchor_orientations[i, :])
+                    ).numpy(),
+                ]
+            ),
         )
         pl.add_lines(
             np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
-            # This is to check that the delta vectors are correct: (should be the same visual
-            # result as above)
-            # np.array([reference_obj_points[i, :].cpu().numpy(), (reference_obj_points[i, :].cpu() + anchor_deltas[i, :]).numpy()]),
             width=1,
             color="#" + hex(color)[2:].zfill(6),
             name=f"ray{i}",

@@ -22,6 +22,8 @@ class BaselineModel(torch.nn.Module):
         encoder_layer_dims: Tuple[int],
         decoder_layer_dims: Tuple[int],
         latent_dim: int,
+        predict_anchor_orientation: bool,
+        predict_mano: bool,
     ) -> None:
         super().__init__()
         self.single_anchor = anchor_assignment in ["closest", "random", "batched_fixed"]
@@ -56,29 +58,27 @@ class BaselineModel(torch.nn.Module):
             decoder.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
             decoder.append(torch.nn.ReLU())
         self.decoder = torch.nn.Sequential(*decoder)
-        anchor_orientation_decoder: List[torch.nn.Module] = [
-            torch.nn.Linear(latent_dim, decoder_layer_dims[0]),
-            torch.nn.BatchNorm1d(decoder_layer_dims[0]),
-            torch.nn.ReLU(),
-        ]
-        for i in range(len(decoder_layer_dims) - 1):
+        self.anchor_orientation_decoder = None
+        if predict_anchor_orientation:
+            anchor_orientation_decoder: List[torch.nn.Module] = [
+                torch.nn.Linear(latent_dim, decoder_layer_dims[0]),
+                torch.nn.BatchNorm1d(decoder_layer_dims[0]),
+                torch.nn.ReLU(),
+            ]
+            for i in range(len(decoder_layer_dims) - 1):
+                anchor_orientation_decoder.append(
+                    torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
+                )
+                anchor_orientation_decoder.append(
+                    torch.nn.BatchNorm1d(decoder_layer_dims[i + 1])
+                )
+                anchor_orientation_decoder.append(torch.nn.ReLU())
             anchor_orientation_decoder.append(
-                torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
+                torch.nn.Linear(decoder_layer_dims[-1], 3 * bps_dim)
             )
-            anchor_orientation_decoder.append(
-                torch.nn.BatchNorm1d(decoder_layer_dims[i + 1])
+            self.anchor_orientation_decoder = torch.nn.Sequential(
+                *anchor_orientation_decoder
             )
-            anchor_orientation_decoder.append(torch.nn.ReLU())
-        anchor_orientation_decoder.append(
-            torch.nn.Linear(decoder_layer_dims[-1], 3 * bps_dim)
-        )
-        self.anchor_orientation_decoder = torch.nn.Sequential(
-            *anchor_orientation_decoder
-        )
-        # self._bps_dist_decoder = torch.nn.Sequential(
-        # torch.nn.Linear(decoder_layer_dims[-1], bps_dim), torch.nn.ReLU()
-        # )
-        # self._bps_deltas_decoder = torch.nn.Linear(decoder_layer_dims[-1], bps_dim * 3)
         self._anchor_dist_decoder = torch.nn.Sequential(
             torch.nn.Linear(
                 decoder_layer_dims[-1], bps_dim * (1 if self.single_anchor else 2)
@@ -101,11 +101,13 @@ class BaselineModel(torch.nn.Module):
         B, P, _ = input_shape
         _x = x
         latent = self.encoder(x.flatten(start_dim=1))
-        anchor_orientations = self.anchor_orientation_decoder(latent).view(B, P, 3)
-        anchor_orientations = torch.nn.functional.normalize(anchor_orientations, dim=-1)
+        anchor_orientations = None
+        if self.anchor_orientation_decoder is not None:
+            anchor_orientations = self.anchor_orientation_decoder(latent).view(B, P, 3)
+            anchor_orientations = torch.nn.functional.normalize(
+                anchor_orientations, dim=-1
+            )
         x = self.decoder(latent)
-        # bps_dist = self._bps_dist_decoder(x).view(B, P, 1)  # N, 1
-        # bps_deltas = self._bps_deltas_decoder(x).view(B, P, 3)  # N, 3
         sqrt_distances = self._anchor_dist_decoder(x)
         anchor_dist = (sqrt_distances**2).view(
             B, P, 1 if self.single_anchor else 2
@@ -143,6 +145,8 @@ class BaselineUNetModel(torch.nn.Module):
         encoder_layer_dims: Tuple[int],
         decoder_layer_dims: Tuple[int],
         latent_dim: int,
+        predict_anchor_orientation: bool,
+        predict_mano: bool,
     ) -> None:
         super().__init__()
         self.single_anchor = anchor_assignment in ["closest", "random", "batched_fixed"]

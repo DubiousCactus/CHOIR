@@ -15,12 +15,12 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
+import wandb
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 
-import wandb
 from conf import project as project_conf
 from src.losses.hoi import CHOIRLoss, DualHOILoss
 from utils import blink_pbar, to_cuda, update_pbar_str
@@ -96,7 +96,7 @@ class BaseTrainer:
         noisy_choir, pcl_mean, pcl_scalar, bps_dim = x
         (
             choir_gt,
-            anchor_deltas,
+            anchor_orientations,
             joints_gt,
             anchors_gt,
             pose_gt,
@@ -107,8 +107,9 @@ class BaseTrainer:
         y_hat = self._model(noisy_choir)
         loss = self._training_loss(
             y, y_hat
-        )  # {'distances': _, 'orientations': _, 'anchors': _}
-        return loss["distances"] + 3 * loss["anchor_deltas"], loss
+        )  # {'distances': _, 'orientations': _, 'anchors': _, 'mano': _}
+        # TODO: Compute final loss based on components returned (not all may be used)
+        return loss["distances"], loss  # + 3 * loss["anchor_deltas"], loss
 
     def _train_epoch(
         self, description: str, visualize: bool, epoch: int, last_val_loss: float

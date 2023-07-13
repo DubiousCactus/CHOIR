@@ -19,11 +19,19 @@ from utils.dataset import compute_hand_contacts_simple
 
 
 class CHOIRLoss(torch.nn.Module):
-    def __init__(self, anchor_assignment: str) -> None:
+    def __init__(
+        self,
+        anchor_assignment: str,
+        predict_anchor_orientation: bool,
+        predict_mano: bool,
+    ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
+        self._cosine_similarity = torch.nn.CosineSimilarity(dim=2)
         self._cross_entropy = torch.nn.CrossEntropyLoss()
         self._anchor_assignment = anchor_assignment
+        self._predict_anchor_orientation = predict_anchor_orientation
+        self._predict_mano = predict_mano
 
     def forward(
         self,
@@ -36,7 +44,7 @@ class CHOIRLoss(torch.nn.Module):
             )
         (
             choir_gt,
-            anchor_deltas,
+            anchor_orientations,
             joints_gt,
             anchors_gt,
             pose_gt,
@@ -45,12 +53,14 @@ class CHOIRLoss(torch.nn.Module):
             trans_gt,
         ) = y
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
-        choir_gt, target_anchor_deltas = choir_gt, anchor_deltas
-        pred_anchor_deltas = orientations_pred * choir_pred[:, :, 4].unsqueeze(-1)
+        choir_gt, target_anchor_orientations = choir_gt, anchor_orientations
         loss = {
             "distances": self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4]) * 1000,
-            "anchor_deltas": self._mse(target_anchor_deltas, pred_anchor_deltas) * 1000,
         }
+        if self._predict_anchor_orientation:
+            loss["orientations"] = self._cosine_similarity(
+                orientations_pred, target_anchor_orientations
+            )
         if self._anchor_assignment == "closest":
             loss["anchors"] = self._cross_entropy(y[:, :, -32:], y_hat[:, :, -32:])
         return loss
