@@ -47,7 +47,15 @@ def launch_experiment(
         )
     )
     exp_conf = hydra_zen.to_yaml(
-        dict(training=training, dataset=dataset, model=model, optimizer=optimizer)
+        dict(
+            training=training,
+            dataset=dataset,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            training_loss=training_loss,
+            tto_loss=tto_loss,
+        )
     )
     print(
         colorize(
@@ -57,7 +65,11 @@ def launch_experiment(
 
     "============ Partials instantiation ============"
     model_inst = model(
-        bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
+        bps_dim=just(dataset).bps_dim,
+        anchor_assignment=just(dataset).anchor_assignment,
+        predict_anchor_orientation=just(training_loss).predict_anchor_orientation
+        or just(training_loss).predict_anchor_position,
+        predict_mano=just(training_loss).predict_mano,
     )  # Use just() to get the config out of the Zen-Partial
     print(model_inst)
     print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")

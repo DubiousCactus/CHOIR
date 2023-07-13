@@ -21,6 +21,7 @@ class CHOIRLoss(torch.nn.Module):
         self,
         anchor_assignment: str,
         predict_anchor_orientation: bool,
+        predict_anchor_position: bool,
         predict_mano: bool,
         orientation_w: float,
         distance_w: float,
@@ -32,6 +33,7 @@ class CHOIRLoss(torch.nn.Module):
         self._cross_entropy = torch.nn.CrossEntropyLoss()
         self._anchor_assignment = anchor_assignment
         self._predict_anchor_orientation = predict_anchor_orientation
+        self._predict_anchor_position = predict_anchor_position
         self._predict_mano = predict_mano
         self._orientation_w = orientation_w
         self._distance_w = distance_w
@@ -57,21 +59,31 @@ class CHOIRLoss(torch.nn.Module):
             trans_gt,
         ) = y
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
-        choir_gt, target_anchor_orientations = choir_gt, anchor_orientations
+        choir_gt, orientations_gt = choir_gt, anchor_orientations
         loss = {
             "distances": self._distance_w
             * self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4])
             * 1000,
         }
-        if self._predict_anchor_orientation:
+        if self._predict_anchor_orientation or self._predict_anchor_position:
             B, P, D = orientations_pred.shape
             loss["orientations"] = self._orientation_w * self._cosine_embedding(
                 orientations_pred.reshape(B * P, D),
-                target_anchor_orientations.reshape(B * P, D),
+                orientations_gt.reshape(B * P, D),
                 torch.ones(B * P, device=orientations_pred.device),
             )
+            if self._predict_anchor_position:
+                target_anchor_positions = orientations_gt * choir_gt[:, :, 4].unsqueeze(
+                    -1
+                ).repeat(1, 1, 3)
+                anchor_positions_pred = orientations_pred * choir_pred[
+                    :, :, 4
+                ].unsqueeze(-1).repeat(1, 1, 3)
+                loss["positions"] = self._distance_w * self._mse(
+                    target_anchor_positions, anchor_positions_pred
+                )
         if self._anchor_assignment == "closest":
-            loss["anchors"] = self._mano_w * self._cross_entropy(
+            loss["assignments"] = self._mano_w * self._cross_entropy(
                 y[:, :, -32:], y_hat[:, :, -32:]
             )
         return loss

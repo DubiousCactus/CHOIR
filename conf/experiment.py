@@ -103,8 +103,8 @@ class BaselineModelConf:
     encoder_layer_dims: Tuple[int] = (2048, 1024, 512, 256)
     decoder_layer_dims: Tuple[int] = (256, 512, 1024)
     latent_dim: int = 128
-    predict_anchor_orientation: bool = True
-    predict_mano: bool = True
+    predict_anchor_orientation: bool = MISSING
+    predict_mano: bool = MISSING
 
 
 model_store(
@@ -132,9 +132,10 @@ model_store(
 class CHOIRLossConf:
     anchor_assignment: str = MISSING
     predict_anchor_orientation: bool = True
+    predict_anchor_position: bool = True
     predict_mano: bool = True
-    orientation_w: float = 1.0
-    distance_w: float = 1.5
+    orientation_w: float = 0.6
+    distance_w: float = 1.0
     mano_w: float = 1.0
 
 
