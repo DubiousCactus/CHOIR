@@ -10,7 +10,7 @@ Training utilities. This is a good place for your code that is used in training 
 function, visualization code, etc.)
 """
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import tqdm
@@ -22,11 +22,13 @@ from src.losses.hoi import DualHOILoss
 
 def optimize_pose_pca_from_choir(
     choir: torch.Tensor,
+    bps: torch.Tensor,
     bps_dim: int,
-    x_mean: torch.Tensor,
-    x_scalar: float,
+    # x_mean: torch.Tensor,
+    # x_scalar: float,
+    scalar: torch.Tensor,
     anchor_assignment: str,
-    hand_contacts: Optional[torch.Tensor] = None,
+    # hand_contacts: Optional[torch.Tensor] = None,
     loss_thresh: float = 1e-12,
     max_iterations=8000,
     objective="anchors",
@@ -35,7 +37,6 @@ def optimize_pose_pca_from_choir(
     ncomps = 15
     affine_mano = AffineMANO(ncomps).cuda()
     anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor").cuda()
-    choir_loss = DualHOILoss(bps_dim, anchor_assignment).cuda()
     B = choir.shape[0]
     if initial_params is None:
         fingers_pose = (torch.rand((1, ncomps + 3))).cuda().requires_grad_(True)
@@ -64,13 +65,23 @@ def optimize_pose_pca_from_choir(
     prev_loss = float("inf")
     anchors = torch.zeros((B, 32, 3)).cuda()
 
+    # ============== Rescale the CHOIR field to fit the MANO model ==============
+    choir = (
+        choir / scalar
+    )  # CHOIR was computed with scaled up MANO and object pointclouds.
+    bps = (
+        bps / scalar
+    )  # BPS should be scaled down to fit the MANO model in the same scale.
+
+    choir_loss = DualHOILoss(
+        rescaled_bps=bps, anchor_assignment=anchor_assignment
+    ).cuda()
+
     for i, _ in enumerate(proc_bar):
         optimizer.zero_grad()
         verts, _ = affine_mano(fingers_pose, shape, rot_6d, trans)
         anchors = anchor_layer(verts)
-        anchor_loss, contacts_loss = choir_loss(
-            verts, anchors, choir, x_mean, x_scalar, hand_contacts=hand_contacts
-        )
+        anchor_loss, contacts_loss = choir_loss(anchors, choir)
         regularizer = (
             torch.norm(shape) ** 2
         )  # Encourage the shape parameters to remain close to 0

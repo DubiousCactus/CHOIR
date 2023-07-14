@@ -87,9 +87,10 @@ def launch_experiment(
     training_loss_inst = training_loss(
         anchor_assignment=just(dataset).anchor_assignment, bps_dim=just(dataset).bps_dim
     )
-    tto_loss_inst = tto_loss(
-        bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
-    )
+    # tto_loss_inst = tto_loss(
+    # bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
+    # )
+    tto_loss_inst = None
 
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore

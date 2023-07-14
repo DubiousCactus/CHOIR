@@ -12,8 +12,6 @@ Hand-Object Interaction loss.
 from typing import Optional, Tuple
 
 import torch
-from bps_torch.bps import bps_torch
-from bps_torch.tools import denormalize
 
 from model.affine_mano import AffineMANO
 
@@ -66,7 +64,7 @@ class CHOIRLoss(torch.nn.Module):
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
-        _, scalar = x
+        _, _, scalar = x
         (
             choir_gt,
             # anchor_orientations,
@@ -141,28 +139,22 @@ class CHOIRLoss(torch.nn.Module):
 
 
 class DualHOILoss(torch.nn.Module):
-    def __init__(self, bps_dim: int, anchor_assignment: str):
+    def __init__(self, rescaled_bps: torch.Tensor, anchor_assignment: str):
         super().__init__()
         if anchor_assignment == "batched_fixed":
             assert (
-                bps_dim % 32 == 0
+                rescaled_bps.shape[0] % 32 == 0
             ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment"
-        self.bps = bps_torch(
-            bps_type="random_uniform",
-            n_bps_points=bps_dim,
-            radius=1.0,
-            n_dims=3,
-            custom_basis=None,
-        )
+        self.bps = rescaled_bps
         self._anchor_assignment = anchor_assignment
 
     def forward(
         self,
-        verts: torch.Tensor,
+        # verts: torch.Tensor,
         anchors: torch.Tensor,
         choir: torch.Tensor,
-        bps_mean: torch.Tensor,
-        bps_scalar: float,
+        # bps_mean: torch.Tensor,
+        # bps_scalar: float,
         hand_contacts: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -176,14 +168,16 @@ class DualHOILoss(torch.nn.Module):
         distances in the choir field.
         """
         # Step 1: Compute the distance from the predicted anchors to the reconstructed target point cloud
-        tgt_points = self.bps.decode(x_deltas=choir[:, :, 1:4])
-        tgt_points = denormalize(tgt_points, bps_mean, bps_scalar)
-        anchor_distances = torch.cdist(tgt_points, anchors, p=2)
+        # tgt_points = self.bps.decode(x_deltas=choir[:, :, 1:4])
+        # tgt_points = denormalize(tgt_points, bps_mean, bps_scalar)
+        assert self.bps.shape[0] == choir.shape[1]
+        anchor_distances = torch.cdist(self.bps, anchors, p=2)
 
         if self._anchor_assignment in [
             "closest",
             "random",
         ]:
+            raise NotImplementedError
             choir_one_hot = choir[:, :, -32:]
             index = torch.argmax(choir_one_hot, dim=-1)
             assigned_anchor_distances = anchor_distances.gather(
@@ -194,6 +188,7 @@ class DualHOILoss(torch.nn.Module):
                 assigned_anchor_distances, choir[:, :, -33]
             )
         elif self._anchor_assignment == "closest_and_farthest":
+            raise NotImplementedError
             closest_one_hot = choir[:, :, 5:37]
             closest_index = torch.argmax(closest_one_hot, dim=-1)
             lowest_anchor_distances = anchor_distances.gather(

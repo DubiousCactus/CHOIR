@@ -148,7 +148,7 @@ class CHOIRLossConf:
 
 @dataclass
 class DualHOILossConf:
-    bps_dim: int = MISSING
+    rescaled_bps: int = MISSING
     anchor_assignment: str = MISSING
 
 

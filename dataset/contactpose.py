@@ -78,6 +78,18 @@ class ContactPoseDataset(BaseDataset):
         self._n_random_choir_per_sample = (
             n_random_choir_per_sample if anchor_assignment == "random" else 1
         )
+        bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
+        if osp.isfile(bps_path):
+            with open(bps_path, "rb") as f:
+                bps = pickle.load(f)
+        else:
+            bps = sample_sphere_uniform(
+                n_points=self._bps_dim, n_dims=3, radius=1.0, random_seed=1995
+            ).cpu()
+            with open(bps_path, "wb") as f:
+                pickle.dump(bps, f)
+        self._bps = bps.cpu()
+
         super().__init__(
             dataset_root="",
             augment=augment,
@@ -91,6 +103,10 @@ class ContactPoseDataset(BaseDataset):
     @property
     def bps_dim(self) -> int:
         return self._bps_dim
+
+    @property
+    def bps(self) -> torch.Tensor:
+        return self._bps
 
     @property
     def anchor_assignment(self) -> str:
@@ -253,17 +269,6 @@ class ContactPoseDataset(BaseDataset):
         optimization! It's very important otherwise we can't learn anything meaningful and
         generalize.
         """
-        bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
-        if osp.isfile(bps_path):
-            with open(bps_path, "rb") as f:
-                bps = pickle.load(f)
-        else:
-            bps = sample_sphere_uniform(
-                n_points=self._bps_dim, n_dims=3, radius=1.0, random_seed=1995
-            ).cpu()
-            with open(bps_path, "wb") as f:
-                pickle.dump(bps, f)
-
         # TODO: We should just hash all the class properties and use that as the cache key. This is
         # a bit hacky and not scalable.
         samples_labels_pickle_pth = osp.join(
@@ -429,7 +434,7 @@ class ContactPoseDataset(BaseDataset):
                         to_cuda_(obj_ptcld).unsqueeze(0),
                         to_cuda_(anchors),
                         scalar=scalar,
-                        bps=to_cuda_(bps).unsqueeze(0),  # type: ignore
+                        bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
                         anchor_assignment=self._anchor_assignment,
                     )
                     # anchor_orientations = torch.nn.functional.normalize(
@@ -450,6 +455,7 @@ class ContactPoseDataset(BaseDataset):
                     anchors = anchors.squeeze(0).cpu()
                     rot_6d = rot_6d.squeeze(0).cpu()
                     trans = trans.squeeze(0).cpu()
+                    rescaled_ref_pts = rescaled_ref_pts.squeeze(0).cpu()
 
                     sample = (
                         choir,
@@ -457,6 +463,7 @@ class ContactPoseDataset(BaseDataset):
                         # pcl_mean,
                         # pcl_scalar,
                         # self._bps_dim,
+                        rescaled_ref_pts,
                         scalar,
                     )
                     label = (
@@ -490,7 +497,7 @@ class ContactPoseDataset(BaseDataset):
                         mesh = o3dio.read_triangle_mesh(mesh_pth)
                         visualize_CHOIR(
                             choir,
-                            bps,
+                            self._bps,
                             scalar,
                             # hand_contacts,
                             verts,

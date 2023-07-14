@@ -63,6 +63,8 @@ class BaseTrainer:
         self._anchor_assignment = train_loader.dataset.anchor_assignment
         self._training_loss = training_loss
         self._tto_loss = tto_loss
+        self._bps_dim = train_loader.dataset.bps_dim
+        self._bps = train_loader.dataset.bps
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -77,7 +79,12 @@ class BaseTrainer:
             epoch: The current epoch.
         """
         visualize_model_predictions(
-            self._model, batch, epoch, anchor_assignment=self._anchor_assignment
+            self._model,
+            batch,
+            epoch,
+            anchor_assignment=self._anchor_assignment,
+            bps_dim=self._bps_dim,
+            bps=self._bps,
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda
@@ -93,7 +100,7 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         x, y = batch
-        noisy_choir, scalar = x
+        noisy_choir, _, scalar = x
         y_hat = self._model(noisy_choir)
         losses = self._training_loss(x, y, y_hat)
         loss = sum([v for v in losses.values()])
@@ -117,7 +124,7 @@ class BaseTrainer:
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
         has_visualized = False
         " ==================== Training loop for one epoch ==================== "
-        for batch in self._train_loader:
+        for i, batch in enumerate(self._train_loader):
             if (
                 not self._running
                 and project_conf.SIGINT_BEHAVIOR
@@ -140,7 +147,13 @@ class BaseTrainer:
                 + f" val_loss={last_val_loss:.4f}]",
                 color_code,
             )
-            if visualize and not has_visualized and random.Random().random() < 0.15:
+            if (
+                visualize
+                and not has_visualized
+                and (
+                    random.Random().random() < 0.15 or i == len(self._train_loader) - 1
+                )
+            ):
                 with torch.no_grad():
                     self._visualize(batch, epoch)
                 has_visualized = True
@@ -193,7 +206,14 @@ class BaseTrainer:
                     color_code,
                 )
                 " ==================== Visualization ==================== "
-                if visualize and not has_visualized and random.Random().random() < 0.15:
+                if (
+                    visualize
+                    and not has_visualized
+                    and (
+                        random.Random().random() < 0.15
+                        or i == len(self._val_loader) - 1
+                    )
+                ):
                     self._visualize(batch, epoch)
                     has_visualized = True
             val_loss = val_loss.compute().item()

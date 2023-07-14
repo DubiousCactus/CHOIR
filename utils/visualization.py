@@ -15,8 +15,6 @@ import numpy as np
 import open3d
 import pyvista as pv
 import torch
-from bps_torch.bps import bps_torch
-from bps_torch.tools import denormalize
 from trimesh import Trimesh
 
 import conf.project as project_conf
@@ -26,13 +24,19 @@ from utils.training import optimize_pose_pca_from_choir
 
 
 def visualize_model_predictions(
-    model: torch.nn.Module, batch: Union[Tuple, List, torch.Tensor], step: int, **kwargs
+    model: torch.nn.Module,
+    batch: Union[Tuple, List, torch.Tensor],
+    step: int,
+    bps: torch.Tensor,
+    bps_dim: int,
+    **kwargs,
 ) -> None:
+    assert bps_dim == bps.shape[0]
     x, y = batch  # type: ignore
-    noisy_choir, pcl_mean, pcl_scalar, bps_dim = x
+    noisy_choir, rescaled_ref_pts, scalar = x
     (
         choir_gt,
-        anchor_deltas,
+        # anchor_deltas,
         joints_gt,
         anchors_gt,
         pose_gt,
@@ -41,11 +45,6 @@ def visualize_model_predictions(
         trans_gt,
     ) = y
     if not project_conf.HEADLESS:
-        noisy_choir, pcl_mean, pcl_scalar = (
-            noisy_choir,
-            pcl_mean,
-            pcl_scalar,
-        )
         pred = model(noisy_choir)
         choir_pred = pred["choir"]
         mano_params_gt = {
@@ -57,10 +56,13 @@ def visualize_model_predictions(
         visualize_CHOIR_prediction(
             choir_pred,
             choir_gt,
-            pcl_mean,
-            pcl_scalar,
+            # pcl_mean,
+            # pcl_scalar,
+            bps,
+            scalar,
+            rescaled_ref_pts,
             mano_params_gt,
-            bps_dim=bps_dim.squeeze()[0].long().item(),
+            bps_dim=bps_dim,
             anchor_assignment=kwargs["anchor_assignment"],
         )
     if project_conf.USE_WANDB:
@@ -75,32 +77,38 @@ def visualize_model_predictions(
 def visualize_CHOIR_prediction(
     choir_pred: torch.Tensor,
     choir_gt: torch.Tensor,
-    pcl_mean: torch.Tensor,
-    pcl_scalar: torch.Tensor,
+    # pcl_mean: torch.Tensor,
+    # pcl_scalar: torch.Tensor,
+    bps: torch.Tensor,
+    scalar: float,
+    ref_pts: torch.Tensor,
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
     anchor_assignment: str,
 ):
-    raise NotImplementedError("I need to refactor this to account for the new CHOIR!")
-
-    def add_choir_to_plot(plot, choir, hand_mesh, anchors):
-        reference_obj_points = bps.decode(x_deltas=choir[:, :, 1:4])
-        reference_obj_points = denormalize(reference_obj_points, pcl_mean, pcl_scalar)
+    def add_choir_to_plot(plot, bps, choir, ref_pts, hand_mesh, anchors):
+        if len(choir.shape) == 3:
+            choir = choir[0]
+        if len(ref_pts.shape) == 3:
+            ref_pts = ref_pts[0]
+        if len(anchors.shape) == 3:
+            anchors = anchors[0]
         plot.add_points(
-            reference_obj_points[0].cpu().numpy(),
+            ref_pts.cpu().numpy(),
             color="blue",
             name="target_points",
             opacity=0.9,
         )
         if anchor_assignment == "closest_and_farthest":
-            min_dist = min(choir[0, :, -33].min(), choir[0, :, 4].min())
-            max_dist = max(choir[0, :, -33].max(), choir[0, :, 4].max())
+            raise NotImplementedError
+            min_dist = min(choir[:, -33].min(), choir[:, 4].min())
+            max_dist = max(choir[:, -33].max(), choir[:, 4].max())
         elif anchor_assignment in ["closest", "random", "batched_fixed"]:
-            min_dist, max_dist = choir[0, :, 4].min(), choir[0, :, 4].max()
+            min_dist, max_dist = choir[:, 1].min(), choir[:, 1].max()
         else:
             raise NotImplementedError
         max_dist = max_dist + 1e-6
-        for i in range(0, reference_obj_points.shape[1], 1):
+        for i in range(bps.shape[0]):
             # The color is proportional to the distance to the anchor. It is in hex format.
             # It is obtained from min-max normalization of the distance in the choir field,
             # without known range. The color range is 0 to 16777215.
@@ -116,24 +124,24 @@ def visualize_CHOIR_prediction(
                     ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment."
                     index = i % 32
                 else:
+                    raise NotImplementedError
                     choir_one_hot = choir[0, i, 5:37]
                     index = torch.argmax(choir_one_hot, dim=-1)
-                anchor = anchors[0, index, :]
-                color = int(
-                    (choir[0, i, 4] - min_dist) / (max_dist - min_dist) * 16777215
-                )
+                anchor = anchors[index, :]
+                color = int((choir[i, 1] - min_dist) / (max_dist - min_dist) * 16777215)
                 plot.add_lines(
                     np.array(
                         [
-                            reference_obj_points[0, i, :].cpu().numpy(),
+                            bps[i, :].cpu().numpy(),
                             anchor.cpu().numpy(),
                         ]
                     ),
                     width=1,
                     color="#" + hex(color)[2:].zfill(6),
-                    name=f"closest_ray{i}",
+                    name=f"anchor_ray{i}",
                 )
                 if anchor_assignment == "closest_and_farthest":
+                    raise NotImplementedError
                     choir_one_hot = choir[0, i, -32:]
                     index = torch.argmax(choir_one_hot, dim=-1)
                     farthest_anchor = anchors[0, index, :]
@@ -159,10 +167,10 @@ def visualize_CHOIR_prediction(
             name="hand_mesh",
             smooth_shading=True,
         )
-        for i in range(anchors.shape[1]):
+        for i in range(anchors.shape[0]):
             plot.add_mesh(
                 pv.Cube(
-                    center=anchors[0, i].cpu().numpy(),
+                    center=anchors[i].cpu().numpy(),
                     x_length=3e-3,
                     y_length=3e-3,
                     z_length=3e-3,
@@ -174,35 +182,41 @@ def visualize_CHOIR_prediction(
     # ============ Get the first element of the batch ============
     choir_pred = choir_pred[0].unsqueeze(0)
     choir_gt = choir_gt[0].unsqueeze(0)
-    pcl_mean = pcl_mean[0].unsqueeze(0)
-    pcl_scalar = pcl_scalar[0].unsqueeze(0)
+    # pcl_mean = pcl_mean[0].unsqueeze(0)
+    # pcl_scalar = pcl_scalar[0].unsqueeze(0)
+    scalar = scalar[0].unsqueeze(0)
+    ref_pts = ref_pts[0].unsqueeze(0)
     mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
     # =============================================================
+
+    # ============ Rescaling the predicted CHOIR field ============
+    choir_pred = choir_pred / scalar  # The object and anchors were scaled up by scalar.
+    choir_gt = choir_gt / scalar
+    ref_pts = ref_pts / scalar  # The reference points were also scaled up.
+    bps = (
+        bps / scalar
+    )  # The bps should be brought to the same scale as the ground truth.
 
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
     pl.subplot(0, 0)
 
-    bps = bps_torch(
-        bps_type="random_uniform",
-        n_bps_points=bps_dim,
-        radius=1.0,
-        n_dims=3,
-        custom_basis=None,
-    )
     affine_mano = AffineMANO().cuda()
     faces = affine_mano.faces
     F = faces.cpu().numpy()
+
     # ============ Optimize MANO on the predicted CHOIR field to visualize it ============
     with torch.set_grad_enabled(True):
         pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
             choir_pred,
             anchor_assignment=anchor_assignment,
-            hand_contacts=None,
+            # hand_contacts=None,
+            bps=bps,
             bps_dim=bps_dim,
-            x_mean=pcl_mean,
-            x_scalar=pcl_scalar,
+            # x_mean=pcl_mean,
+            # x_scalar=pcl_scalar,
+            scalar=scalar,
             objective="anchors",
-            max_iterations=2500,
+            max_iterations=1000,
         )
     # ====== Metrics and qualitative comparison ======
     gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
@@ -240,14 +254,14 @@ def visualize_CHOIR_prediction(
     V = verts_pred[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, choir_pred, hand_mesh, anchors_pred)
+    add_choir_to_plot(pl, bps, choir_pred, ref_pts, hand_mesh, anchors_pred)
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
     V = gt_verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     gt_hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, choir_gt, gt_hand_mesh, gt_anchors)
+    add_choir_to_plot(pl, bps, choir_gt, ref_pts, gt_hand_mesh, gt_anchors)
     pl.link_views()
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
