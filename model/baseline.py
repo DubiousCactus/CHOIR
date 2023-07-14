@@ -31,10 +31,10 @@ class BaselineModel(torch.nn.Module):
         self.single_anchor = anchor_assignment in ["closest", "random", "batched_fixed"]
         if anchor_assignment == "batched_fixed":
             self.choir_dim = (
-                5  # No index for the anchor, it's a fixed repeating pattern
+                2  # No index for the anchor, it's a fixed repeating pattern
             )
         else:
-            self.choir_dim = 37 if self.single_anchor else 4 + (33 * 2)
+            self.choir_dim = 1 + 32 if self.single_anchor else 1 + (32 * 2)
 
         # ======================= Encoder =======================
         encoder: List[torch.nn.Module] = [
@@ -191,7 +191,7 @@ class BaselineModel(torch.nn.Module):
             anchor_class = self._anchor_class_decoder(x).view(
                 B, P, 32 * (1 if self.single_anchor else 2)
             )  # N, 32 (one-hot)
-        else:
+        elif self.choir_dim > 2:
             if self.single_anchor:
                 anchor_class = _x.view(B, P, self.choir_dim)[:, :, -32:].requires_grad_(
                     False
@@ -200,10 +200,12 @@ class BaselineModel(torch.nn.Module):
                 raise NotImplementedError
         choir = torch.cat(
             [
-                _x.view(B, P, self.choir_dim)[:, :, :4].requires_grad_(False),
+                _x.view(B, P, self.choir_dim)[:, :, 0]
+                .unsqueeze(-1)
+                .requires_grad_(False),
                 anchor_dist,
             ]
-            + ([anchor_class] if self.choir_dim > 5 else []),
+            + ([anchor_class] if self.choir_dim > 2 else []),
             dim=-1,
         )
         assert choir.shape == input_shape, f"{choir.shape} != {input_shape}"

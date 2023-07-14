@@ -253,7 +253,7 @@ class ContactPoseDataset(BaseDataset):
         optimization! It's very important otherwise we can't learn anything meaningful and
         generalize.
         """
-        bps_path = osp.join(self._cache_dir, "bps.pkl")
+        bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
                 bps = pickle.load(f)

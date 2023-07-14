@@ -93,17 +93,7 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         x, y = batch
-        noisy_choir, pcl_mean, pcl_scalar, bps_dim = x
-        (
-            choir_gt,
-            anchor_orientations,
-            joints_gt,
-            anchors_gt,
-            pose_gt,
-            beta_gt,
-            rot_gt,
-            trans_gt,
-        ) = y
+        noisy_choir, scalar = x
         y_hat = self._model(noisy_choir)
         losses = self._training_loss(x, y, y_hat)
         loss = sum([v for v in losses.values()])

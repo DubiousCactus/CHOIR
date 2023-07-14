@@ -66,10 +66,10 @@ class CHOIRLoss(torch.nn.Module):
             raise NotImplementedError(
                 f"Anchor assignment {self._anchor_assignment} not implemented."
             )
-        _, bps_mean, bps_scalar, _ = x
+        _, scalar = x
         (
             choir_gt,
-            anchor_orientations,
+            # anchor_orientations,
             joints_gt,
             anchors_gt,
             pose_gt,
@@ -78,10 +78,10 @@ class CHOIRLoss(torch.nn.Module):
             trans_gt,
         ) = y
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
-        choir_gt, orientations_gt = choir_gt, anchor_orientations
+        # choir_gt, orientations_gt = choir_gt, anchor_orientations
         losses = {
             "distances": self._distance_w
-            * self._mse(choir_gt[:, :, 4], choir_pred[:, :, 4])
+            * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
         }
         if self._anchor_assignment == "closest":
             losses["assignments"] = self._assignment_w * self._cross_entropy(
@@ -89,6 +89,7 @@ class CHOIRLoss(torch.nn.Module):
             )
         anchor_positions_pred = None
         if self._predict_anchor_orientation or self._predict_anchor_position:
+            raise NotImplementedError
             B, P, D = orientations_pred.shape
             losses["orientations"] = self._orientation_w * self._cosine_embedding(
                 orientations_pred.reshape(B * P, D),
@@ -106,6 +107,7 @@ class CHOIRLoss(torch.nn.Module):
                     target_anchor_positions, anchor_positions_pred
                 )
         if self._predict_mano:
+            raise NotImplementedError
             mano = y_hat["mano"]
             pose, shape, rot, trans = (
                 mano[:, :18],

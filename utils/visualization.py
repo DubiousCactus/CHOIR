@@ -81,6 +81,8 @@ def visualize_CHOIR_prediction(
     bps_dim: int,
     anchor_assignment: str,
 ):
+    raise NotImplementedError("I need to refactor this to account for the new CHOIR!")
+
     def add_choir_to_plot(plot, choir, hand_mesh, anchors):
         reference_obj_points = bps.decode(x_deltas=choir[:, :, 1:4])
         reference_obj_points = denormalize(reference_obj_points, pcl_mean, pcl_scalar)
@@ -293,9 +295,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=scalar * anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                x_length=3e-2,
+                y_length=3e-2,
+                z_length=3e-2,
             ),
             color="yellow",
             name=f"anchor{i}",
