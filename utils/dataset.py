@@ -9,11 +9,10 @@
 Dataset-related functions.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 from bps_torch.bps import bps_torch
-from bps_torch.tools import normalize
 from pytorch3d.transforms import Transform3d
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
@@ -35,10 +34,10 @@ def transform_verts(
 def compute_choir(
     pointcloud: torch.Tensor,
     anchors: torch.Tensor,
-    pointclouds_mean: Optional[torch.Tensor] = None,
-    bps_dim: int = 1024,
+    scalar: float,
+    bps: torch.Tensor,
     anchor_assignment="random",
-) -> Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     For each BPS point, get the reference object point and compute the distance to the
     nearest MANO anchor. Append the anchor index to the BPS point value as well as the
@@ -47,65 +46,56 @@ def compute_choir(
     pointcloud to compute the anchor distances!
 
     Args:
-        pointcloud: Shape (N, 3)
-        anchors: Shape (N_ANCHORS, 3)
+        pointcloud: Shape (B, N, 3)
+        anchors: Shape (B, N_ANCHORS, 3)
+        scalar (float): Scalar for the hand and object pointcloud such that they end up in the unit sphere.
+        bps: Shape (B, N_BPS_POINTS, 3). It is important that we reuse the same BPS!
         anchor_assignment: How to assign anchors to BPS points. Must be one of: "random",
         "closest", "closest_and_farthest", "batched_fixed".
     """
-    bps = bps_torch(
-        bps_type="random_uniform",
-        n_bps_points=bps_dim,
-        radius=1.0,
-        n_dims=3,
-        custom_basis=None,
-    )
+    assert len(anchors.shape) == 3
+    assert len(pointcloud.shape) == 3
+    assert len(bps.shape) == 3
+    bps_encoder = bps_torch(custom_basis=bps)
     # TODO: Investigate why parts of the pointcloud (i.e. in the wine glass) are ignored during
     # sampling, especially when reducing the dimensionality of the BPS representation.
-    normalized_pointcloud, pcl_mean, pcl_scalar = normalize(
-        pointcloud.unsqueeze(0),
-        x_mean=pointclouds_mean.unsqueeze(0) if pointclouds_mean is not None else None,
-    )
-    bps_enc: Dict[str, Any] = bps.encode(
-        normalized_pointcloud,
+    rescaled_obj_pointcloud = pointcloud * scalar
+    rescaled_anchors = anchors * scalar
+    object_bps: Dict[str, Any] = bps_encoder.encode(
+        rescaled_obj_pointcloud,
         feature_type=["dists", "deltas"],
-        x_features=None,
-        custom_basis=None,
     )
-    ref_ids = bps_enc["ids"][0]
-    ref_pts = pointcloud[ref_ids]
-    assert pointcloud[ref_ids[0], :].allclose(
-        ref_pts[0, :]
-    ), "ref_pts[0, :] != pointcloud[ref_ids[0], :]"
-    # Compute the distances between the reference points and the anchors:
-    anchor_distances = torch.cdist(
-        ref_pts.float(), anchors.float()
-    )  # Shape: (B, BPS_LEN, N_ANCHORS)
+    rescaled_ref_pts = bps + object_bps["deltas"]
+    # Compute the distances between the BPS points and the MANO anchors:
+    anchor_distances = torch.cdist(bps, rescaled_anchors)  # Shape: (BPS_LEN, N_ANCHORS)
     anchor_encodings = []
     if anchor_assignment == "random":
         # Randomly sample an anchor for each reference point:
         anchor_ids = torch.randint(
             0,
-            anchors.shape[1],
+            rescaled_anchors.shape[1],
             (
                 1,
-                ref_pts.shape[0],
+                bps.shape[0],
             ),
-            device=ref_pts.device,
+            device=bps.device,
         )
         distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
             -1
         )
         anchor_encodings = [
             distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
+            torch.nn.functional.one_hot(
+                anchor_ids, num_classes=rescaled_anchors.shape[1]
+            ),
         ]
-        anchors_repeats = (
-            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-            .squeeze(-2)
-            .squeeze(0)
-        )
-        anchor_deltas = anchors_repeats - ref_pts
-        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
+        # rescaled_anchors_repeats = (
+        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+        # .squeeze(-2)
+        # .squeeze(0)
+        # )
+        # anchor_deltas = rescaled_anchors_repeats - bps
+        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
     elif anchor_assignment == "closest":
         anchor_ids = torch.argmin(anchor_distances, dim=2)
         distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
@@ -113,15 +103,17 @@ def compute_choir(
         )
         anchor_encodings = [
             distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(anchor_ids, num_classes=anchors.shape[1]),
+            torch.nn.functional.one_hot(
+                anchor_ids, num_classes=rescaled_anchors.shape[1]
+            ),
         ]
-        anchors_repeats = (
-            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-            .squeeze(-2)
-            .squeeze(0)
-        )
-        anchor_deltas = anchors_repeats - ref_pts
-        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
+        # rescaled_anchors_repeats = (
+        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+        # .squeeze(-2)
+        # .squeeze(0)
+        # )
+        # anchor_deltas = rescaled_anchors_repeats - bps
+        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
     elif anchor_assignment == "closest_and_farthest":
         closest_anchor_ids = torch.argmin(anchor_distances, dim=2)
         closest_distances = torch.gather(
@@ -134,31 +126,31 @@ def compute_choir(
         anchor_encodings = [
             closest_distances.unsqueeze(-1),
             torch.nn.functional.one_hot(
-                closest_anchor_ids, num_classes=anchors.shape[1]
+                closest_anchor_ids, num_classes=rescaled_anchors.shape[1]
             ),
             farthest_distances.unsqueeze(-1),
             torch.nn.functional.one_hot(
-                farthest_anchor_ids, num_classes=anchors.shape[1]
+                farthest_anchor_ids, num_classes=rescaled_anchors.shape[1]
             ),
         ]
-        anchor_deltas = torch.zeros_like(ref_pts)  # Not implemented yet!
-        raise NotImplementedError(
-            "closest_and_farthest anchor assignment is not fully implemented yet!"
-        )
+        # anchor_deltas = torch.zeros_like(bps)  # Not implemented yet!
+        # raise NotImplementedError(
+        # "closest_and_farthest anchor assignment is not fully implemented yet!"
+        # )
     elif anchor_assignment == "batched_fixed":
-        # Assign all ordered 32 anchors to a batch of BPS points and repeat for all available
+        # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
         # batches. The number of batches is determined by the number of BPS points, and the latter
         # must be a multiple of 32.
         assert (
-            bps_dim % 32 == 0
-        ), "The number of BPS points must be a multiple of 32 for batched_fixed anchor assignment."
+            bps.shape[1] % 32 == 0
+        ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32 for batched_fixed anchor assignment."
         anchor_ids = (
             torch.arange(
                 0,
-                anchors.shape[1],
-                device=ref_pts.device,
+                rescaled_anchors.shape[1],
+                device=bps.device,
             )
-            .repeat((ref_pts.shape[0] // 32,))
+            .repeat((bps.shape[1] // 32,))
             .unsqueeze(0)
         )
         distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
@@ -168,23 +160,22 @@ def compute_choir(
         anchor_encodings = [
             distances.unsqueeze(-1),
         ]
-        anchors_repeats = (
-            torch.gather(anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-            .squeeze(-2)
-            .squeeze(0)
-        )
-        anchor_deltas = anchors_repeats - ref_pts
-        assert torch.allclose(anchor_deltas + ref_pts, anchors_repeats)
+        # rescaled_anchors_repeats = (
+        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+        # .squeeze(-2)
+        # .squeeze(0)
+        # )
+        # anchor_deltas = rescaled_anchors_repeats - bps
+        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
     # Build the CHOIR representation:
     choir = torch.cat(
         [
-            bps_enc["dists"].unsqueeze(-1),
-            bps_enc["deltas"],
+            object_bps["dists"].unsqueeze(-1),
             *anchor_encodings,
         ],
         dim=-1,
     )
-    return choir, pcl_mean, pcl_scalar, ref_pts, anchor_deltas
+    return choir, rescaled_ref_pts  # , anchor_deltas
 
 
 def compute_hand_contacts_simple(

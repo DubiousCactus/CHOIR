@@ -254,10 +254,12 @@ def visualize_CHOIR_prediction(
 
 def visualize_CHOIR(
     choir: torch.Tensor,
-    dense_contacts: torch.Tensor,
+    bps: torch.Tensor,
+    scalar: float,
+    # dense_contacts: torch.Tensor,
     verts: torch.Tensor,
     anchors: torch.Tensor,
-    anchor_orientations: torch.Tensor,
+    # anchor_orientations: torch.Tensor,
     obj_mesh,
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
@@ -266,22 +268,23 @@ def visualize_CHOIR(
 ):
     n_anchors = anchors.shape[0]
     faces = affine_mano.faces
-    V = verts[0].cpu().numpy()
+    V = scalar * verts[0].cpu().numpy()
     F = faces.cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
 
-    pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
+    pl = pv.Plotter(shape=(2, 2), border=False, off_screen=False)
     pl.subplot(0, 0)
     pl.add_mesh(
         hand_mesh,
         opacity=0.4,
         name="hand_mesh",
         smooth_shading=True,
-        scalars=dense_contacts.cpu().numpy(),
-        cmap="jet",
+        # scalars=dense_contacts.cpu().numpy(),
+        # cmap="jet",
     )
     obj_tmesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+    obj_tmesh.apply_scale(scalar)
     obj_mesh_pv = pv.wrap(obj_tmesh)
     pl.add_mesh(
         obj_mesh_pv, opacity=0.3, name="obj_mesh", smooth_shading=True, color="red"
@@ -289,7 +292,7 @@ def visualize_CHOIR(
     for i in range(n_anchors):
         pl.add_mesh(
             pv.Cube(
-                center=anchors[i].cpu().numpy(),
+                center=scalar * anchors[i].cpu().numpy(),
                 x_length=3e-3,
                 y_length=3e-3,
                 z_length=3e-3,
@@ -309,10 +312,15 @@ def visualize_CHOIR(
         opacity=0.9,
     )
     pl.add_points(
-        obj_pointcloud.cpu().numpy(), color="red", name="base_ptcld", opacity=0.2
+        scalar * obj_pointcloud.cpu().numpy(),
+        color="red",
+        name="base_ptcld",
+        opacity=0.2,
     )
-    bps_dim = reference_obj_points.shape[0]
-    for i in range(0, reference_obj_points.shape[0], 1):
+    pl.add_points(bps.cpu().numpy(), color="green", name="basis_points", opacity=0.9)
+    assert len(bps.shape) == len(reference_obj_points.shape)
+    rescaled_anchors = anchors * scalar
+    for i in range(bps.shape[0]):
         if anchor_assignment in ["closest", "random"]:
             index = torch.argmax(choir[i, -32:])
         elif anchor_assignment == "batched_fixed":
@@ -321,47 +329,145 @@ def visualize_CHOIR(
             raise NotImplementedError(
                 f"Anchor assignment {anchor_assignment} not implemented."
             )
-        anchor = anchors[index, :]
+        anchor = rescaled_anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
         # without known range. The color range is 0 to 16777215.
-        color = int(
-            (choir[i, 4] - choir[:, 4].min())
-            / (choir[:, 4].max() - choir[:, 4].min())
+        obj_color = int(
+            (choir[i, 0] - choir[:, 0].min())
+            / (choir[:, 0].max() - choir[:, 0].min())
+            * 16777215
+        )
+        anchor_color = int(
+            (choir[i, 1] - choir[:, 1].min())
+            / (choir[:, 1].max() - choir[:, 1].min())
             * 16777215
         )
         # This is to check that the delta vectors are correct: (should be the same visual
         # result as above)
-        assert np.allclose(
-            np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+        # assert np.allclose(
+        # np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+        # np.array(
+        # [
+        # reference_obj_points[i, :].cpu().numpy(),
+        # (
+        # reference_obj_points[i, :].cpu()
+        # + (choir[i, 4] * anchor_orientations[i, :])
+        # ).numpy(),
+        # ]
+        # ),
+        # )
+        pl.add_lines(
             np.array(
-                [
-                    reference_obj_points[i, :].cpu().numpy(),
-                    (
-                        reference_obj_points[i, :].cpu()
-                        + (choir[i, 4] * anchor_orientations[i, :])
-                    ).numpy(),
-                ]
+                [bps[i, :].cpu().numpy(), reference_obj_points[i, :].cpu().numpy()]
             ),
+            width=1,
+            color="#" + hex(obj_color)[2:].zfill(6),
+            name=f"obj_ray{i}",
         )
         pl.add_lines(
-            np.array([reference_obj_points[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+            np.array([bps[i, :].cpu().numpy(), anchor.cpu().numpy()]),
             width=1,
-            color="#" + hex(color)[2:].zfill(6),
-            name=f"ray{i}",
+            color="#" + hex(anchor_color)[2:].zfill(6),
+            name=f"anchor_ray{i}",
         )
 
     for i in range(n_anchors):
         pl.add_mesh(
             pv.Cube(
-                center=anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                center=rescaled_anchors[i].cpu().numpy(),
+                x_length=3e-2,
+                y_length=3e-2,
+                z_length=3e-2,
             ),
             color="yellow",
             name=f"anchor{i}",
         )
+    pl.subplot(1, 0)
+    pl.add_points(
+        reference_obj_points.cpu().numpy(),
+        color="blue",
+        name="target_points",
+    )
+    pl.add_points(
+        scalar * obj_pointcloud.cpu().numpy(),
+        color="red",
+        name="base_ptcld",
+        opacity=0.2,
+    )
+    pl.add_points(bps.cpu().numpy(), color="green", name="basis_points", opacity=0.9)
+    assert len(bps.shape) == len(reference_obj_points.shape)
+    rescaled_anchors = anchors * scalar
+    for i in range(bps.shape[0]):
+        if anchor_assignment in ["closest", "random"]:
+            index = torch.argmax(choir[i, -32:])
+        elif anchor_assignment == "batched_fixed":
+            index = i % n_anchors
+        else:
+            raise NotImplementedError(
+                f"Anchor assignment {anchor_assignment} not implemented."
+            )
+        anchor = rescaled_anchors[index, :]
+        # The color is proportional to the distance to the anchor. It is in hex format.
+        # It is obtained from min-max normalization of the distance in the choir field,
+        # without known range. The color range is 0 to 16777215.
+        obj_color = int(
+            (choir[i, 0] - choir[:, 0].min())
+            / (choir[:, 0].max() - choir[:, 0].min())
+            * 16777215
+        )
+        pl.add_lines(
+            np.array(
+                [bps[i, :].cpu().numpy(), reference_obj_points[i, :].cpu().numpy()]
+            ),
+            width=1,
+            color="#" + hex(obj_color)[2:].zfill(6),
+            name=f"obj_ray{i}",
+        )
+    pl.subplot(1, 1)
+    pl.add_points(bps.cpu().numpy(), color="green", name="basis_points", opacity=0.9)
+    assert len(bps.shape) == len(reference_obj_points.shape)
+    rescaled_anchors = anchors * scalar
+    for i in range(bps.shape[0]):
+        if anchor_assignment in ["closest", "random"]:
+            index = torch.argmax(choir[i, -32:])
+        elif anchor_assignment == "batched_fixed":
+            index = i % n_anchors
+        else:
+            raise NotImplementedError(
+                f"Anchor assignment {anchor_assignment} not implemented."
+            )
+        anchor = rescaled_anchors[index, :]
+        anchor_color = int(
+            (choir[i, 1] - choir[:, 1].min())
+            / (choir[:, 1].max() - choir[:, 1].min())
+            * 16777215
+        )
+        pl.add_lines(
+            np.array([bps[i, :].cpu().numpy(), anchor.cpu().numpy()]),
+            width=1,
+            color="#" + hex(anchor_color)[2:].zfill(6),
+            name=f"anchor_ray{i}",
+        )
+
+    for i in range(n_anchors):
+        pl.add_mesh(
+            pv.Cube(
+                center=rescaled_anchors[i].cpu().numpy(),
+                x_length=3e-2,
+                y_length=3e-2,
+                z_length=3e-2,
+            ),
+            color="yellow",
+            name=f"anchor{i}",
+        )
+    pl.add_mesh(
+        hand_mesh,
+        opacity=0.4,
+        name="hand_mesh",
+        smooth_shading=True,
+    )
+
     pl.link_views()
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
