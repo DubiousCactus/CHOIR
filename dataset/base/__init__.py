@@ -27,14 +27,12 @@ class BaseDataset(Dataset, abc.ABC):
         augment: bool,
         split: str,
         tiny: bool = False,
-        scaling: str = "hand_object",
         seed: int = 0,
         debug: bool = False,
     ) -> None:
         super().__init__()
         self._mm_unit = 1.0
         self._augment = augment and split == "train"
-        self._scaling = scaling
         self._debug = debug
         (
             objects,

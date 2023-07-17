@@ -37,6 +37,8 @@ def visualize_model_predictions(
     (
         choir_gt,
         # anchor_deltas,
+        gt_rescaled_ref_pts,
+        scalar_gt,
         joints_gt,
         anchors_gt,
         pose_gt,
@@ -232,9 +234,15 @@ def visualize_CHOIR(
     reference_obj_points: torch.Tensor,
     affine_mano: AffineMANO,
 ):
+    assert len(anchors.shape) == 2
+    assert len(choir.shape) == 2
+    assert len(scalar.shape) == 1
+    assert len(verts.shape) == 2
+    if torch.is_tensor(scalar):
+        scalar = scalar.item()
     n_anchors = anchors.shape[0]
     faces = affine_mano.faces
-    V = scalar * verts[0].cpu().numpy()
+    V = scalar * verts.cpu().numpy()
     F = faces.cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
@@ -266,6 +274,7 @@ def visualize_CHOIR(
             color="yellow",
             name=f"anchor{i}",
         )
+    pl.add_axes_at_origin()
 
     # Now we're gonna plot the CHOIR field. For each point in the target point cloud, we'll plot a
     # ray from the point to the closest anchor. The ray will be colored according to the distance
@@ -432,6 +441,8 @@ def visualize_MANO(
     hand_mesh = pv.wrap(tmesh)
     pl.add_mesh(hand_mesh, opacity=0.4, name="hand_mesh", smooth_shading=True)
     if gt_hand is not None:
+        if isinstance(gt_hand, Trimesh):
+            gt_hand = pv.wrap(gt_hand)
         pl.add_mesh(
             gt_hand, opacity=0.2, name="gt_hand", smooth_shading=True, color="blue"
         )

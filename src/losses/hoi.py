@@ -61,6 +61,8 @@ class CHOIRLoss(torch.nn.Module):
         (
             choir_gt,
             # anchor_orientations,
+            _,
+            scalar_gt,
             joints_gt,
             anchors_gt,
             pose_gt,

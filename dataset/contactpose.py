@@ -15,24 +15,28 @@ import pickle
 import random
 import sys
 from contextlib import redirect_stdout
+from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 from bps_torch.tools import sample_sphere_uniform
 from hydra.utils import get_original_cwd
-from manotorch.anchorlayer import AnchorLayer
 from open3d import io as o3dio
-from pytorch3d.structures import Pointclouds
 from pytorch3d.transforms import matrix_to_rotation_6d
 from tqdm import tqdm
+from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
-from utils.dataset import compute_choir
-from utils.visualization import visualize_CHOIR, visualize_CHOIR_prediction
+from utils.dataset import compute_choir, compute_hand_object_pair_scalar
+from utils.visualization import (
+    visualize_CHOIR,
+    visualize_CHOIR_prediction,
+    visualize_MANO,
+)
 
 
 class ContactPoseDataset(BaseDataset):
@@ -48,13 +52,10 @@ class ContactPoseDataset(BaseDataset):
         self,
         split: str,
         validation_objects: int = 5,
-        perturbation_level: float = 0,
+        perturbation_level: int = 0,
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
-        n_perturbed_choir_per_sample: int = 1000,
-        scaling: str = "none",
-        unit_cube: bool = True,
-        positive_unit_cube: bool = False,
+        n_perturbed_choir_per_sample: int = 100,
         right_hand_only: bool = True,
         tiny: bool = False,
         augment: bool = False,
@@ -67,15 +68,19 @@ class ContactPoseDataset(BaseDataset):
             get_original_cwd(), "data", "ContactPose_preprocessed"
         )
         self._right_hand_only = right_hand_only
-        if positive_unit_cube:
-            assert unit_cube, "positive_unit_cube=True requires unit_cube=True"
-        self._positive_unit_cube = positive_unit_cube
-        self._unit_cube = unit_cube
         self._perturbation_level = perturbation_level
         assert (
             n_perturbed_choir_per_sample > 0
         ), "n_perturbed_choir_per_sample must be > 0"
-        self._n_perturbed_choir_per_sample = n_perturbed_choir_per_sample
+        self._n_perturbed_choir_per_sample = (
+            1 if perturbation_level == 0 else n_perturbed_choir_per_sample
+        )
+        self._perturbations = [
+            {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
+            {"trans": 0.02, "rot": 0.05, "pca": 0.3},  # Level 1
+            {"trans": 0.05, "rot": 0.1, "pca": 0.5},  # Level 2
+        ]
+
         self._bps_dim = bps_dim
         bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
         if osp.isfile(bps_path):
@@ -93,7 +98,6 @@ class ContactPoseDataset(BaseDataset):
             dataset_root="",
             augment=augment,
             split=split,
-            scaling=scaling,
             tiny=tiny,
             seed=seed,
             debug=debug,
@@ -277,86 +281,11 @@ class ContactPoseDataset(BaseDataset):
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
         affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
-        anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor").cuda()
-        hand_object_stats_pth = osp.join(
-            samples_labels_pickle_pth,
-            f"hand_object_stats_{self._obj_ptcld_size}-pts.pkl",
-        )
-        hand_object_scalars = None
-        if osp.isfile(hand_object_stats_pth):
-            with open(hand_object_stats_pth, "rb") as f:
-                hand_object_scalars = pickle.load(f)
-        else:
-            print("[*] Computing hand-object statistics...")
-            # TODO: This is very expensive in memory so we should batch it.
-            hand_object_pointclouds = []
-            for objects_w_contacts_pth, grasp_pth in tqdm(
-                zip(objects_w_contacts, grasps), total=len(objects_w_contacts)
-            ):
-                with open(grasp_pth, "rb") as f:
-                    grasp_data = pickle.load(f)
-                # obj_ptcld = pointclouds[objects.index(grasp_data["obj_name"])]
-                obj_contacts_mesh = o3dio.read_triangle_mesh(objects_w_contacts_pth)
-                obj_pointcloud = torch.from_numpy(
-                    np.asarray(
-                        obj_contacts_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
-                    )
-                ).cpu()
-                # get the anchors instead of a hand point cloud:
-                mano_params = grasp_data["grasp"][0]
-                hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
-                rot_6d = matrix_to_rotation_6d(hTm[:, :3, :3])
-                trans = hTm[:, :3, 3]
-                verts, _ = affine_mano(
-                    torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
-                    torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
-                    rot_6d,
-                    trans,
-                )
-                anchors = anchor_layer(verts)
-                # Build a pointcloud from the object points + hand anchors with open3D/Pytorch3D and compute
-                # the mean and std of all samples.
-                hand_object_pointclouds.append(
-                    torch.cat([obj_pointcloud, anchors.squeeze(0).cpu()], dim=0)
-                )
-            hand_object_pointclouds = Pointclouds(
-                torch.stack(hand_object_pointclouds, dim=0)
-            )
-            # Now scale the pointclouds to unit sphere. First, find the scalar to apply to each
-            # pointcloud. We can get their bounding boxes and find the min and max of the
-            # diagonal of the bounding boxes, and then compute each scalar such that the
-            # diagonal of the bounding box is 1.
-
-            # (N, 3, 2) where bbox[i,j] gives the min and max values of mesh i along axis j. So
-            # bbox[i,:,0] is the min values of mesh i along all axes, and bbox[i,:,1] is the max
-            # values of mesh i along all axes.
-            hand_object_bboxes = hand_object_pointclouds.get_bounding_boxes()
-            hand_object_bboxes_diag = torch.norm(
-                hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
-            )  # (N,)
-            hand_object_scalars = 1.0 / hand_object_bboxes_diag  # (N,)
-            # Make sure that the new bounding boxes have a diagonal of 1.
-            rescaled_hand_object_pointclouds = hand_object_pointclouds.scale(
-                hand_object_scalars.unsqueeze(1)
-            )  # (N, 3, M)
-            hand_object_bboxes = rescaled_hand_object_pointclouds.get_bounding_boxes()
-            hand_object_bboxes_diag = torch.norm(
-                hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
-            )  # (N,)
-            assert torch.allclose(
-                hand_object_bboxes_diag, torch.ones_like(hand_object_bboxes_diag)
-            ), "Bounding boxes are not unit cubes."
-            with open(hand_object_stats_pth, "wb") as f:
-                pickle.dump(
-                    hand_object_scalars.cpu().numpy().tolist(),
-                    f,
-                )
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
-        for scalar, mesh_pth, grasp_pth in tqdm(
-            zip(hand_object_scalars, objects_w_contacts, grasps),
-            total=len(objects_w_contacts),
+        for mesh_pth, grasp_pth in tqdm(
+            zip(objects_w_contacts, grasps), total=len(objects_w_contacts)
         ):
             # Load the object mesh and MANO params
             with open(grasp_pth, "rb") as f:
@@ -390,30 +319,49 @@ class ContactPoseDataset(BaseDataset):
                     for i in range(self._n_perturbed_choir_per_sample)
                 ]
             else:
-                mano_params = grasp_data["grasp"][0]
-                hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
-                rot_6d = matrix_to_rotation_6d(hTm[:, :3, :3])
-                trans = hTm[:, :3, 3]
-                verts, joints = affine_mano(
-                    torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
-                    torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
-                    rot_6d,
-                    trans,
-                )
-
-                # Rescale the meshes to fit in a unit cube if scaling is enabled
-                if self._scaling != "none":
-                    raise NotImplementedError
-
-                # Compute the CHOIR field
                 obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                 obj_ptcld = torch.from_numpy(
                     np.asarray(
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
-                ).cpu()
+                )
                 visualize = self._debug and (random.random() < 0.1)
                 has_visualized = False
+                # ================== Original Hand-Object Pair ==================
+                mano_params = grasp_data["grasp"][0]
+                gt_hTm = (
+                    torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
+                )
+                gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
+                gt_trans = gt_hTm[:, :3, 3]
+                gt_theta, gt_beta = (
+                    torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
+                    torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
+                )
+                gt_verts, gt_joints = affine_mano(
+                    gt_theta, gt_beta, gt_rot_6d, gt_trans
+                )
+                # ===============================================================
+                # ============ Shift the pair to the object's center ============
+                obj_center = torch.from_numpy(obj_mesh.get_center())
+                obj_mesh.translate(-obj_center)
+                obj_ptcld -= obj_center.to(obj_ptcld.device)
+                gt_verts -= obj_center.to(gt_verts.device)
+                gt_joints -= obj_center.to(gt_joints.device)
+                # ===============================================================
+                gt_anchors = affine_mano.get_anchors(gt_verts)
+                # ================== Rescaled Hand-Object Pair ==================
+                gt_scalar = compute_hand_object_pair_scalar(gt_anchors, obj_ptcld)
+
+                # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
+                # workers, but bps_torch is forcing my hand here so I might as well help it.
+                gt_choir, gt_rescaled_ref_pts = compute_choir(
+                    to_cuda_(obj_ptcld).unsqueeze(0),
+                    to_cuda_(gt_anchors),
+                    scalar=gt_scalar,
+                    bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                )
+
                 for j in range(self._n_perturbed_choir_per_sample):
                     sample_pth = osp.join(
                         samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
@@ -421,7 +369,40 @@ class ContactPoseDataset(BaseDataset):
                     if osp.isfile(sample_pth):
                         sample_paths.append(sample_pth)
                         continue
-                    anchors = anchor_layer(verts)
+
+                    theta, beta, rot_6d, trans = (
+                        deepcopy(gt_theta),
+                        deepcopy(gt_beta),
+                        deepcopy(gt_rot_6d),
+                        deepcopy(gt_trans),
+                    )
+                    if self._perturbation_level > 0:
+                        trans_noise = (
+                            torch.rand(3, device=trans.device)
+                            * self._perturbations[self._perturbation_level]["trans"]
+                        )
+                        rot_6d_noise = (
+                            torch.rand(6, device=rot_6d.device)
+                            * self._perturbations[self._perturbation_level]["rot"]
+                        )
+                        pose_noise = torch.cat(
+                            [
+                                torch.rand(3)
+                                * self._perturbations[self._perturbation_level]["rot"],
+                                torch.rand(15)
+                                * self._perturbations[self._perturbation_level]["pca"],
+                            ]
+                        ).to(theta.device)
+                        theta += pose_noise
+                        rot_6d += rot_6d_noise
+                        trans += trans_noise
+
+                    verts, _ = affine_mano(theta, beta, rot_6d, trans)
+                    # Shift the hand accordingly
+                    verts -= obj_center.to(verts.device)
+
+                    anchors = affine_mano.get_anchors(verts)
+                    scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
                     choir, rescaled_ref_pts = compute_choir(
@@ -438,37 +419,22 @@ class ContactPoseDataset(BaseDataset):
                     # ref_pts.float(), verts.float()
                     # )
 
-                    # Remove batch dimension
-                    choir = choir.squeeze(0).cpu()
-                    # pcl_mean = pcl_mean.squeeze(0).cpu()
-                    # pcl_scalar = pcl_scalar.squeeze(0).cpu()
-                    # hand_contacts = hand_contacts.squeeze(0).cpu()
-                    joints = joints.squeeze(0).cpu()
-                    # anchor_orientations = anchor_orientations.squeeze(0).cpu()
-                    anchors = anchors.squeeze(0).cpu()
-                    rot_6d = rot_6d.squeeze(0).cpu()
-                    trans = trans.squeeze(0).cpu()
-                    rescaled_ref_pts = rescaled_ref_pts.squeeze(0).cpu()
-
                     sample = (
-                        choir,
-                        # hand_contacts,
-                        # pcl_mean,
-                        # pcl_scalar,
-                        # self._bps_dim,
-                        rescaled_ref_pts,
-                        scalar,
+                        choir.squeeze(0).cpu(),
+                        rescaled_ref_pts.squeeze(0).cpu(),
+                        scalar.cpu(),
                     )
                     label = (
-                        choir,
-                        # hand_contacts,
+                        gt_choir.squeeze(0).cpu(),
                         # anchor_orientations,
-                        joints,
-                        anchors,
-                        torch.tensor(mano_params["pose"]).cpu(),
-                        torch.tensor(mano_params["betas"]).cpu(),
-                        rot_6d,
-                        trans,
+                        gt_rescaled_ref_pts.squeeze(0).cpu(),
+                        gt_scalar.cpu(),
+                        gt_joints.squeeze(0).cpu(),
+                        gt_anchors.squeeze(0).cpu(),
+                        gt_theta.cpu(),
+                        gt_beta.cpu(),
+                        gt_rot_6d.squeeze(0).cpu(),
+                        gt_trans.squeeze(0).cpu(),
                     )
 
                     for v in sample:
@@ -487,35 +453,37 @@ class ContactPoseDataset(BaseDataset):
                         # .squeeze(0)
                         # .cpu()
                         # )
-                        mesh = o3dio.read_triangle_mesh(mesh_pth)
                         visualize_CHOIR(
-                            choir,
+                            gt_choir.squeeze(0),
                             self._bps,
-                            scalar,
+                            gt_scalar,
                             # hand_contacts,
-                            verts,
-                            anchors,
+                            gt_verts.squeeze(0),
+                            gt_anchors.squeeze(0),
                             # anchor_orientations,
-                            mesh,
+                            obj_mesh,
                             obj_ptcld,
                             rescaled_ref_pts.squeeze(0),
                             affine_mano,
                         )
+                        faces = affine_mano.faces
+                        gt_MANO_mesh = Trimesh(
+                            gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                        )
+                        visualize_MANO(
+                            verts, faces, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                        )
                         visualize_CHOIR_prediction(
                             choir.unsqueeze(0),
-                            choir.unsqueeze(0),
+                            gt_choir.unsqueeze(0),
                             self._bps,
                             torch.tensor([scalar]),
-                            rescaled_ref_pts.unsqueeze(0),
+                            gt_rescaled_ref_pts.unsqueeze(0),
                             {
-                                "pose": torch.tensor(mano_params["pose"])
-                                .unsqueeze(0)
-                                .cpu(),
-                                "beta": torch.tensor(mano_params["betas"])
-                                .unsqueeze(0)
-                                .cpu(),
-                                "rot_6d": rot_6d.unsqueeze(0),
-                                "trans": trans.unsqueeze(0),
+                                "pose": gt_theta.unsqueeze(0).cpu(),
+                                "beta": gt_beta.unsqueeze(0).cpu(),
+                                "rot_6d": gt_rot_6d.unsqueeze(0),
+                                "trans": gt_trans.unsqueeze(0),
                             },
                             self._bps_dim,
                         )

@@ -52,11 +52,8 @@ class GraspingDatasetConf:
     tiny: bool = False
     augment: bool = False
     validation_objects: int = 5
-    perturbation_level: float = 0.0
-    n_perturbed_choir_per_sample: int = 1
-    scaling: str = "none"
-    unit_cube: bool = False
-    positive_unit_cube: bool = False
+    perturbation_level: int = 0
+    n_perturbed_choir_per_sample: int = 100
     right_hand_only: bool = True
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
@@ -176,8 +173,8 @@ sched_store = store(group="scheduler")
 sched_store(
     pbuilds(
         torch.optim.lr_scheduler.StepLR,
-        step_size=50,
-        gamma=0.8,
+        step_size=100,
+        gamma=0.5,
     ),
     name="step",
 )
@@ -193,7 +190,6 @@ sched_store(
 sched_store(
     pbuilds(
         torch.optim.lr_scheduler.CosineAnnealingLR,
-        T_max=100,
     ),
     name="cosine",
 )

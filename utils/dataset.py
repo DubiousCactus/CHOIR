@@ -13,6 +13,7 @@ from typing import Any, Dict, Tuple
 
 import torch
 from bps_torch.bps import bps_torch
+from pytorch3d.structures import Pointclouds
 from pytorch3d.transforms import Transform3d
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
@@ -29,6 +30,42 @@ def transform_verts(
         Transform3d(device=verts.device).compose(inv_r).translate(t).to(verts.device)
     )
     return transform.transform_points(verts)
+
+
+def compute_hand_object_pair_scalar(
+    hand_anchors: torch.Tensor,
+    object_point_cloud: torch.Tensor,
+) -> torch.Tensor:
+    # Build a pointcloud from the object points + hand anchors with open3D/Pytorch3D.
+    hand_object_pointcloud = Pointclouds(
+        torch.cat([object_point_cloud, hand_anchors.squeeze(0).cpu()], dim=0)
+        .unsqueeze(0)
+        .cuda()
+    )
+    # Now scale the pointcloud to unit sphere. First, find the scalar to apply. We can
+    # get the bounding boxes and find the min and max of the diagonal of the bounding
+    # boxes, and then compute each scalar such that the diagonal of the bounding box is 1.
+
+    # (N, 3, 2) where bbox[i,j] gives the min and max values of mesh i along axis j. So
+    # bbox[i,:,0] is the min values of mesh i along all axes, and bbox[i,:,1] is the max
+    # values of mesh i along all axes.
+    hand_object_bboxes = hand_object_pointcloud.get_bounding_boxes()
+    hand_object_bboxes_diag = torch.norm(
+        hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
+    )  # (N,) but N=1
+    hand_object_scalar = 1.0 / hand_object_bboxes_diag  # (N,)
+    # Make sure that the new bounding boxes have a diagonal of 1.
+    rescaled_hand_object_pointcloud = hand_object_pointcloud.scale(
+        hand_object_scalar.unsqueeze(1)
+    )  # (N, 3, M)
+    hand_object_bboxes = rescaled_hand_object_pointcloud.get_bounding_boxes()
+    hand_object_bboxes_diag = torch.norm(
+        hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
+    )
+    assert torch.allclose(
+        hand_object_bboxes_diag, torch.ones_like(hand_object_bboxes_diag)
+    ), "Bounding boxes are not unit cubes."
+    return hand_object_scalar.float()
 
 
 def compute_choir(
