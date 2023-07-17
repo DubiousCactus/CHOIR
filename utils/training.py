@@ -72,13 +72,13 @@ def optimize_pose_pca_from_choir(
         bps / scalar
     )  # BPS should be scaled down to fit the MANO model in the same scale.
 
-    choir_loss = DualHOILoss(rescaled_bps=bps).cuda()
+    choir_loss = DualHOILoss().to(choir.device)
 
     for i, _ in enumerate(proc_bar):
         optimizer.zero_grad()
         verts, _ = affine_mano(fingers_pose, shape, rot_6d, trans)
         anchors = anchor_layer(verts)
-        anchor_loss, contacts_loss = choir_loss(anchors, choir)
+        anchor_loss, contacts_loss = choir_loss(anchors, choir, bps)
         regularizer = (
             torch.norm(shape) ** 2
         )  # Encourage the shape parameters to remain close to 0

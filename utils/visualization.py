@@ -145,16 +145,6 @@ def visualize_CHOIR_prediction(
     ref_pts = ref_pts[0].unsqueeze(0)
     mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
     # =============================================================
-
-    # ============ Rescaling the predicted CHOIR field ============
-    # NOOOO!!! IT'S DONE IN optimize_pose_pca_from_choir!!!
-    # choir_pred = choir_pred / scalar  # The object and anchors were scaled up by scalar.
-    # choir_gt = choir_gt / scalar
-    # ref_pts = ref_pts / scalar  # The reference points were also scaled up.
-    # bps = (
-    # bps / scalar
-    # )  # The bps should be brought to the same scale as the ground truth.
-
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
     pl.subplot(0, 0)
 

@@ -35,7 +35,6 @@ def launch_experiment(
     dataset: torch.utils.data.Dataset,
     model: Partial[torch.nn.Module],
     training_loss: Partial[torch.nn.Module],
-    tto_loss: Partial[torch.nn.Module],
 ):
     run_name = os.path.basename(HydraConfig.get().runtime.output_dir)
     # Generate a random ANSI code:
@@ -54,7 +53,6 @@ def launch_experiment(
             optimizer=optimizer,
             scheduler=scheduler,
             training_loss=training_loss,
-            tto_loss=tto_loss,
         )
     )
     print(
@@ -83,16 +81,11 @@ def launch_experiment(
     if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
         scheduler_inst.T_max = training.epochs
 
-    training_loss_inst = training_loss(bps_dim=just(dataset).bps_dim)
-    # tto_loss_inst = tto_loss(
-    # bps_dim=just(dataset).bps_dim
-    # )
-    tto_loss_inst = None
+    training_loss_inst = training_loss(bps=train_dataset.bps)
 
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
     training_loss_inst: torch.nn.Module = to_cuda_(training_loss_inst)  # type: ignore
-    tto_loss_inst: torch.nn.Module = to_cuda_(tto_loss_inst)  # type: ignore
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
@@ -151,7 +144,6 @@ def launch_experiment(
         train_loader=train_loader_inst,
         val_loader=val_loader_inst,
         training_loss=training_loss_inst,
-        tto_loss=tto_loss_inst,
     ).train(
         epochs=training.epochs,
         val_every=training.val_every,

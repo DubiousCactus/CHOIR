@@ -19,7 +19,7 @@ from model.affine_mano import AffineMANO
 class CHOIRLoss(torch.nn.Module):
     def __init__(
         self,
-        bps_dim: int,
+        bps: torch.Tensor,
         predict_anchor_orientation: bool,
         predict_anchor_position: bool,
         predict_mano: bool,
@@ -48,7 +48,8 @@ class CHOIRLoss(torch.nn.Module):
         self._mano_agreement_w = mano_agreement_w
         self._mano_anchors_w = mano_anchors_w
         self._affine_mano = AffineMANO()
-        self._hoi_loss = DualHOILoss(bps_dim) if predict_mano else None
+        self._hoi_loss = DualHOILoss() if predict_mano else None
+        self.register_buffer("bps", bps)
 
     def forward(
         self,
@@ -93,7 +94,6 @@ class CHOIRLoss(torch.nn.Module):
                     target_anchor_positions, anchor_positions_pred
                 )
         if self._predict_mano:
-            raise NotImplementedError
             mano = y_hat["mano"]
             pose, shape, rot, trans = (
                 mano[:, :18],
@@ -103,10 +103,17 @@ class CHOIRLoss(torch.nn.Module):
             )
             # Penalize high shape values to avoid exploding shapes and unnatural hands:
             shape_reg = torch.norm(shape, dim=-1).mean()  # ** 2
+            # The MANO parameters and resulting anchor vertices are in the BPS coordinate system
+            # and scale, such that the agreement loss is valid to the predicted CHOIR field.
+            # Alternatively, we can rescale the CHOIR field to the original MANO coordinate system and
+            # this way we can supervise the MANO parameters in the original coordinate system.
             verts, _ = self._affine_mano(pose, shape, rot, trans)
             anchors = self._affine_mano.get_anchors(verts)
             anchor_agreement_loss, _ = self._hoi_loss(
-                verts, anchors, choir_pred, bps_mean, bps_scalar
+                anchors,
+                choir_pred / scalar[:, None, None],
+                self.bps.unsqueeze(0).repeat(choir_pred.shape[0], 1, 1)
+                / scalar[:, None, None],
             )
             losses["mano_pose"] = self._mano_pose_w * self._mse(pose, pose_gt)
             losses["mano_shape"] = self._mano_shape_w * (
@@ -122,25 +129,29 @@ class CHOIRLoss(torch.nn.Module):
                 self._mano_agreement_w * anchor_agreement_loss
             )
             # TODO: Penalize MANO penetration into the object pointcloud (recoverable through the
-            # input CHOIR field).
+            # input CHOIR field which must include the delta vectors, or we can pass the delta
+            # vectors to this loss separately).
         return losses
 
 
 class DualHOILoss(torch.nn.Module):
-    def __init__(self, rescaled_bps: torch.Tensor):
+    def __init__(self):
         super().__init__()
-        assert rescaled_bps.shape[0] % 32 == 0, "bps_dim must be a multiple of 32"
-        self.bps = rescaled_bps
 
     def forward(
         self,
         # verts: torch.Tensor,
         anchors: torch.Tensor,
         choir: torch.Tensor,
+        bps: torch.Tensor,
         # bps_mean: torch.Tensor,
         # bps_scalar: float,
         hand_contacts: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if len(bps.shape) == 2:
+            assert bps.shape[0] % 32 == 0, "bps_dim must be a multiple of 32"
+        elif len(bps.shape) == 3:
+            assert bps.shape[1] % 32 == 0, "bps_dim must be a multiple of 32"
         """
         The choir field has shape (B, P, 3) where P is the number of points in the BPS
         representation and the dimension is composed of: (a) the BPS distance, (b) the
@@ -150,12 +161,18 @@ class DualHOILoss(torch.nn.Module):
         anchors (typically 32). This loss should be computed as MSE between the computed distance
         from the predicted anchors to the reconstructed target point cloud and the encoded
         distances in the choir field.
+        IMPORTANT: The anchors and the CHOIR field must be in the same coordinate frame and scale.
+        When doing test-time optimization, we pass the rescaled BPS so that we can predict MANO in
+        the camera frame and not in the original BPS frame.
         """
         # Step 1: Compute the distance from the predicted anchors to the reconstructed target point cloud
         # tgt_points = self.bps.decode(x_deltas=choir[:, :, 1:4])
         # tgt_points = denormalize(tgt_points, bps_mean, bps_scalar)
-        assert self.bps.shape[0] == choir.shape[1]
-        anchor_distances = torch.cdist(self.bps, anchors, p=2)
+        if len(bps.shape) == 2:
+            assert bps.shape[0] == choir.shape[1]
+        elif len(bps.shape) == 3:
+            assert bps.shape[1] == choir.shape[1]
+        anchor_distances = torch.cdist(bps, anchors, p=2)
         anchor_ids = (
             torch.arange(
                 0,

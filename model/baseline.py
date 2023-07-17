@@ -64,6 +64,7 @@ class BaselineModel(torch.nn.Module):
         # ======================= Anchor ========================
         self.anchor_orientation_decoder = None
         if predict_anchor_orientation:
+            raise NotImplementedError
             if not share_decoder_for_all_tasks:
                 anchor_orientation_decoder: List[torch.nn.Module] = [
                     torch.nn.Linear(latent_dim, decoder_layer_dims[0]),

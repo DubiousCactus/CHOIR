@@ -37,7 +37,6 @@ class BaseTrainer:
         train_loader: DataLoader,
         val_loader: DataLoader,
         training_loss: torch.nn.Module,
-        tto_loss: torch.nn.Module,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     ) -> None:
         """Base trainer class.
@@ -61,7 +60,6 @@ class BaseTrainer:
         )
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
         self._training_loss = training_loss
-        self._tto_loss = tto_loss
         self._bps_dim = train_loader.dataset.bps_dim
         self._bps = train_loader.dataset.bps
         signal.signal(signal.SIGINT, self._terminator)

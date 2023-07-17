@@ -23,7 +23,7 @@ from unique_names_generator.data import ADJECTIVES, NAMES
 from dataset.contactpose import ContactPoseDataset
 from model.baseline import BaselineModel
 from src.base_trainer import BaseTrainer
-from src.losses.hoi import CHOIRLoss, DualHOILoss
+from src.losses.hoi import CHOIRLoss
 from train import launch_experiment
 
 # Set hydra.job.chdir=True using store():
@@ -122,7 +122,7 @@ model_store(
 
 @dataclass
 class CHOIRLossConf:
-    bps_dim: int = MISSING
+    bps = MISSING
     predict_anchor_orientation: bool = False
     predict_anchor_position: bool = False
     predict_mano: bool = False
@@ -136,11 +136,6 @@ class CHOIRLossConf:
     mano_anchors_w: float = 1.0
 
 
-@dataclass
-class DualHOILossConf:
-    rescaled_bps: int = MISSING
-
-
 training_loss_store = store(group="training_loss")
 training_loss_store(
     pbuilds(
@@ -148,14 +143,6 @@ training_loss_store(
         builds_bases=(CHOIRLossConf,),
     ),
     name="choir",
-)
-tto_loss_store = store(group="tto_loss")
-tto_loss_store(
-    pbuilds(
-        DualHOILoss,
-        builds_bases=(DualHOILossConf,),
-    ),
-    name="dualhoi",
 )
 
 " ================== Optimizer ================== "
@@ -189,8 +176,8 @@ sched_store = store(group="scheduler")
 sched_store(
     pbuilds(
         torch.optim.lr_scheduler.StepLR,
-        step_size=100,
-        gamma=0.5,
+        step_size=50,
+        gamma=0.8,
     ),
     name="step",
 )
@@ -206,6 +193,7 @@ sched_store(
 sched_store(
     pbuilds(
         torch.optim.lr_scheduler.CosineAnnealingLR,
+        T_max=100,
     ),
     name="cosine",
 )
@@ -243,7 +231,6 @@ Experiment = builds(
         {"scheduler": "step"},
         {"training": "default"},
         {"training_loss": "choir"},
-        {"tto_loss": "dualhoi"},
     ],
     trainer=MISSING,
     dataset=MISSING,
@@ -252,7 +239,6 @@ Experiment = builds(
     scheduler=MISSING,
     training=MISSING,
     training_loss=MISSING,
-    tto_loss=MISSING,
     data_loader=pbuilds(
         DataLoader, builds_bases=(DataloaderConf,)
     ),  # Needs a partial because we need to set the dataset
