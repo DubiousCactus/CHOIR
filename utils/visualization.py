@@ -63,7 +63,6 @@ def visualize_model_predictions(
             rescaled_ref_pts,
             mano_params_gt,
             bps_dim=bps_dim,
-            anchor_assignment=kwargs["anchor_assignment"],
         )
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
@@ -84,7 +83,6 @@ def visualize_CHOIR_prediction(
     ref_pts: torch.Tensor,
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
-    anchor_assignment: str,
 ):
     def add_choir_to_plot(plot, bps, choir, ref_pts, hand_mesh, anchors):
         if len(choir.shape) == 3:
@@ -99,68 +97,27 @@ def visualize_CHOIR_prediction(
             name="target_points",
             opacity=0.9,
         )
-        if anchor_assignment == "closest_and_farthest":
-            raise NotImplementedError
-            min_dist = min(choir[:, -33].min(), choir[:, 4].min())
-            max_dist = max(choir[:, -33].max(), choir[:, 4].max())
-        elif anchor_assignment in ["closest", "random", "batched_fixed"]:
-            min_dist, max_dist = choir[:, 1].min(), choir[:, 1].max()
-        else:
-            raise NotImplementedError
+        min_dist, max_dist = choir[:, 1].min(), choir[:, 1].max()
         max_dist = max_dist + 1e-6
         for i in range(bps.shape[0]):
             # The color is proportional to the distance to the anchor. It is in hex format.
             # It is obtained from min-max normalization of the distance in the choir field,
             # without known range. The color range is 0 to 16777215.
-            if anchor_assignment in [
-                "closest",
-                "closest_and_farthest",
-                "random",
-                "batched_fixed",
-            ]:
-                if anchor_assignment == "batched_fixed":
-                    assert (
-                        bps_dim % 32 == 0
-                    ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment."
-                    index = i % 32
-                else:
-                    raise NotImplementedError
-                    choir_one_hot = choir[0, i, 5:37]
-                    index = torch.argmax(choir_one_hot, dim=-1)
-                anchor = anchors[index, :]
-                color = int((choir[i, 1] - min_dist) / (max_dist - min_dist) * 16777215)
-                plot.add_lines(
-                    np.array(
-                        [
-                            bps[i, :].cpu().numpy(),
-                            anchor.cpu().numpy(),
-                        ]
-                    ),
-                    width=1,
-                    color="#" + hex(color)[2:].zfill(6),
-                    name=f"anchor_ray{i}",
-                )
-                if anchor_assignment == "closest_and_farthest":
-                    raise NotImplementedError
-                    choir_one_hot = choir[0, i, -32:]
-                    index = torch.argmax(choir_one_hot, dim=-1)
-                    farthest_anchor = anchors[0, index, :]
-                    color = int(
-                        (choir[0, i, -33] - min_dist) / (max_dist - min_dist) * 16777215
-                    )
-                    plot.add_lines(
-                        np.array(
-                            [
-                                reference_obj_points[0, i, :].cpu().numpy(),
-                                farthest_anchor.cpu().numpy(),
-                            ]
-                        ),
-                        width=1,
-                        color="#" + hex(color)[2:].zfill(6),
-                        name=f"farthest_ray{i}",
-                    )
-            else:
-                raise NotImplementedError
+            assert bps_dim % 32 == 0, "bps_dim must be a multiple of 32."
+            index = i % 32
+            anchor = anchors[index, :]
+            color = int((choir[i, 1] - min_dist) / (max_dist - min_dist) * 16777215)
+            plot.add_lines(
+                np.array(
+                    [
+                        bps[i, :].cpu().numpy(),
+                        anchor.cpu().numpy(),
+                    ]
+                ),
+                width=1,
+                color="#" + hex(color)[2:].zfill(6),
+                name=f"anchor_ray{i}",
+            )
         plot.add_mesh(
             hand_mesh,
             opacity=0.4,
@@ -171,9 +128,9 @@ def visualize_CHOIR_prediction(
             plot.add_mesh(
                 pv.Cube(
                     center=anchors[i].cpu().numpy(),
-                    x_length=3e-3,
-                    y_length=3e-3,
-                    z_length=3e-3,
+                    x_length=1e-3,
+                    y_length=1e-3,
+                    z_length=1e-3,
                 ),
                 color="yellow",
                 name=f"anchor{i}",
@@ -190,12 +147,13 @@ def visualize_CHOIR_prediction(
     # =============================================================
 
     # ============ Rescaling the predicted CHOIR field ============
-    choir_pred = choir_pred / scalar  # The object and anchors were scaled up by scalar.
-    choir_gt = choir_gt / scalar
-    ref_pts = ref_pts / scalar  # The reference points were also scaled up.
-    bps = (
-        bps / scalar
-    )  # The bps should be brought to the same scale as the ground truth.
+    # NOOOO!!! IT'S DONE IN optimize_pose_pca_from_choir!!!
+    # choir_pred = choir_pred / scalar  # The object and anchors were scaled up by scalar.
+    # choir_gt = choir_gt / scalar
+    # ref_pts = ref_pts / scalar  # The reference points were also scaled up.
+    # bps = (
+    # bps / scalar
+    # )  # The bps should be brought to the same scale as the ground truth.
 
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
     pl.subplot(0, 0)
@@ -208,7 +166,6 @@ def visualize_CHOIR_prediction(
     with torch.set_grad_enabled(True):
         pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
             choir_pred,
-            anchor_assignment=anchor_assignment,
             # hand_contacts=None,
             bps=bps,
             bps_dim=bps_dim,
@@ -216,7 +173,7 @@ def visualize_CHOIR_prediction(
             # x_scalar=pcl_scalar,
             scalar=scalar,
             objective="anchors",
-            max_iterations=1000,
+            max_iterations=5000,
         )
     # ====== Metrics and qualitative comparison ======
     gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
@@ -254,14 +211,18 @@ def visualize_CHOIR_prediction(
     V = verts_pred[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, bps, choir_pred, ref_pts, hand_mesh, anchors_pred)
+    add_choir_to_plot(
+        pl, bps / scalar, choir_pred / scalar, ref_pts / scalar, hand_mesh, anchors_pred
+    )
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
     V = gt_verts[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     gt_hand_mesh = pv.wrap(tmesh)
-    add_choir_to_plot(pl, bps, choir_gt, ref_pts, gt_hand_mesh, gt_anchors)
+    add_choir_to_plot(
+        pl, bps / scalar, choir_gt / scalar, ref_pts / scalar, gt_hand_mesh, gt_anchors
+    )
     pl.link_views()
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
@@ -280,7 +241,6 @@ def visualize_CHOIR(
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
     affine_mano: AffineMANO,
-    anchor_assignment: str,
 ):
     n_anchors = anchors.shape[0]
     faces = affine_mano.faces
@@ -309,9 +269,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=scalar * anchors[i].cpu().numpy(),
-                x_length=3e-2,
-                y_length=3e-2,
-                z_length=3e-2,
+                x_length=1e-2,
+                y_length=1e-2,
+                z_length=1e-2,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -337,14 +297,7 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        if anchor_assignment in ["closest", "random"]:
-            index = torch.argmax(choir[i, -32:])
-        elif anchor_assignment == "batched_fixed":
-            index = i % n_anchors
-        else:
-            raise NotImplementedError(
-                f"Anchor assignment {anchor_assignment} not implemented."
-            )
+        index = i % n_anchors
         anchor = rescaled_anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
@@ -415,14 +368,7 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        if anchor_assignment in ["closest", "random"]:
-            index = torch.argmax(choir[i, -32:])
-        elif anchor_assignment == "batched_fixed":
-            index = i % n_anchors
-        else:
-            raise NotImplementedError(
-                f"Anchor assignment {anchor_assignment} not implemented."
-            )
+        index = i % n_anchors
         anchor = rescaled_anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
@@ -445,14 +391,7 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        if anchor_assignment in ["closest", "random"]:
-            index = torch.argmax(choir[i, -32:])
-        elif anchor_assignment == "batched_fixed":
-            index = i % n_anchors
-        else:
-            raise NotImplementedError(
-                f"Anchor assignment {anchor_assignment} not implemented."
-            )
+        index = i % n_anchors
         anchor = rescaled_anchors[index, :]
         anchor_color = int(
             (choir[i, 1] - choir[:, 1].min())
@@ -470,9 +409,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=rescaled_anchors[i].cpu().numpy(),
-                x_length=3e-2,
-                y_length=3e-2,
-                z_length=3e-2,
+                x_length=1e-2,
+                y_length=1e-2,
+                z_length=1e-2,
             ),
             color="yellow",
             name=f"anchor{i}",

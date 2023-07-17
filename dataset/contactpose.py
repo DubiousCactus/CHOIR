@@ -32,7 +32,7 @@ from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
 from utils.dataset import compute_choir
-from utils.visualization import visualize_CHOIR
+from utils.visualization import visualize_CHOIR, visualize_CHOIR_prediction
 
 
 class ContactPoseDataset(BaseDataset):
@@ -51,8 +51,7 @@ class ContactPoseDataset(BaseDataset):
         perturbation_level: float = 0,
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
-        anchor_assignment: str = "random",
-        n_random_choir_per_sample: int = 1000,
+        n_perturbed_choir_per_sample: int = 1000,
         scaling: str = "none",
         unit_cube: bool = True,
         positive_unit_cube: bool = False,
@@ -73,11 +72,11 @@ class ContactPoseDataset(BaseDataset):
         self._positive_unit_cube = positive_unit_cube
         self._unit_cube = unit_cube
         self._perturbation_level = perturbation_level
+        assert (
+            n_perturbed_choir_per_sample > 0
+        ), "n_perturbed_choir_per_sample must be > 0"
+        self._n_perturbed_choir_per_sample = n_perturbed_choir_per_sample
         self._bps_dim = bps_dim
-        self._anchor_assignment = anchor_assignment
-        self._n_random_choir_per_sample = (
-            n_random_choir_per_sample if anchor_assignment == "random" else 1
-        )
         bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
@@ -107,10 +106,6 @@ class ContactPoseDataset(BaseDataset):
     @property
     def bps(self) -> torch.Tensor:
         return self._bps
-
-    @property
-    def anchor_assignment(self) -> str:
-        return self._anchor_assignment
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
@@ -276,7 +271,6 @@ class ContactPoseDataset(BaseDataset):
             "samples_and_labels",
             f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
             + f"perturbed-{self._perturbation_level}_"
-            + f"{self._anchor_assignment}-assigned_"
             + f"{self._bps_dim}-bps_"
             + f"{split}",
         )
@@ -387,13 +381,13 @@ class ContactPoseDataset(BaseDataset):
                 os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
             if (
                 len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
-                >= self._n_random_choir_per_sample
+                >= self._n_perturbed_choir_per_sample
             ):
                 sample_paths += [
                     osp.join(
                         samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
                     )
-                    for i in range(self._n_random_choir_per_sample)
+                    for i in range(self._n_perturbed_choir_per_sample)
                 ]
             else:
                 mano_params = grasp_data["grasp"][0]
@@ -420,7 +414,7 @@ class ContactPoseDataset(BaseDataset):
                 ).cpu()
                 visualize = self._debug and (random.random() < 0.1)
                 has_visualized = False
-                for j in range(self._n_random_choir_per_sample):
+                for j in range(self._n_perturbed_choir_per_sample):
                     sample_pth = osp.join(
                         samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
                     )
@@ -435,7 +429,6 @@ class ContactPoseDataset(BaseDataset):
                         to_cuda_(anchors),
                         scalar=scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                        anchor_assignment=self._anchor_assignment,
                     )
                     # anchor_orientations = torch.nn.functional.normalize(
                     # anchor_deltas, dim=1
@@ -507,7 +500,24 @@ class ContactPoseDataset(BaseDataset):
                             obj_ptcld,
                             rescaled_ref_pts.squeeze(0),
                             affine_mano,
-                            self._anchor_assignment,
+                        )
+                        visualize_CHOIR_prediction(
+                            choir.unsqueeze(0),
+                            choir.unsqueeze(0),
+                            self._bps,
+                            torch.tensor([scalar]),
+                            rescaled_ref_pts.unsqueeze(0),
+                            {
+                                "pose": torch.tensor(mano_params["pose"])
+                                .unsqueeze(0)
+                                .cpu(),
+                                "beta": torch.tensor(mano_params["betas"])
+                                .unsqueeze(0)
+                                .cpu(),
+                                "rot_6d": rot_6d.unsqueeze(0),
+                                "trans": trans.unsqueeze(0),
+                            },
+                            self._bps_dim,
                         )
                         has_visualized = True
         return sample_paths

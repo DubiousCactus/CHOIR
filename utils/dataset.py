@@ -36,7 +36,6 @@ def compute_choir(
     anchors: torch.Tensor,
     scalar: float,
     bps: torch.Tensor,
-    anchor_assignment="random",
 ) -> torch.Tensor:
     """
     For each BPS point, get the reference object point and compute the distance to the
@@ -50,8 +49,6 @@ def compute_choir(
         anchors: Shape (B, N_ANCHORS, 3)
         scalar (float): Scalar for the hand and object pointcloud such that they end up in the unit sphere.
         bps: Shape (B, N_BPS_POINTS, 3). It is important that we reuse the same BPS!
-        anchor_assignment: How to assign anchors to BPS points. Must be one of: "random",
-        "closest", "closest_and_farthest", "batched_fixed".
     """
     assert len(anchors.shape) == 3
     assert len(pointcloud.shape) == 3
@@ -69,104 +66,33 @@ def compute_choir(
     # Compute the distances between the BPS points and the MANO anchors:
     anchor_distances = torch.cdist(bps, rescaled_anchors)  # Shape: (BPS_LEN, N_ANCHORS)
     anchor_encodings = []
-    if anchor_assignment == "random":
-        # Randomly sample an anchor for each reference point:
-        anchor_ids = torch.randint(
+    # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
+    # batches. The number of batches is determined by the number of BPS points, and the latter
+    # must be a multiple of 32.
+    assert (
+        bps.shape[1] % 32 == 0
+    ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32."
+    anchor_ids = (
+        torch.arange(
             0,
             rescaled_anchors.shape[1],
-            (
-                1,
-                bps.shape[0],
-            ),
             device=bps.device,
         )
-        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
-            -1
-        )
-        anchor_encodings = [
-            distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(
-                anchor_ids, num_classes=rescaled_anchors.shape[1]
-            ),
-        ]
-        # rescaled_anchors_repeats = (
-        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-        # .squeeze(-2)
-        # .squeeze(0)
-        # )
-        # anchor_deltas = rescaled_anchors_repeats - bps
-        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
-    elif anchor_assignment == "closest":
-        anchor_ids = torch.argmin(anchor_distances, dim=2)
-        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
-            -1
-        )
-        anchor_encodings = [
-            distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(
-                anchor_ids, num_classes=rescaled_anchors.shape[1]
-            ),
-        ]
-        # rescaled_anchors_repeats = (
-        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-        # .squeeze(-2)
-        # .squeeze(0)
-        # )
-        # anchor_deltas = rescaled_anchors_repeats - bps
-        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
-    elif anchor_assignment == "closest_and_farthest":
-        closest_anchor_ids = torch.argmin(anchor_distances, dim=2)
-        closest_distances = torch.gather(
-            anchor_distances, 2, closest_anchor_ids.unsqueeze(-1)
-        ).squeeze(-1)
-        farthest_anchor_ids = torch.argmax(anchor_distances, dim=2)
-        farthest_distances = torch.gather(
-            anchor_distances, 2, farthest_anchor_ids.unsqueeze(-1)
-        ).squeeze(-1)
-        anchor_encodings = [
-            closest_distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(
-                closest_anchor_ids, num_classes=rescaled_anchors.shape[1]
-            ),
-            farthest_distances.unsqueeze(-1),
-            torch.nn.functional.one_hot(
-                farthest_anchor_ids, num_classes=rescaled_anchors.shape[1]
-            ),
-        ]
-        # anchor_deltas = torch.zeros_like(bps)  # Not implemented yet!
-        # raise NotImplementedError(
-        # "closest_and_farthest anchor assignment is not fully implemented yet!"
-        # )
-    elif anchor_assignment == "batched_fixed":
-        # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
-        # batches. The number of batches is determined by the number of BPS points, and the latter
-        # must be a multiple of 32.
-        assert (
-            bps.shape[1] % 32 == 0
-        ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32 for batched_fixed anchor assignment."
-        anchor_ids = (
-            torch.arange(
-                0,
-                rescaled_anchors.shape[1],
-                device=bps.device,
-            )
-            .repeat((bps.shape[1] // 32,))
-            .unsqueeze(0)
-        )
-        distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(
-            -1
-        )
-        # Here we won't need the anchor index since it's a fixed pattern!
-        anchor_encodings = [
-            distances.unsqueeze(-1),
-        ]
-        # rescaled_anchors_repeats = (
-        # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-        # .squeeze(-2)
-        # .squeeze(0)
-        # )
-        # anchor_deltas = rescaled_anchors_repeats - bps
-        # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
+        .repeat((bps.shape[1] // 32,))
+        .unsqueeze(0)
+    )
+    distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
+    # Here we won't need the anchor index since it's a fixed pattern!
+    anchor_encodings = [
+        distances.unsqueeze(-1),
+    ]
+    # rescaled_anchors_repeats = (
+    # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
+    # .squeeze(-2)
+    # .squeeze(0)
+    # )
+    # anchor_deltas = rescaled_anchors_repeats - bps
+    # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
     # Build the CHOIR representation:
     choir = torch.cat(
         [

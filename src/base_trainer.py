@@ -60,7 +60,6 @@ class BaseTrainer:
             project_conf.BEST_N_MODELS_TO_KEEP, self._save_checkpoint
         )
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
-        self._anchor_assignment = train_loader.dataset.anchor_assignment
         self._training_loss = training_loss
         self._tto_loss = tto_loss
         self._bps_dim = train_loader.dataset.bps_dim
@@ -82,7 +81,6 @@ class BaseTrainer:
             self._model,
             batch,
             epoch,
-            anchor_assignment=self._anchor_assignment,
             bps_dim=self._bps_dim,
             bps=self._bps,
         )  # User implementation goes here (utils/training.py)

@@ -66,7 +66,6 @@ def launch_experiment(
     "============ Partials instantiation ============"
     model_inst = model(
         bps_dim=just(dataset).bps_dim,
-        anchor_assignment=just(dataset).anchor_assignment,
         predict_anchor_orientation=just(training_loss).predict_anchor_orientation
         or just(training_loss).predict_anchor_position,
         predict_mano=just(training_loss).predict_mano,
@@ -84,11 +83,9 @@ def launch_experiment(
     if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
         scheduler_inst.T_max = training.epochs
 
-    training_loss_inst = training_loss(
-        anchor_assignment=just(dataset).anchor_assignment, bps_dim=just(dataset).bps_dim
-    )
+    training_loss_inst = training_loss(bps_dim=just(dataset).bps_dim)
     # tto_loss_inst = tto_loss(
-    # bps_dim=just(dataset).bps_dim, anchor_assignment=just(dataset).anchor_assignment
+    # bps_dim=just(dataset).bps_dim
     # )
     tto_loss_inst = None
 

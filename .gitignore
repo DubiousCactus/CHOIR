@@ -4,3 +4,5 @@ data/*
 wandb/
 outputs/
 runs/
+tags
+tags.*

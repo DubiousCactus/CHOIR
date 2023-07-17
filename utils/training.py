@@ -27,7 +27,6 @@ def optimize_pose_pca_from_choir(
     # x_mean: torch.Tensor,
     # x_scalar: float,
     scalar: torch.Tensor,
-    anchor_assignment: str,
     # hand_contacts: Optional[torch.Tensor] = None,
     loss_thresh: float = 1e-12,
     max_iterations=8000,
@@ -56,7 +55,7 @@ def optimize_pose_pca_from_choir(
     }
     params = [{"params": parameters.values()}]
 
-    optimizer = torch.optim.Adam(params, lr=1e-5 if objective == "contacts" else 3e-2)
+    optimizer = torch.optim.Adam(params, lr=1e-5 if objective == "contacts" else 5e-2)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
     alpha, beta = 1.0, 0.0
     alpha_lower_bound, beta_upper_bound = 0.5, 0.5
@@ -73,9 +72,7 @@ def optimize_pose_pca_from_choir(
         bps / scalar
     )  # BPS should be scaled down to fit the MANO model in the same scale.
 
-    choir_loss = DualHOILoss(
-        rescaled_bps=bps, anchor_assignment=anchor_assignment
-    ).cuda()
+    choir_loss = DualHOILoss(rescaled_bps=bps).cuda()
 
     for i, _ in enumerate(proc_bar):
         optimizer.zero_grad()
@@ -116,5 +113,5 @@ def optimize_pose_pca_from_choir(
         shape.detach(),
         rot_6d.detach(),
         trans.detach(),
-        anchors[0].unsqueeze(0),
+        anchors[0].unsqueeze(0).detach(),
     )

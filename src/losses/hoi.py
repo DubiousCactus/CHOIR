@@ -20,7 +20,6 @@ class CHOIRLoss(torch.nn.Module):
     def __init__(
         self,
         bps_dim: int,
-        anchor_assignment: str,
         predict_anchor_orientation: bool,
         predict_anchor_position: bool,
         predict_mano: bool,
@@ -37,7 +36,6 @@ class CHOIRLoss(torch.nn.Module):
         self._mse = torch.nn.MSELoss()
         self._cosine_embedding = torch.nn.CosineEmbeddingLoss()
         self._cross_entropy = torch.nn.CrossEntropyLoss()
-        self._anchor_assignment = anchor_assignment
         self._predict_anchor_orientation = predict_anchor_orientation
         self._predict_anchor_position = predict_anchor_position
         self._predict_mano = predict_mano
@@ -50,9 +48,7 @@ class CHOIRLoss(torch.nn.Module):
         self._mano_agreement_w = mano_agreement_w
         self._mano_anchors_w = mano_anchors_w
         self._affine_mano = AffineMANO()
-        self._hoi_loss = (
-            DualHOILoss(bps_dim, anchor_assignment) if predict_mano else None
-        )
+        self._hoi_loss = DualHOILoss(bps_dim) if predict_mano else None
 
     def forward(
         self,
@@ -60,10 +56,6 @@ class CHOIRLoss(torch.nn.Module):
         y,
         y_hat,
     ) -> torch.Tensor:
-        if self._anchor_assignment not in ["random", "closest", "batched_fixed"]:
-            raise NotImplementedError(
-                f"Anchor assignment {self._anchor_assignment} not implemented."
-            )
         _, _, scalar = x
         (
             choir_gt,
@@ -81,10 +73,6 @@ class CHOIRLoss(torch.nn.Module):
             "distances": self._distance_w
             * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
         }
-        if self._anchor_assignment == "closest":
-            losses["assignments"] = self._assignment_w * self._cross_entropy(
-                y[:, :, -32:], y_hat[:, :, -32:]
-            )
         anchor_positions_pred = None
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
@@ -139,14 +127,10 @@ class CHOIRLoss(torch.nn.Module):
 
 
 class DualHOILoss(torch.nn.Module):
-    def __init__(self, rescaled_bps: torch.Tensor, anchor_assignment: str):
+    def __init__(self, rescaled_bps: torch.Tensor):
         super().__init__()
-        if anchor_assignment == "batched_fixed":
-            assert (
-                rescaled_bps.shape[0] % 32 == 0
-            ), "bps_dim must be a multiple of 32 for batched_fixed anchor assignment"
+        assert rescaled_bps.shape[0] % 32 == 0, "bps_dim must be a multiple of 32"
         self.bps = rescaled_bps
-        self._anchor_assignment = anchor_assignment
 
     def forward(
         self,
@@ -172,54 +156,19 @@ class DualHOILoss(torch.nn.Module):
         # tgt_points = denormalize(tgt_points, bps_mean, bps_scalar)
         assert self.bps.shape[0] == choir.shape[1]
         anchor_distances = torch.cdist(self.bps, anchors, p=2)
-
-        if self._anchor_assignment in [
-            "closest",
-            "random",
-        ]:
-            raise NotImplementedError
-            choir_one_hot = choir[:, :, -32:]
-            index = torch.argmax(choir_one_hot, dim=-1)
-            assigned_anchor_distances = anchor_distances.gather(
-                dim=2, index=index.unsqueeze(dim=2)
-            ).squeeze(dim=2)
-            # Step 3: Compute the MSE between the masked distances and the encoded distances in the choir field
-            choir_loss = torch.nn.functional.mse_loss(
-                assigned_anchor_distances, choir[:, :, -33]
+        anchor_ids = (
+            torch.arange(
+                0,
+                anchors.shape[1],
+                device=choir.device,
             )
-        elif self._anchor_assignment == "closest_and_farthest":
-            raise NotImplementedError
-            closest_one_hot = choir[:, :, 5:37]
-            closest_index = torch.argmax(closest_one_hot, dim=-1)
-            lowest_anchor_distances = anchor_distances.gather(
-                dim=2, index=closest_index.unsqueeze(dim=2)
-            ).squeeze(dim=2)
-            farthest_one_hot = choir[:, :, -32:]
-            farthest_index = torch.argmax(farthest_one_hot, dim=-1)
-            highest_anchor_distances = anchor_distances.gather(
-                dim=2, index=farthest_index.unsqueeze(dim=2)
-            ).squeeze(dim=2)
-            choir_loss = torch.nn.functional.mse_loss(
-                lowest_anchor_distances, choir[:, :, 4]
-            ) + torch.nn.functional.mse_loss(highest_anchor_distances, choir[:, :, -33])
-        elif self._anchor_assignment == "batched_fixed":
-            anchor_ids = (
-                torch.arange(
-                    0,
-                    anchors.shape[1],
-                    device=choir.device,
-                )
-                .repeat((choir.shape[1] // 32,))
-                .unsqueeze(0)
-                .repeat((choir.shape[0], 1))
-                .unsqueeze(-1)
-            )
-            distances = torch.gather(anchor_distances, 2, anchor_ids).squeeze(-1)
-            choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
-        else:
-            raise ValueError(
-                f"Unknown anchor assignment method: {self._anchor_assignment}"
-            )
+            .repeat((choir.shape[1] // 32,))
+            .unsqueeze(0)
+            .repeat((choir.shape[0], 1))
+            .unsqueeze(-1)
+        )
+        distances = torch.gather(anchor_distances, 2, anchor_ids).squeeze(-1)
+        choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
         # Now add the hand contact loss
         # hand_contact_loss = (
         # torch.nn.functional.mse_loss(

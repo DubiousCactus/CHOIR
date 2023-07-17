@@ -21,7 +21,7 @@ from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
 from dataset.contactpose import ContactPoseDataset
-from model.baseline import BaselineModel, BaselineUNetModel
+from model.baseline import BaselineModel
 from src.base_trainer import BaseTrainer
 from src.losses.hoi import CHOIRLoss, DualHOILoss
 from train import launch_experiment
@@ -52,9 +52,8 @@ class GraspingDatasetConf:
     tiny: bool = False
     augment: bool = False
     validation_objects: int = 5
-    n_random_choir_per_sample: int = 100
     perturbation_level: float = 0.0
-    anchor_assignment: str = "random"
+    n_perturbed_choir_per_sample: int = 1
     scaling: str = "none"
     unit_cube: bool = False
     positive_unit_cube: bool = False
@@ -100,9 +99,9 @@ model_store = store(group="model")
 @dataclass
 class BaselineModelConf:
     bps_dim: int
-    encoder_layer_dims: Tuple[int] = (2048, 1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
-    latent_dim: int = 128
+    encoder_layer_dims: Tuple[int] = (1024, 512, 256)
+    decoder_layer_dims: Tuple[int] = (256, 512)
+    latent_dim: int = 64
     predict_anchor_orientation: bool = MISSING
     predict_mano: bool = MISSING
     share_decoder_for_all_tasks: bool = True
@@ -116,14 +115,6 @@ model_store(
     ),
     name="baseline",
 )
-model_store(
-    pbuilds(
-        BaselineUNetModel,
-        builds_bases=(BaselineModelConf,),
-        bps_dim=MISSING,
-    ),
-    name="baseline_unet",
-)
 
 
 " ================== Losses ================== "
@@ -132,7 +123,6 @@ model_store(
 @dataclass
 class CHOIRLossConf:
     bps_dim: int = MISSING
-    anchor_assignment: str = MISSING
     predict_anchor_orientation: bool = False
     predict_anchor_position: bool = False
     predict_mano: bool = False
@@ -149,7 +139,6 @@ class CHOIRLossConf:
 @dataclass
 class DualHOILossConf:
     rescaled_bps: int = MISSING
-    anchor_assignment: str = MISSING
 
 
 training_loss_store = store(group="training_loss")
