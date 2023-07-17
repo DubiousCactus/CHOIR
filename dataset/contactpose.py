@@ -82,6 +82,8 @@ class ContactPoseDataset(BaseDataset):
         ]
 
         self._bps_dim = bps_dim
+        if not osp.isdir(self._cache_dir):
+            os.makedirs(self._cache_dir)
         bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
