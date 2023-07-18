@@ -433,8 +433,8 @@ class ContactPoseDataset(BaseDataset):
                         gt_scalar.cpu(),
                         gt_joints.squeeze(0).cpu(),
                         gt_anchors.squeeze(0).cpu(),
-                        gt_theta.cpu(),
-                        gt_beta.cpu(),
+                        gt_theta.squeeze(0).cpu(),
+                        gt_beta.squeeze(0).cpu(),
                         gt_rot_6d.squeeze(0).cpu(),
                         gt_trans.squeeze(0).cpu(),
                     )
