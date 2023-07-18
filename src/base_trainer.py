@@ -254,10 +254,6 @@ class BaseTrainer:
         for epoch in range(self._epoch, epochs):
             self._epoch = epoch  # Update for the model saver
             if not self._running:
-                self._save_checkpoint(
-                    val_losses[-1],
-                    os.path.join(HydraConfig.get().runtime.output_dir, "last.ckpt"),
-                )
                 break
             self._model.train()
             self._pbar.colour = project_conf.Theme.TRAINING.value
@@ -288,6 +284,10 @@ class BaseTrainer:
             if project_conf.PLOT_ENABLED:
                 self._plot(epoch, train_losses, val_losses)
         self._pbar.close()
+        self._save_checkpoint(
+            val_losses[-1],
+            os.path.join(HydraConfig.get().runtime.output_dir, "last.ckpt"),
+        )
         print(f"[*] Training finished for {self._run_name}!")
         print(
             f"[*] Best validation loss: {self._model_saver.min_val_loss:.4f} "
