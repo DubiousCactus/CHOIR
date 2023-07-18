@@ -113,9 +113,9 @@ class CHOIRLoss(torch.nn.Module):
             anchors = self._affine_mano.get_anchors(verts)
             anchor_agreement_loss, _ = self._hoi_loss(
                 anchors,
-                choir_pred / scalar[:, None, None],
+                choir_pred / scalar[:, None],
                 self.bps.unsqueeze(0).repeat(choir_pred.shape[0], 1, 1)
-                / scalar[:, None, None],
+                / scalar[:, None],
             )
             losses["mano_pose"] = self._mano_pose_w * self._mse(pose, pose_gt)
             losses["mano_shape"] = self._mano_shape_w * (
@@ -155,12 +155,21 @@ class DualHOILoss(torch.nn.Module):
         elif len(bps.shape) == 3:
             assert bps.shape[1] % 32 == 0, "bps_dim must be a multiple of 32"
         """
-        The choir field has shape (B, P, 3) where P is the number of points in the BPS
-        representation and the dimension is composed of: (a) the BPS distance, (b) the
-        distance to the associated MANO anchor from the target point, and (c) the index
-        of the associated MANO anchor.
-        The anchors are specific MANO vertices and have shape (B, A, 3) where A is the number of
-        anchors (typically 32). This loss should be computed as MSE between the computed distance
+        Args:
+            anchors (torch.Tensor): (B, 32, 3) The predicted MANO anchors in the BPS coordinate system.
+            choir (torch.Tensor): (B, P, 2) The predicted CHOIR field in the BPS coordinate system.
+                                            P is the number of points in the BPS representation and
+                                            the last dimension is composed of: (a) the nearest
+                                            object BPS distance, (b) the MANO anchor BPS distance
+                                            (not nearest but fixed anchors).
+            bps (torch.Tensor): (B, P, 3) The BPS representation of the object point cloud. Since
+                                            it is fixed, it would make sense to be (P, 3) but we
+                                            rescale the BPS according to the scale of the
+                                            hand-object pair associated with batch element n, so we
+                                            duplicate the BPS for each batch element and apply the
+                                            corresponding scalar.
+
+        This loss should be computed as MSE between the computed distance
         from the predicted anchors to the reconstructed target point cloud and the encoded
         distances in the choir field.
         IMPORTANT: The anchors and the CHOIR field must be in the same coordinate frame and scale.
@@ -174,6 +183,8 @@ class DualHOILoss(torch.nn.Module):
             assert bps.shape[0] == choir.shape[1]
         elif len(bps.shape) == 3:
             assert bps.shape[1] == choir.shape[1]
+        else:
+            raise ValueError("DualHOILoss(): BPS must be (B, P, 3) or (P, 3)")
         anchor_distances = torch.cdist(bps, anchors, p=2)
         anchor_ids = (
             torch.arange(
