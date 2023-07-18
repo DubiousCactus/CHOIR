@@ -391,10 +391,6 @@ class ContactPoseDataset(BaseDataset):
                             torch.rand(3, device=trans.device)
                             * self._perturbations[self._perturbation_level]["trans"]
                         )
-                        rot_6d_noise = (
-                            torch.rand(6, device=rot_6d.device)
-                            * self._perturbations[self._perturbation_level]["rot"]
-                        )
                         pose_noise = torch.cat(
                             [
                                 torch.rand(3)
@@ -404,7 +400,6 @@ class ContactPoseDataset(BaseDataset):
                             ]
                         ).to(theta.device)
                         theta += pose_noise
-                        rot_6d += rot_6d_noise
                         trans += trans_noise
 
                     verts, _ = affine_mano(theta, beta, rot_6d, trans)
