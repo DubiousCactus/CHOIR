@@ -78,7 +78,11 @@ class ContactPoseDataset(BaseDataset):
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
             {"trans": 0.02, "rot": 0.05, "pca": 0.3},  # Level 1
-            {"trans": 0.05, "rot": 0.1, "pca": 0.5},  # Level 2
+            {
+                "trans": 0.05,
+                "rot": 0.15,
+                "pca": 0.5,
+            },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
         ]
 
         self._bps_dim = bps_dim
