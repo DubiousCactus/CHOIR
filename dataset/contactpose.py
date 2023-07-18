@@ -57,6 +57,7 @@ class ContactPoseDataset(BaseDataset):
         bps_dim: int = 1024,
         n_perturbed_choir_per_sample: int = 100,
         right_hand_only: bool = True,
+        center_on_object_com: bool = True,
         tiny: bool = False,
         augment: bool = False,
         seed: int = 0,
@@ -86,6 +87,7 @@ class ContactPoseDataset(BaseDataset):
         ]
 
         self._bps_dim = bps_dim
+        self._center_on_object_com = center_on_object_com
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
         bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
@@ -282,6 +284,7 @@ class ContactPoseDataset(BaseDataset):
             f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
             + f"perturbed-{self._perturbation_level}_"
             + f"{self._bps_dim}-bps_"
+            + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{split}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
@@ -349,11 +352,12 @@ class ContactPoseDataset(BaseDataset):
                 )
                 # ===============================================================
                 # ============ Shift the pair to the object's center ============
-                obj_center = torch.from_numpy(obj_mesh.get_center())
-                obj_mesh.translate(-obj_center)
-                obj_ptcld -= obj_center.to(obj_ptcld.device)
-                gt_verts -= obj_center.to(gt_verts.device)
-                gt_joints -= obj_center.to(gt_joints.device)
+                if self._center_on_object_com:
+                    obj_center = torch.from_numpy(obj_mesh.get_center())
+                    obj_mesh.translate(-obj_center)
+                    obj_ptcld -= obj_center.to(obj_ptcld.device)
+                    gt_verts -= obj_center.to(gt_verts.device)
+                    gt_joints -= obj_center.to(gt_joints.device)
                 # ===============================================================
                 gt_anchors = affine_mano.get_anchors(gt_verts)
                 # ================== Rescaled Hand-Object Pair ==================
@@ -404,8 +408,9 @@ class ContactPoseDataset(BaseDataset):
                         trans += trans_noise
 
                     verts, _ = affine_mano(theta, beta, rot_6d, trans)
-                    # Shift the hand accordingly
-                    verts -= obj_center.to(verts.device)
+                    if self._center_on_object_com:
+                        # Shift the hand accordingly
+                        verts -= obj_center.to(verts.device)
 
                     anchors = affine_mano.get_anchors(verts)
                     scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)

@@ -55,6 +55,7 @@ class GraspingDatasetConf:
     perturbation_level: int = 0
     n_perturbed_choir_per_sample: int = 100
     right_hand_only: bool = True
+    center_on_object_com: bool = True
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
     debug: bool = False
