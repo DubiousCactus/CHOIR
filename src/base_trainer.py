@@ -9,6 +9,7 @@
 Base trainer class.
 """
 
+import os
 import random
 import signal
 from collections import defaultdict
@@ -16,6 +17,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
+from hydra.core.hydra_config import HydraConfig
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
@@ -252,6 +254,10 @@ class BaseTrainer:
         for epoch in range(self._epoch, epochs):
             self._epoch = epoch  # Update for the model saver
             if not self._running:
+                self._save_checkpoint(
+                    val_losses[-1],
+                    os.path.join(HydraConfig.get().runtime.output_dir, "last.ckpt"),
+                )
                 break
             self._model.train()
             self._pbar.colour = project_conf.Theme.TRAINING.value
