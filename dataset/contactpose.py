@@ -334,7 +334,7 @@ class ContactPoseDataset(BaseDataset):
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
                 )
-                visualize = self._debug and (random.random() < 0.1)
+                visualize = self._debug and (random.Random().random() < 0.05)
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
                 mano_params = grasp_data["grasp"][0]
@@ -347,17 +347,16 @@ class ContactPoseDataset(BaseDataset):
                     torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
                     torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
                 )
-                gt_verts, gt_joints = affine_mano(
-                    gt_theta, gt_beta, gt_rot_6d, gt_trans
-                )
-                # ===============================================================
                 # ============ Shift the pair to the object's center ============
                 if self._center_on_object_com:
                     obj_center = torch.from_numpy(obj_mesh.get_center())
                     obj_mesh.translate(-obj_center)
                     obj_ptcld -= obj_center.to(obj_ptcld.device)
-                    gt_verts -= obj_center.to(gt_verts.device)
-                    gt_joints -= obj_center.to(gt_joints.device)
+                    gt_trans -= obj_center.to(gt_trans.device)
+                # ===============================================================
+                gt_verts, gt_joints = affine_mano(
+                    gt_theta, gt_beta, gt_rot_6d, gt_trans
+                )
                 # ===============================================================
                 gt_anchors = affine_mano.get_anchors(gt_verts)
                 # ================== Rescaled Hand-Object Pair ==================
@@ -403,9 +402,6 @@ class ContactPoseDataset(BaseDataset):
                         trans += trans_noise
 
                     verts, _ = affine_mano(theta, beta, rot_6d, trans)
-                    if self._center_on_object_com:
-                        # Shift the hand accordingly
-                        verts -= obj_center.to(verts.device)
 
                     anchors = affine_mano.get_anchors(verts)
                     scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
@@ -480,16 +476,18 @@ class ContactPoseDataset(BaseDataset):
                             verts, faces, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )
                         visualize_CHOIR_prediction(
-                            choir.unsqueeze(0),
-                            gt_choir.unsqueeze(0),
+                            choir,
+                            gt_choir,
                             self._bps,
-                            torch.tensor([scalar]),
-                            gt_rescaled_ref_pts.unsqueeze(0),
+                            scalar.unsqueeze(0),
+                            gt_scalar.unsqueeze(0),
+                            rescaled_ref_pts,
+                            gt_rescaled_ref_pts,
                             {
-                                "pose": gt_theta.unsqueeze(0).cpu(),
-                                "beta": gt_beta.unsqueeze(0).cpu(),
-                                "rot_6d": gt_rot_6d.unsqueeze(0),
-                                "trans": gt_trans.unsqueeze(0),
+                                "pose": gt_theta,
+                                "beta": gt_beta,
+                                "rot_6d": gt_rot_6d,
+                                "trans": gt_trans,
                             },
                             self._bps_dim,
                         )

@@ -33,7 +33,7 @@ def visualize_model_predictions(
 ) -> None:
     assert bps_dim == bps.shape[0]
     x, y = batch  # type: ignore
-    noisy_choir, rescaled_ref_pts, scalar = x
+    noisy_choir, rescaled_ref_pts, input_scalar = x
     (
         choir_gt,
         # anchor_deltas,
@@ -61,8 +61,10 @@ def visualize_model_predictions(
             # pcl_mean,
             # pcl_scalar,
             bps,
-            scalar,
+            input_scalar,
+            scalar_gt,
             rescaled_ref_pts,
+            gt_rescaled_ref_pts,
             mano_params_gt,
             bps_dim=bps_dim,
         )
@@ -81,8 +83,10 @@ def visualize_CHOIR_prediction(
     # pcl_mean: torch.Tensor,
     # pcl_scalar: torch.Tensor,
     bps: torch.Tensor,
-    scalar: float,
-    ref_pts: torch.Tensor,
+    input_scalar: float,
+    gt_scalar: float,
+    input_ref_pts: torch.Tensor,
+    gt_ref_pts: torch.Tensor,
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
 ):
@@ -143,8 +147,10 @@ def visualize_CHOIR_prediction(
     choir_gt = choir_gt[0].unsqueeze(0)
     # pcl_mean = pcl_mean[0].unsqueeze(0)
     # pcl_scalar = pcl_scalar[0].unsqueeze(0)
-    scalar = scalar[0].unsqueeze(0)
-    ref_pts = ref_pts[0].unsqueeze(0)
+    input_scalar = input_scalar[0].unsqueeze(0)
+    input_ref_pts = input_ref_pts[0].unsqueeze(0)
+    gt_scalar = gt_scalar[0].unsqueeze(0)
+    gt_ref_pts = gt_ref_pts[0].unsqueeze(0)
     mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
     # =============================================================
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
@@ -163,7 +169,7 @@ def visualize_CHOIR_prediction(
             bps_dim=bps_dim,
             # x_mean=pcl_mean,
             # x_scalar=pcl_scalar,
-            scalar=scalar,
+            scalar=input_scalar,
             objective="anchors",
             max_iterations=5000,
         )
@@ -204,7 +210,12 @@ def visualize_CHOIR_prediction(
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
     add_choir_to_plot(
-        pl, bps / scalar, choir_pred / scalar, ref_pts / scalar, hand_mesh, anchors_pred
+        pl,
+        bps / input_scalar,
+        choir_pred / input_scalar,
+        input_ref_pts / input_scalar,
+        hand_mesh,
+        anchors_pred,
     )
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
@@ -213,7 +224,12 @@ def visualize_CHOIR_prediction(
     tmesh = Trimesh(V, F)
     gt_hand_mesh = pv.wrap(tmesh)
     add_choir_to_plot(
-        pl, bps / scalar, choir_gt / scalar, ref_pts / scalar, gt_hand_mesh, gt_anchors
+        pl,
+        bps / gt_scalar,
+        choir_gt / gt_scalar,
+        gt_ref_pts / gt_scalar,
+        gt_hand_mesh,
+        gt_anchors,
     )
     pl.link_views()
     pl.set_background("white")  # type: ignore

@@ -64,6 +64,7 @@ class BaseTrainer:
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
         self._bps = train_loader.dataset.bps
+        self._n_ctrl_c = 0
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -408,12 +409,15 @@ class BaseTrainer:
         if (
             project_conf.SIGINT_BEHAVIOR
             == project_conf.TerminationBehavior.WAIT_FOR_EPOCH_END
+            and self._n_ctrl_c == 0
         ):
             print(
-                f"[!] SIGINT received. Waiting for epoch to end for {self._run_name}."
+                f"[!] SIGINT received. Waiting for epoch to end for {self._run_name}. Press Ctrl+C again to abort."
             )
+            self._n_ctrl_c += 1
         elif (
             project_conf.SIGINT_BEHAVIOR == project_conf.TerminationBehavior.ABORT_EPOCH
+            or self._n_ctrl_c > 0
         ):
             print(f"[!] SIGINT received. Aborting epoch for {self._run_name}!")
             raise KeyboardInterrupt

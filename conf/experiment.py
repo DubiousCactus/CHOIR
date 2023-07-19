@@ -125,7 +125,7 @@ class CHOIRLossConf:
     predict_anchor_position: bool = False
     predict_mano: bool = False
     orientation_w: float = 1.0
-    distance_w: float = 1.0
+    distance_w: float = 1000.0
     assignment_w: float = 1.0
     mano_pose_w: float = 1.0
     mano_global_pose_w: float = 1.0
