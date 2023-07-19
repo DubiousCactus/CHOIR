@@ -99,7 +99,7 @@ class BaselineModelConf:
     bps_dim: int
     encoder_layer_dims: Tuple[int] = (1024, 512, 256)
     decoder_layer_dims: Tuple[int] = (256, 512)
-    latent_dim: int = 64
+    latent_dim: int = 32
     predict_anchor_orientation: bool = MISSING
     predict_mano: bool = MISSING
     share_decoder_for_all_tasks: bool = True

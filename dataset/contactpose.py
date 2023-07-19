@@ -241,8 +241,11 @@ class ContactPoseDataset(BaseDataset):
                     if obj_name not in objects:
                         objects[obj_name] = obj_mesh_w_contacts_path
             pickle.dump((objects, objects_w_contacts, grasps), open(dataset_path, "wb"))
+        n_left = sum([1 for g in grasps if "left-hand" in g])
+        n_right = sum([1 for g in grasps if "right-hand" in g])
+
         print(
-            f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences"
+            f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
         )
         print(
             colorize(
