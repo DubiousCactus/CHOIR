@@ -154,7 +154,6 @@ def visualize_CHOIR_prediction(
     mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
     # =============================================================
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
-    pl.subplot(0, 0)
 
     affine_mano = AffineMANO().cuda()
     faces = affine_mano.faces
@@ -209,6 +208,15 @@ def visualize_CHOIR_prediction(
     V = verts_pred[0].cpu().numpy()
     tmesh = Trimesh(V, F)
     hand_mesh = pv.wrap(tmesh)
+
+    V_gt = gt_verts[0].cpu().numpy()
+    tmesh_gt = Trimesh(V_gt, F)
+    gt_hand_mesh = pv.wrap(tmesh_gt)
+    visualize_MANO(
+        tmesh, obj_ptcld=input_ref_pts[0] / input_scalar[0], gt_hand=gt_hand_mesh
+    )
+    # ===================================================================================
+    pl.subplot(0, 0)
     add_choir_to_plot(
         pl,
         bps / input_scalar,
@@ -220,9 +228,6 @@ def visualize_CHOIR_prediction(
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
     pl.subplot(0, 1)
-    V = gt_verts[0].cpu().numpy()
-    tmesh = Trimesh(V, F)
-    gt_hand_mesh = pv.wrap(tmesh)
     add_choir_to_plot(
         pl,
         bps / gt_scalar,
@@ -445,29 +450,51 @@ def visualize_CHOIR(
 
 
 def visualize_MANO(
-    verts: torch.Tensor,
-    faces: torch.Tensor,
+    pred_hand: Trimesh,
     obj_mesh: Optional[open3d.geometry.TriangleMesh] = None,
+    obj_ptcld: Optional[torch.Tensor] = None,
     gt_hand: Optional[Any] = None,
 ):
     pl = pv.Plotter(off_screen=False)
-    V = verts[0].detach().cpu().numpy()
-    F = faces.cpu().numpy()  # type: ignore
-    tmesh = Trimesh(V, F)
-    hand_mesh = pv.wrap(tmesh)
-    pl.add_mesh(hand_mesh, opacity=0.4, name="hand_mesh", smooth_shading=True)
+    hand_mesh = pv.wrap(pred_hand)
+    pl.add_mesh(
+        hand_mesh,
+        opacity=0.4,
+        name="hand_mesh",
+        label="Predicted Hand",
+        smooth_shading=True,
+    )
     if gt_hand is not None:
         if isinstance(gt_hand, Trimesh):
             gt_hand = pv.wrap(gt_hand)
         pl.add_mesh(
-            gt_hand, opacity=0.2, name="gt_hand", smooth_shading=True, color="blue"
+            gt_hand,
+            opacity=0.2,
+            name="gt_hand",
+            label="Ground-truth Hand",
+            smooth_shading=True,
+            color="blue",
         )
     if obj_mesh is not None:
         obj_tmesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
         obj_mesh_pv = pv.wrap(obj_tmesh)
         pl.add_mesh(
-            obj_mesh_pv, opacity=0.3, name="obj_mesh", smooth_shading=True, color="red"
+            obj_mesh_pv,
+            opacity=0.3,
+            name="obj_mesh",
+            label="Object mesh",
+            smooth_shading=True,
+            color="red",
+        )
+    elif obj_ptcld is not None:
+        pl.add_points(
+            obj_ptcld.detach().cpu().numpy(),
+            color="red",
+            name="obj_ptcld",
+            label="Object pointcloud",
+            opacity=0.2,
         )
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
+    pl.add_legend(loc="upper left", size=(0.1, 0.1))
     pl.show(interactive=True)

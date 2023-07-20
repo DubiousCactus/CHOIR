@@ -7,11 +7,13 @@
 
 
 import random
-from typing import Any, List, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 import tqdm
+from hydra.conf import HydraConf, JobConf, RunDir
+from hydra_zen import ZenStore, store
 
 from conf import project as project_conf
 
@@ -94,3 +96,21 @@ def update_pbar_str(pbar: tqdm.tqdm, string: str, color_code: int) -> None:
         color_code (int): color code for the string
     """
     pbar.set_description_str(colorize(string, color_code))
+
+
+def change_dir_if_loading_from_run(run_name: Optional[str]):
+    # TODO: Make this work!!
+    if run_name is not None:
+        # Set hydra.job.chdir=True using store():
+        hydra_store = ZenStore(overwrite_ok=True)
+        hydra_store(HydraConf(job=JobConf(chdir=True)), name="config", group="hydra")
+        # We'll generate a unique name for the experiment and use it as the run name
+        hydra_store(
+            HydraConf(run=RunDir(f"runs/{run_name}")),
+            name="config",
+            group="hydra",
+        )
+        hydra_store.add_to_hydra_store(overwrite_ok=True)
+        store.add_to_hydra_store(
+            overwrite_ok=True
+        )  # Overwrite Hydra's default config to update it

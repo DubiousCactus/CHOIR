@@ -475,8 +475,11 @@ class ContactPoseDataset(BaseDataset):
                         gt_MANO_mesh = Trimesh(
                             gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
                         )
+                        pred_MANO_mesh = Trimesh(
+                            verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                        )
                         visualize_MANO(
-                            verts, faces, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )
                         visualize_CHOIR_prediction(
                             choir,

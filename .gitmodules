@@ -7,3 +7,9 @@
 [submodule "vendor/GRAB"]
 	path = vendor/GRAB
 	url = git@github.com:otaheri/GRAB.git
+[submodule "vendor/GrabNet"]
+	path = vendor/GrabNet
+	url = git@github.com:otaheri/GrabNet.git
+[submodule "vendor/metabatch"]
+	path = vendor/metabatch
+	url = git@github.com:DubiousCactus/metabatch.git

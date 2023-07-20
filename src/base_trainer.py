@@ -315,7 +315,8 @@ class BaseTrainer:
         plt.clf()
         plt.theme("dark")
         plt.xlabel("Epoch")
-        plt.ylabel("Loss")
+        plt.ylabel("Loss (log scale)")
+        plt.yscale("log")
         plt.grid(True, True)
         plt.plot(
             list(range(self._starting_epoch, epoch + 1)),

@@ -97,8 +97,8 @@ model_store = store(group="model")
 @dataclass
 class BaselineModelConf:
     bps_dim: int
-    encoder_layer_dims: Tuple[int] = (1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512)
+    encoder_layer_dims: Tuple[int] = (1024, 512, 256, 128)
+    decoder_layer_dims: Tuple[int] = (128, 256, 512)
     latent_dim: int = 32
     predict_anchor_orientation: bool = MISSING
     predict_mano: bool = MISSING

@@ -20,6 +20,10 @@ from hydra.core.hydra_config import HydraConfig
 class BestNModelSaver:
     def __init__(self, n: int, save_callback: Callable) -> None:
         self._n = n
+        # self._best_n_models = {
+        # osp.basename(path).split("_")[-1].split(".")[0]: path
+        # for path in os.listdir(HydraConfig.get().runtime.output_dir)
+        # }
         self._best_n_models = {}
         self._save_callback = save_callback
         self._min_val_loss = float("inf")
@@ -50,6 +54,9 @@ class BestNModelSaver:
                 del_fname = self._best_n_models[worst_of_best]
                 os.remove(del_fname)
                 del self._best_n_models[worst_of_best]
+            last_ckpt_path = osp.join(HydraConfig.get().runtime.output_dir, "last.ckpt")
+            if osp.isfile(last_ckpt_path):
+                os.remove(last_ckpt_path)
             self._best_n_models[val_loss] = ckpt_path
             self._save_callback(val_loss, ckpt_path)
 
