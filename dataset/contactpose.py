@@ -16,11 +16,10 @@ import random
 import sys
 from contextlib import redirect_stdout
 from copy import deepcopy
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from bps_torch.tools import sample_sphere_uniform
 from hydra.utils import get_original_cwd
 from open3d import io as o3dio
 from pytorch3d.transforms import matrix_to_rotation_6d
@@ -42,8 +41,8 @@ from utils.visualization import (
 class ContactPoseDataset(BaseDataset):
     """ "
     A task is defined as a set of random views of the same grasp of the same object. In ContactPose
-    terms, this translates to a set of random views of person X grasping object Y with the right
-    hand and intent Z.
+    terms, this translates to a set of random views of person X grasping object Y with hand H and
+    intent Z.
     """
 
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
@@ -55,7 +54,8 @@ class ContactPoseDataset(BaseDataset):
         perturbation_level: int = 0,
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
-        n_perturbed_choir_per_sample: int = 100,
+        noisy_samples_per_grasp: int = 100,
+        max_views_per_grasp: int = 5,
         right_hand_only: bool = True,
         center_on_object_com: bool = True,
         tiny: bool = False,
@@ -63,18 +63,15 @@ class ContactPoseDataset(BaseDataset):
         seed: int = 0,
         debug: bool = False,
     ) -> None:
+        assert max_views_per_grasp <= noisy_samples_per_grasp
+        assert max_views_per_grasp > 0
         self._validation_objects = validation_objects
         self._obj_ptcld_size = obj_ptcld_size
-        self._cache_dir = osp.join(
-            get_original_cwd(), "data", "ContactPose_preprocessed"
-        )
         self._right_hand_only = right_hand_only
         self._perturbation_level = perturbation_level
-        assert (
-            n_perturbed_choir_per_sample > 0
-        ), "n_perturbed_choir_per_sample must be > 0"
-        self._n_perturbed_choir_per_sample = (
-            1 if perturbation_level == 0 else n_perturbed_choir_per_sample
+        assert noisy_samples_per_grasp > 0, "noisy_samples_per_grasp must be > 0"
+        self._noisy_samples_per_grasp = (
+            1 if perturbation_level == 0 else noisy_samples_per_grasp
         )
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
@@ -85,39 +82,18 @@ class ContactPoseDataset(BaseDataset):
                 "pca": 0.5,
             },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
         ]
-
-        self._bps_dim = bps_dim
         self._center_on_object_com = center_on_object_com
-        if not osp.isdir(self._cache_dir):
-            os.makedirs(self._cache_dir)
-        bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
-        if osp.isfile(bps_path):
-            with open(bps_path, "rb") as f:
-                bps = pickle.load(f)
-        else:
-            bps = sample_sphere_uniform(
-                n_points=self._bps_dim, n_dims=3, radius=1.0, random_seed=1995
-            ).cpu()
-            with open(bps_path, "wb") as f:
-                pickle.dump(bps, f)
-        self._bps = bps.cpu()
-
         super().__init__(
-            dataset_root="",
+            dataset_name="ContactPose",
+            bps_dim=bps_dim,
+            max_views_per_grasp=max_views_per_grasp,
+            noisy_samples_per_grasp=self._noisy_samples_per_grasp,
             augment=augment,
             split=split,
             tiny=tiny,
             seed=seed,
             debug=debug,
         )
-
-    @property
-    def bps_dim(self) -> int:
-        return self._bps_dim
-
-    @property
-    def bps(self) -> torch.Tensor:
-        return self._bps
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
@@ -198,7 +174,7 @@ class ContactPoseDataset(BaseDataset):
         # objects: unique object paths
         # objects_w_contacts: object with contacts paths
         # grasps: MANO parameters w/ global pose pickle paths
-        objects, objects_w_contacts, grasps = {}, [], []
+        objects_w_contacts, grasps = [], []
         print(f"[*] Loading ContactPose{' (tiny)' if tiny else ''}...")
 
         dataset_path = osp.join(
@@ -209,8 +185,11 @@ class ContactPoseDataset(BaseDataset):
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if osp.isfile(dataset_path):
-            objects, objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
+            _, objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
         else:
+            # TODO: Refactor this? I think we don't need all that code and dumping into independent
+            # files! It's probably light enough in memory that we can dump it all in one file. Also
+            # Python being Python, this loop is horribly slow.
             for obj_name in tqdm(object_names):
                 for p_num, intent, hand in cp_dataset[obj_name]:
                     # Generate the data since the dataset file does not exist.
@@ -238,9 +217,9 @@ class ContactPoseDataset(BaseDataset):
                         )
                     objects_w_contacts.append(obj_mesh_w_contacts_path)
                     grasps.append(grasp_path)
-                    if obj_name not in objects:
-                        objects[obj_name] = obj_mesh_w_contacts_path
-            pickle.dump((objects, objects_w_contacts, grasps), open(dataset_path, "wb"))
+                    # if obj_name not in objects:
+                    # objects[obj_name] = obj_mesh_w_contacts_path
+            pickle.dump((objects_w_contacts, grasps), open(dataset_path, "wb"))
         n_left = sum([1 for g in grasps if "left-hand" in g])
         n_right = sum([1 for g in grasps if "right-hand" in g])
 
@@ -257,7 +236,6 @@ class ContactPoseDataset(BaseDataset):
         )
         assert len(objects_w_contacts) == len(grasps)
         return (
-            objects,
             objects_w_contacts,
             grasps,
             osp.basename(dataset_path.split(".")[0]),
@@ -265,15 +243,12 @@ class ContactPoseDataset(BaseDataset):
 
     def _load(
         self,
-        dataset_root: str,
-        tiny: bool,
         split: str,
-        objects: Dict[str, str],
         objects_w_contacts: List[str],
         grasps: List,
         dataset_name: str,
     ) -> List[str]:
-        sample_paths = []
+        grasp_paths = []
         """
         Make sure that we're using the same BPS for CHOIR generation, training and test-time
         optimization! It's very important otherwise we can't learn anything meaningful and
@@ -322,14 +297,16 @@ class ContactPoseDataset(BaseDataset):
                 os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
             if (
                 len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
-                >= self._n_perturbed_choir_per_sample
+                >= self._noisy_samples_per_grasp
             ):
-                sample_paths += [
-                    osp.join(
-                        samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
-                    )
-                    for i in range(self._n_perturbed_choir_per_sample)
-                ]
+                grasp_paths.append(
+                    [
+                        osp.join(
+                            samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
+                        )
+                        for i in range(self._noisy_samples_per_grasp)
+                    ]
+                )
             else:
                 obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                 obj_ptcld = torch.from_numpy(
@@ -374,7 +351,9 @@ class ContactPoseDataset(BaseDataset):
                     bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
                 )
 
-                for j in range(self._n_perturbed_choir_per_sample):
+                sample_paths = []
+                # ================== Perturbed Hand-Object Pair ==================
+                for j in range(self._noisy_samples_per_grasp):
                     sample_pth = osp.join(
                         samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
                     )
@@ -498,4 +477,5 @@ class ContactPoseDataset(BaseDataset):
                             self._bps_dim,
                         )
                         has_visualized = True
-        return sample_paths
+                grasp_paths.append(sample_paths)
+        return grasp_paths

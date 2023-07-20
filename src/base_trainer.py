@@ -25,9 +25,10 @@ from tqdm import tqdm
 
 import wandb
 from conf import project as project_conf
+from model.affine_mano import AffineMANO
 from utils import blink_pbar, to_cuda, update_pbar_str
 from utils.helpers import BestNModelSaver
-from utils.visualization import visualize_model_predictions
+from utils.visualization import visualize_CHOIR_prediction, visualize_model_predictions
 
 
 class BaseTrainer:
@@ -99,9 +100,41 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         x, y = batch
-        noisy_choir, _, scalar = x
+        affine_mano = AffineMANO().cuda()
+        print(f"Displaying {len(x)} samples")
+        for i in range(len(x)):
+            noisy_choir, target_pts, scalar = x[i]
+            (
+                gt_choir,
+                gt_ref_pts,
+                gt_scalar,
+                _,
+                gt_anchors,
+                gt_theta,
+                gt_beta,
+                gt_rot,
+                gt_trans,
+            ) = y[i]
+            mano_params_gt = {
+                "pose": gt_theta,
+                "beta": gt_beta,
+                "rot_6d": gt_rot,
+                "trans": gt_trans,
+            }
+            visualize_CHOIR_prediction(
+                noisy_choir,
+                gt_choir,
+                self._bps,
+                scalar,
+                gt_scalar,
+                target_pts,
+                gt_ref_pts,
+                mano_params_gt,
+                bps_dim=self._bps_dim,
+            )
+        noisy_choir, _, scalar = x[0]
         y_hat = self._model(noisy_choir)
-        losses = self._training_loss(x, y, y_hat)
+        losses = self._training_loss(x[0], y[0], y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses
 

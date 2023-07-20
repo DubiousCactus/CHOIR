@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 import torch
 from hydra.conf import HydraConf, JobConf, RunDir
 from hydra_zen import MISSING, ZenStore, builds, make_custom_builds_fn, store
-from torch.utils.data import DataLoader
+from metabatch import TaskLoader
 from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
@@ -53,7 +53,8 @@ class GraspingDatasetConf:
     augment: bool = False
     validation_objects: int = 5
     perturbation_level: int = 0
-    n_perturbed_choir_per_sample: int = 100
+    noisy_samples_per_grasp: int = 100
+    max_views_per_grasp: int = 5
     right_hand_only: bool = True
     center_on_object_com: bool = True
     bps_dim: int = 1024
@@ -237,7 +238,7 @@ Experiment = builds(
     training=MISSING,
     training_loss=MISSING,
     data_loader=pbuilds(
-        DataLoader, builds_bases=(DataloaderConf,)
+        TaskLoader, builds_bases=(DataloaderConf,)
     ),  # Needs a partial because we need to set the dataset
 )
 store(Experiment, name="base_experiment")
@@ -275,7 +276,7 @@ ExperimentEvaluation = builds(
     model=MISSING,
     testing=MISSING,
     data_loader=pbuilds(
-        DataLoader, builds_bases=(DataloaderConf,), shuffle=False, drop_last=False
+        TaskLoader, builds_bases=(DataloaderConf,), shuffle=False, drop_last=False
     ),  # Needs a partial because we need to set the dataset
 )
 store(ExperimentEvaluation, name="base_experiment_evaluation")
