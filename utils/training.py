@@ -10,7 +10,7 @@ Training utilities. This is a good place for your code that is used in training 
 function, visualization code, etc.)
 """
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 import torch
 import tqdm
@@ -115,3 +115,74 @@ def optimize_pose_pca_from_choir(
         trans.detach(),
         anchors[0].unsqueeze(0).detach(),
     )
+
+
+def get_dict_from_sample_and_label_tensors(
+    sample: torch.Tensor, label: torch.Tensor
+) -> Tuple[Dict]:
+    """
+    These are 0-padded tensors, so we only keep the actual data.
+    B: Batch size
+    T: Number of frames
+    P: Number of points
+    D: Dimension of the points
+    ======= Samples =======
+    - CHOIR: (B, T, P, 2)
+    - Ref. pts: (B, T, P, 3)
+    - Scalar: (B, T, 1, 1)
+    ======= Labels ========
+    - CHOIR: (B, T, P, 2)
+    - Ref. pts: (B, T, P, 3)
+    - Scalar: (B, T, 1, 1)
+    - Joints: (B, T, 21, 3)
+    - Anchors: (B, T, 32, 3)
+    - Theta: (B, T, 1, 18)
+    - Beta: (B, T, 1, 10)
+    - Rot: (B, T, 1, 6)
+    - Trans: (B, T, 1, 3)
+    =======================
+
+    Sample: (B, T, 3, P=BPS_DIM, D=3) for 3 padded tensors
+    Label: (B, T, 9, P=BPS_DIM, D=18) for 9 padded tensors
+    """
+    noisy_choir, rescaled_ref_pts, scalar = (
+        sample[:, :, 0, :, :2],
+        sample[:, :, 1],
+        sample[:, :, 2, 0, 0].squeeze(),
+    )
+    (
+        gt_choir,
+        gt_ref_pts,
+        gt_scalar,
+        gt_joints,
+        gt_anchors,
+        gt_theta,
+        gt_beta,
+        gt_rot,
+        gt_trans,
+    ) = (
+        label[:, :, 0, :, :2],
+        label[:, :, 1, :, :3],
+        label[:, :, 2, 0, 0].squeeze(),
+        label[:, :, 3, :21, :3],
+        label[:, :, 4, :32, :3],
+        label[:, :, 5, 0, :18],
+        label[:, :, 6, 0, :10],
+        label[:, :, 7, 0, :6],
+        label[:, :, 8, 0, :3],
+    )
+    return {
+        "choir": noisy_choir,
+        "rescaled_ref_pts": rescaled_ref_pts,
+        "scalar": scalar,
+    }, {
+        "choir": gt_choir,
+        "rescaled_ref_pts": gt_ref_pts,
+        "scalar": gt_scalar,
+        "joints": gt_joints,
+        "anchors": gt_anchors,
+        "theta": gt_theta,
+        "beta": gt_beta,
+        "rot": gt_rot,
+        "trans": gt_trans,
+    }

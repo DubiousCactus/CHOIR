@@ -403,30 +403,33 @@ class ContactPoseDataset(BaseDataset):
                     # ref_pts.float(), verts.float()
                     # )
 
-                    sample = (
-                        choir.squeeze(0).cpu(),
-                        rescaled_ref_pts.squeeze(0).cpu(),
-                        scalar.cpu(),
-                    )
-                    label = (
-                        gt_choir.squeeze(0).cpu(),
-                        # anchor_orientations,
-                        gt_rescaled_ref_pts.squeeze(0).cpu(),
-                        gt_scalar.cpu(),
-                        gt_joints.squeeze(0).cpu(),
-                        gt_anchors.squeeze(0).cpu(),
-                        gt_theta.squeeze(0).cpu(),
-                        gt_beta.squeeze(0).cpu(),
-                        gt_rot_6d.squeeze(0).cpu(),
-                        gt_trans.squeeze(0).cpu(),
-                    )
+                    sample = torch.nested.to_padded_tensor(
+                        torch.nested.nested_tensor(
+                            [
+                                choir.squeeze(0),  # (N, 2)
+                                rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                scalar.unsqueeze(0),  # (N, 1)
+                            ]
+                        ),
+                        0.0,
+                    ).cpu()
+                    label = torch.nested.to_padded_tensor(
+                        torch.nested.nested_tensor(
+                            [
+                                gt_choir.squeeze(0),  # (N, 2)
+                                gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                gt_scalar.unsqueeze(0),  # (1, 1)
+                                gt_joints.squeeze(0),  # (21, 3)
+                                gt_anchors.squeeze(0),  # (32, 3)
+                                gt_theta,  # (1, 18)
+                                gt_beta,  # (1, 10)
+                                gt_rot_6d,  # (1, 6)
+                                gt_trans,  # (1, 3)
+                            ]
+                        ),
+                        0.0,
+                    ).cpu()
 
-                    for v in sample:
-                        if isinstance(v, torch.Tensor):
-                            assert v.device == torch.device("cpu")
-                    for v in label:
-                        if isinstance(v, torch.Tensor):
-                            assert v.device == torch.device("cpu")
                     with open(sample_pth, "wb") as f:
                         pickle.dump((sample, label), f)
                     sample_paths.append(sample_pth)

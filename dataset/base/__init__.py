@@ -133,7 +133,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 sample, label = pickle.load(f)
             samples.append(sample)
             labels.append(label)
-        return samples, labels
+        return torch.stack(samples), torch.stack(labels)
 
     # def __getitem__(self, idx: int) -> Tuple[Any, Any]:
     # with open(self._sample_paths[idx], "rb") as f:

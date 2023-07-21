@@ -25,10 +25,10 @@ from tqdm import tqdm
 
 import wandb
 from conf import project as project_conf
-from model.affine_mano import AffineMANO
 from utils import blink_pbar, to_cuda, update_pbar_str
 from utils.helpers import BestNModelSaver
-from utils.visualization import visualize_CHOIR_prediction, visualize_model_predictions
+from utils.training import get_dict_from_sample_and_label_tensors
+from utils.visualization import visualize_model_predictions
 
 
 class BaseTrainer:
@@ -100,41 +100,34 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         x, y = batch
-        affine_mano = AffineMANO().cuda()
-        print(f"Displaying {len(x)} samples")
-        for i in range(len(x)):
-            noisy_choir, target_pts, scalar = x[i]
-            (
-                gt_choir,
-                gt_ref_pts,
-                gt_scalar,
-                _,
-                gt_anchors,
-                gt_theta,
-                gt_beta,
-                gt_rot,
-                gt_trans,
-            ) = y[i]
-            mano_params_gt = {
-                "pose": gt_theta,
-                "beta": gt_beta,
-                "rot_6d": gt_rot,
-                "trans": gt_trans,
-            }
-            visualize_CHOIR_prediction(
-                noisy_choir,
-                gt_choir,
-                self._bps,
-                scalar,
-                gt_scalar,
-                target_pts,
-                gt_ref_pts,
-                mano_params_gt,
-                bps_dim=self._bps_dim,
-            )
-        noisy_choir, _, scalar = x[0]
-        y_hat = self._model(noisy_choir)
-        losses = self._training_loss(x[0], y[0], y_hat)
+        samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+        # ============== Uncomment to make sure the data is loaded correctly ==============
+        # print(f"Displaying {samples['choir'].shape[1]} samples")
+        # for i in range(samples["choir"].shape[1]):
+        # mano_params_gt = {
+        # "pose": labels["theta"][:, i],
+        # "beta": labels["beta"][:, i],
+        # "rot_6d": labels["rot"][:, i],
+        # "trans": labels["trans"][:, i],
+        # }
+        # visualize_CHOIR_prediction(
+        # samples["choir"][:, i],
+        # labels["choir"][:, i],
+        # self._bps,
+        # samples["scalar"][:, i],
+        # labels["scalar"][:, i],
+        # samples["rescaled_ref_pts"][:, i],
+        # labels["rescaled_ref_pts"][:, i],
+        # mano_params_gt,
+        # bps_dim=self._bps_dim,
+        # )
+        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
+        for k, v in samples.items():
+            samples[k] = v.view(-1, *v.shape[2:])
+        for k, v in labels.items():
+            labels[k] = v.view(-1, *v.shape[2:])
+        y_hat = self._model(samples["choir"])
+        losses = self._training_loss(samples, labels, y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses
 

@@ -9,7 +9,7 @@
 Hand-Object Interaction loss.
 """
 
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 
@@ -53,15 +53,13 @@ class CHOIRLoss(torch.nn.Module):
 
     def forward(
         self,
-        x,
-        y,
+        samples: Dict[str, torch.Tensor],
+        labels: Dict[str, torch.Tensor],
         y_hat,
     ) -> torch.Tensor:
-        _, _, scalar = x
+        scalar = samples["scalar"]
         (
             choir_gt,
-            # anchor_orientations,
-            _,
             scalar_gt,
             joints_gt,
             anchors_gt,
@@ -69,7 +67,16 @@ class CHOIRLoss(torch.nn.Module):
             beta_gt,
             rot_gt,
             trans_gt,
-        ) = y
+        ) = (
+            labels["choir"],
+            labels["scalar"],
+            labels["joints"],
+            labels["anchors"],
+            labels["theta"],
+            labels["beta"],
+            labels["rot"],
+            labels["trans"],
+        )
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
         # choir_gt, orientations_gt = choir_gt, anchor_orientations
         losses = {
