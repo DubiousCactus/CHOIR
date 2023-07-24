@@ -13,7 +13,7 @@ import torch
 from src.base_trainer import BaseTrainer
 from utils import to_cuda
 from utils.training import get_dict_from_sample_and_label_tensors
-from utils.visualization import visualize_model_predictions
+from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
 class MultiViewTrainer(BaseTrainer):
@@ -35,15 +35,13 @@ class MultiViewTrainer(BaseTrainer):
             batch: The batch to process.
             epoch: The current epoch.
         """
-        # TODO
-        raise NotImplementedError
-        visualize_model_predictions(
+        visualize_model_predictions_with_multiple_views(
             self._model,
             batch,
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
-        )  # User implementation goes here (utils/training.py)
+        )  # User implementation goes here (utils/visualization.py)
 
     @to_cuda
     def _train_val_iteration(
@@ -64,4 +62,9 @@ class MultiViewTrainer(BaseTrainer):
             samples, labels, y_hat
         )  # TODO: Multiview + Contrastive Learning loss
         loss = sum([v for v in losses.values()])
+        # Again without using the posterior:
+        y_hat = self._model(samples["choir"])
+        losses["distances_from_prior"] = self._training_loss(samples, labels, y_hat)[
+            "distances"
+        ]
         return loss, losses

@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 import wandb
 from conf import project as project_conf
-from utils import blink_pbar, to_cuda, update_pbar_str
+from utils import blink_pbar, to_cuda, to_cuda_, update_pbar_str
 from utils.helpers import BestNModelSaver
 from utils.training import get_dict_from_sample_and_label_tensors
 from utils.visualization import visualize_model_predictions
@@ -64,8 +64,9 @@ class BaseTrainer:
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
-        self._bps = train_loader.dataset.bps
+        self._bps = to_cuda_(train_loader.dataset.bps)
         self._n_ctrl_c = 0
+        self._viz_n_samples = 1
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -147,7 +148,7 @@ class BaseTrainer:
         self._pbar.reset()
         self._pbar.set_description(description)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
-        has_visualized = False
+        has_visualized = 0
         " ==================== Training loop for one epoch ==================== "
         for i, batch in enumerate(self._train_loader):
             if (
@@ -174,14 +175,14 @@ class BaseTrainer:
             )
             if (
                 visualize
-                and not has_visualized
+                and has_visualized < self._viz_n_samples
                 and (
                     random.Random().random() < 0.15 or i == len(self._train_loader) - 1
                 )
             ):
                 with torch.no_grad():
                     self._visualize(batch, epoch)
-                has_visualized = True
+                has_visualized += 1
             self._pbar.update()
         epoch_loss = epoch_loss.compute().item()
         if project_conf.USE_WANDB:
@@ -203,7 +204,7 @@ class BaseTrainer:
         Returns:
             float: Average validation loss for the epoch.
         """
-        has_visualized = False
+        has_visualized = 0
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.VALIDATION.value]
         "==================== Validation loop for one epoch ===================="
         with torch.no_grad():
@@ -233,14 +234,13 @@ class BaseTrainer:
                 " ==================== Visualization ==================== "
                 if (
                     visualize
-                    and not has_visualized
+                    and has_visualized < self._viz_n_samples
                     and (
-                        random.Random().random() < 0.15
-                        or i == len(self._val_loader) - 1
+                        random.Random().random() < 0.5 or i == len(self._val_loader) - 1
                     )
                 ):
                     self._visualize(batch, epoch)
-                    has_visualized = True
+                    has_visualized += 1
             val_loss = val_loss.compute().item()
             if project_conf.USE_WANDB:
                 wandb.log({"val_loss": val_loss}, step=epoch)
@@ -260,6 +260,7 @@ class BaseTrainer:
         val_every: int = 1,  # Validate every n epochs
         visualize_every: int = 0,  # Visualize every n validation epochs
         visualize_train_every: int = 0,  # Visualize every n training epochs
+        visualize_n_samples: int = 1,
         model_ckpt_path: Optional[str] = None,
     ):
         """Train the model for a given number of epochs.
@@ -276,6 +277,7 @@ class BaseTrainer:
         if project_conf.PLOT_ENABLED:
             self._setup_plot()
         print(f"[*] Training for {epochs} epochs")
+        self._viz_n_samples = visualize_n_samples
         train_losses, val_losses = [], []
         " ==================== Training loop ==================== "
         for epoch in range(self._epoch, epochs):

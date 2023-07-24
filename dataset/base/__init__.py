@@ -71,7 +71,7 @@ class BaseDataset(TaskSet, abc.ABC):
             ).cpu()
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)
-        self._bps = bps.cpu()
+        self._bps = bps
         self._debug = debug
         (
             objects_w_contacts,

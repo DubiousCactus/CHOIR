@@ -20,7 +20,215 @@ from trimesh import Trimesh
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
 from utils import to_cuda
-from utils.training import optimize_pose_pca_from_choir
+from utils.training import (
+    get_dict_from_sample_and_label_tensors,
+    optimize_pose_pca_from_choir,
+)
+
+
+def add_choir_to_plot(
+    plot, bps, choir, ref_pts, hand_mesh, anchors, hand_only=False, hand_color=None
+):
+    if len(choir.shape) == 3:
+        choir = choir[0]
+    if len(ref_pts.shape) == 3:
+        ref_pts = ref_pts[0]
+    if len(anchors.shape) == 3:
+        anchors = anchors[0]
+    plot.add_points(
+        ref_pts.cpu().numpy(),
+        color="blue",
+        name="target_points",
+        opacity=0.9,
+    )
+
+    if not hand_only:
+        min_dist, max_dist = choir[:, 1].min(), choir[:, 1].max()
+        max_dist = max_dist + 1e-6
+        for i in range(bps.shape[0]):
+            # The color is proportional to the distance to the anchor. It is in hex format.
+            # It is obtained from min-max normalization of the distance in the choir field,
+            # without known range. The color range is 0 to 16777215.
+            index = i % 32
+            anchor = anchors[index, :]
+            color = int((choir[i, 1] - min_dist) / (max_dist - min_dist) * 16777215)
+            plot.add_lines(
+                np.array(
+                    [
+                        bps[i, :].cpu().numpy(),
+                        anchor.cpu().numpy(),
+                    ]
+                ),
+                width=1,
+                color="#" + hex(color)[2:].zfill(6),
+                name=f"anchor_ray{i}",
+            )
+    plot.add_mesh(
+        hand_mesh,
+        opacity=0.4,
+        name="hand_mesh",
+        smooth_shading=True,
+        **(dict(color=hand_color) if hand_color is not None else {}),
+    )
+    for i in range(anchors.shape[0]):
+        plot.add_mesh(
+            pv.Cube(
+                center=anchors[i].cpu().numpy(),
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
+            ),
+            color="yellow",
+            name=f"anchor{i}",
+        )
+
+
+def visualize_model_predictions_with_multiple_views(
+    model: torch.nn.Module,
+    batch: Union[Tuple, List, torch.Tensor],
+    step: int,
+    bps: torch.Tensor,
+    bps_dim: int,
+    **kwargs,
+) -> None:
+    assert bps_dim == bps.shape[0]
+    x, y = batch  # type: ignore
+    samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+    if not project_conf.HEADLESS:
+        # ============ Get the first element of the batch ============
+        input_scalar = samples["scalar"][0].view(-1, *samples["scalar"].shape[2:])
+        choir_gt = labels["choir"][0, 0].unsqueeze(0)
+        input_choirs = samples["choir"][0].view(-1, *samples["choir"].shape[2:])
+        input_ref_pts = samples["rescaled_ref_pts"][0].view(
+            -1, *samples["rescaled_ref_pts"].shape[2:]
+        )
+        gt_scalar = (
+            labels["scalar"][0, 0].unsqueeze(0)
+            if len(labels["scalar"].shape) >= 2
+            else labels["scalar"][0].unsqueeze(0)
+        )
+        # gt_scalar = labels["scalar"][0].view(-1, *labels["scalar"].shape[2:])
+        gt_ref_pts = labels["rescaled_ref_pts"][0, 0].unsqueeze(0)
+        # =============================================================
+
+        affine_mano = AffineMANO().cuda()
+        faces = affine_mano.faces
+        F = faces.cpu().numpy()
+        # ===================================================================================
+        # ============ Display MANO fitted to all noisy input CHOIR fields ==================
+        pl = pv.Plotter(
+            shape=(1, input_choirs.shape[0] + 1), border=False, off_screen=False
+        )
+        sample_choirs = samples["choir"][0].view(-1, *samples["choir"].shape[2:])
+        print(f"[*] Visualizing {input_choirs.shape[0]} noisy CHOIR fields.")
+        with torch.set_grad_enabled(True):
+            pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+                sample_choirs,
+                bps=bps,
+                bps_dim=bps_dim,
+                scalar=input_scalar,
+                max_iterations=5000,
+            )
+        verts, _ = affine_mano(pose, shape, rot_6d, trans)
+        for i in range(input_choirs.shape[0]):
+            pl.subplot(0, i)
+            V = verts[i].cpu().numpy()
+            tmesh = Trimesh(V, F)
+            hand_mesh = pv.wrap(tmesh)
+            add_choir_to_plot(
+                pl,
+                bps / input_scalar[i],
+                input_choirs[i] / input_scalar[i],
+                input_ref_pts[i] / input_scalar[i],
+                hand_mesh,
+                anchors_pred[i],
+                hand_only=True,
+            )
+        # ===================================================================================
+
+        # ================== Optimize MANO on model prediction =========================
+        y_hat = model(samples["choir"])
+        mano_params_gt = {
+            "pose": labels["theta"],
+            "beta": labels["beta"],
+            "rot_6d": labels["rot"],
+            "trans": labels["trans"],
+        }
+        mano_params_gt = {k: v[0, 0].unsqueeze(0) for k, v in mano_params_gt.items()}
+        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+        gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        gt_anchors = affine_mano.get_anchors(gt_verts)
+        with torch.set_grad_enabled(True):
+            # Use first batch element and views as batch dimension.
+            choir_pred = y_hat["choir"][0].unsqueeze(0)
+            pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+                choir_pred,
+                bps=bps,
+                bps_dim=bps_dim,
+                scalar=torch.mean(input_scalar)
+                .unsqueeze(0)
+                .to(input_scalar.device),  # TODO: What should I do here?
+                max_iterations=5000,
+            )
+            verts_pred, joints_pred = affine_mano(pose, shape, rot_6d, trans)
+        # ============ Display the ground truth CHOIR field with the GT MANO ================
+        V_gt = gt_verts[0].cpu().numpy()
+        tmesh_gt = Trimesh(V_gt, F)
+        gt_hand_mesh = pv.wrap(tmesh_gt)
+        pl.subplot(0, input_choirs.shape[0])
+        add_choir_to_plot(
+            pl,
+            bps / gt_scalar,
+            choir_gt / gt_scalar,
+            gt_ref_pts / gt_scalar,
+            gt_hand_mesh,
+            gt_anchors,
+            hand_only=True,
+            hand_color="red",
+        )
+        pl.add_title("Noisy input views", font="courier", color="k", font_size=20)
+        pl.link_views()
+        pl.set_background("white")  # type: ignore
+        pl.add_camera_orientation_widget()
+        pl.show(interactive=True)
+
+        # ============ Display the optimized MANO on predicted CHOIR field vs GT CHOIR field ================
+        # ====== Metrics and qualitative comparison ======
+        # === Anchor error ===
+        print(
+            f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+        )
+        # === MPJPE ===
+        pjpe = torch.linalg.vector_norm(
+            gt_joints - joints_pred, ord=2, dim=-1
+        )  # Per-joint position error (B, N, 21)
+        mpjpe = torch.mean(pjpe, dim=-1).item()  # Mean per-joint position error (B, N)
+        print(f"MPJPE (mm): {mpjpe * 1000:.2f}")
+        root_aligned_pjpe = torch.linalg.vector_norm(
+            (gt_joints - gt_joints[:, 0, :]) - (joints_pred - joints_pred[:, 0, :]),
+            ord=2,
+            dim=-1,
+        )  # Per-joint position error (B, N, 21)
+        root_aligned_mpjpe = torch.mean(
+            root_aligned_pjpe, dim=-1
+        ).item()  # Mean per-joint position error (B, N)
+        print(f"Root-aligned MPJPE (mm): {root_aligned_mpjpe * 1000:.2f}")
+        # ====== MPVPE ======
+        # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
+        # hand meshes.
+        pvpe = torch.linalg.vector_norm(
+            gt_verts - verts_pred, ord=2, dim=-1
+        )  # Per-vertex position error (B, N, 778)
+        mpvpe = torch.mean(pvpe, dim=-1).item()  # Mean per-vertex position error (B, N)
+        print(f"MPVPE (mm): {mpvpe * 1000:.2f}")
+
+        V = verts_pred[0].cpu().numpy()
+        tmesh = Trimesh(V, F)
+        # hand_mesh = pv.wrap(tmesh)
+
+        visualize_MANO(
+            tmesh, obj_ptcld=input_ref_pts[0] / input_scalar[0], gt_hand=gt_hand_mesh
+        )
 
 
 def visualize_model_predictions(
@@ -90,58 +298,6 @@ def visualize_CHOIR_prediction(
     mano_params_gt: Dict[str, torch.Tensor],
     bps_dim: int,
 ):
-    def add_choir_to_plot(plot, bps, choir, ref_pts, hand_mesh, anchors):
-        if len(choir.shape) == 3:
-            choir = choir[0]
-        if len(ref_pts.shape) == 3:
-            ref_pts = ref_pts[0]
-        if len(anchors.shape) == 3:
-            anchors = anchors[0]
-        plot.add_points(
-            ref_pts.cpu().numpy(),
-            color="blue",
-            name="target_points",
-            opacity=0.9,
-        )
-        min_dist, max_dist = choir[:, 1].min(), choir[:, 1].max()
-        max_dist = max_dist + 1e-6
-        for i in range(bps.shape[0]):
-            # The color is proportional to the distance to the anchor. It is in hex format.
-            # It is obtained from min-max normalization of the distance in the choir field,
-            # without known range. The color range is 0 to 16777215.
-            assert bps_dim % 32 == 0, "bps_dim must be a multiple of 32."
-            index = i % 32
-            anchor = anchors[index, :]
-            color = int((choir[i, 1] - min_dist) / (max_dist - min_dist) * 16777215)
-            plot.add_lines(
-                np.array(
-                    [
-                        bps[i, :].cpu().numpy(),
-                        anchor.cpu().numpy(),
-                    ]
-                ),
-                width=1,
-                color="#" + hex(color)[2:].zfill(6),
-                name=f"anchor_ray{i}",
-            )
-        plot.add_mesh(
-            hand_mesh,
-            opacity=0.4,
-            name="hand_mesh",
-            smooth_shading=True,
-        )
-        for i in range(anchors.shape[0]):
-            plot.add_mesh(
-                pv.Cube(
-                    center=anchors[i].cpu().numpy(),
-                    x_length=1e-3,
-                    y_length=1e-3,
-                    z_length=1e-3,
-                ),
-                color="yellow",
-                name=f"anchor{i}",
-            )
-
     # ============ Get the first element of the batch ============
     choir_pred = choir_pred[0].unsqueeze(0)
     choir_gt = choir_gt[0].unsqueeze(0)
@@ -169,7 +325,6 @@ def visualize_CHOIR_prediction(
             # x_mean=pcl_mean,
             # x_scalar=pcl_scalar,
             scalar=input_scalar,
-            objective="anchors",
             max_iterations=5000,
         )
     # ====== Metrics and qualitative comparison ======
@@ -494,6 +649,7 @@ def visualize_MANO(
             label="Object pointcloud",
             opacity=0.2,
         )
+    pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
     pl.add_legend(loc="upper left", size=(0.1, 0.1))

@@ -9,7 +9,7 @@
 Hand-Object Interaction loss.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import torch
 from torch.distributions import kl_divergence
@@ -50,7 +50,7 @@ class CHOIRLoss(torch.nn.Module):
         self._mano_agreement_w = mano_agreement_w
         self._mano_anchors_w = mano_anchors_w
         self._affine_mano = AffineMANO()
-        self._hoi_loss = DualHOILoss() if predict_mano else None
+        self._hoi_loss = CHOIRFittingLoss() if predict_mano else None
         self._multi_view = multi_view
         self.register_buffer("bps", bps)
 
@@ -162,7 +162,7 @@ class CHOIRLoss(torch.nn.Module):
         return losses
 
 
-class DualHOILoss(torch.nn.Module):
+class CHOIRFittingLoss(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -174,7 +174,6 @@ class DualHOILoss(torch.nn.Module):
         bps: torch.Tensor,
         # bps_mean: torch.Tensor,
         # bps_scalar: float,
-        hand_contacts: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if len(bps.shape) == 2:
             assert bps.shape[0] % 32 == 0, "bps_dim must be a multiple of 32"
@@ -210,7 +209,7 @@ class DualHOILoss(torch.nn.Module):
         elif len(bps.shape) == 3:
             assert bps.shape[1] == choir.shape[1]
         else:
-            raise ValueError("DualHOILoss(): BPS must be (B, P, 3) or (P, 3)")
+            raise ValueError("CHOIRFittingLoss(): BPS must be (B, P, 3) or (P, 3)")
         anchor_distances = torch.cdist(bps, anchors, p=2)
         anchor_ids = (
             torch.arange(
@@ -225,13 +224,4 @@ class DualHOILoss(torch.nn.Module):
         )
         distances = torch.gather(anchor_distances, 2, anchor_ids).squeeze(-1)
         choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
-        # Now add the hand contact loss
-        # hand_contact_loss = (
-        # torch.nn.functional.mse_loss(
-        # hand_contacts, compute_hand_contacts_simple(tgt_points, verts)
-        # )
-        # if hand_contacts is not None
-        # else torch.tensor(0.0)
-        # )
-        hand_contact_loss = torch.tensor(0.0)
-        return choir_loss, hand_contact_loss
+        return choir_loss

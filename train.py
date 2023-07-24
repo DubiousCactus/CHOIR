@@ -150,6 +150,7 @@ def launch_experiment(
         val_every=training.val_every,
         visualize_every=training.viz_every,
         visualize_train_every=training.viz_train_every,
+        visualize_n_samples=training.viz_num_samples,
         model_ckpt_path=model_ckpt_path,
     )
 

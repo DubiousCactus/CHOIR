@@ -224,6 +224,7 @@ class TrainingConfig:
     val_every: int = 1
     viz_every: int = 10
     viz_train_every: int = 0
+    viz_num_samples: int = 5
     load_from_path: Optional[str] = None
     load_from_run: Optional[str] = None
 
