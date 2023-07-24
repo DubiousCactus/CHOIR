@@ -408,7 +408,7 @@ class ContactPoseDataset(BaseDataset):
                             [
                                 choir.squeeze(0),  # (N, 2)
                                 rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                scalar.unsqueeze(0),  # (N, 1)
+                                scalar.unsqueeze(0),  # (1, 1)
                             ]
                         ),
                         0.0,

@@ -12,6 +12,7 @@ Hand-Object Interaction loss.
 from typing import Dict, Optional, Tuple
 
 import torch
+from torch.distributions import kl_divergence
 
 from model.affine_mano import AffineMANO
 
@@ -31,6 +32,7 @@ class CHOIRLoss(torch.nn.Module):
         mano_shape_w: float,
         mano_agreement_w: float,
         mano_anchors_w: float,
+        multi_view: bool,
     ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
@@ -49,6 +51,7 @@ class CHOIRLoss(torch.nn.Module):
         self._mano_anchors_w = mano_anchors_w
         self._affine_mano = AffineMANO()
         self._hoi_loss = DualHOILoss() if predict_mano else None
+        self._multi_view = multi_view
         self.register_buffer("bps", bps)
 
     def forward(
@@ -77,6 +80,18 @@ class CHOIRLoss(torch.nn.Module):
             labels["rot"],
             labels["trans"],
         )
+        if self._multi_view:
+            for n in range(choir_gt.shape[1] - 1):
+                assert torch.allclose(choir_gt[:, n, 0], choir_gt[:, n + 1, 0])
+            # Since all noisy views are of the same grasp, we can just take the first view's ground
+            # truth (all views have the same ground truth).
+            choir_gt = choir_gt[:, 0]
+            pose_gt = pose_gt[:, 0]
+            beta_gt = beta_gt[:, 0]
+            rot_gt = rot_gt[:, 0]
+            trans_gt = trans_gt[:, 0]
+            anchors_gt = anchors_gt[:, 0]
+
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
         # choir_gt, orientations_gt = choir_gt, anchor_orientations
         losses = {
@@ -84,6 +99,10 @@ class CHOIRLoss(torch.nn.Module):
             * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
         }
         anchor_positions_pred = None
+        if "posterior" in y_hat and "prior" in y_hat:
+            losses["kl_div"] = (
+                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * 1e-3
+            )
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
             B, P, D = orientations_pred.shape

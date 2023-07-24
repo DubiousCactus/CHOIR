@@ -15,15 +15,24 @@ from typing import Optional, Tuple
 
 import torch
 from hydra.conf import HydraConf, JobConf, RunDir
-from hydra_zen import MISSING, ZenStore, builds, make_custom_builds_fn, store
+from hydra_zen import (
+    MISSING,
+    ZenStore,
+    builds,
+    make_config,
+    make_custom_builds_fn,
+    store,
+)
 from metabatch import TaskLoader
 from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
 from dataset.contactpose import ContactPoseDataset
+from model.aggregate_cpvae import Aggregate_CPVAE
 from model.baseline import BaselineModel
 from src.base_trainer import BaseTrainer
 from src.losses.hoi import CHOIRLoss
+from src.multiview_trainer import MultiViewTrainer
 from train import launch_experiment
 
 # Set hydra.job.chdir=True using store():
@@ -51,9 +60,9 @@ class GraspingDatasetConf:
     split: str = "train"
     tiny: bool = False
     augment: bool = False
-    validation_objects: int = 5
+    validation_objects: int = 3
     perturbation_level: int = 0
-    noisy_samples_per_grasp: int = 100
+    noisy_samples_per_grasp: int = 50
     max_views_per_grasp: int = 5
     right_hand_only: bool = True
     center_on_object_com: bool = True
@@ -115,6 +124,14 @@ model_store(
     name="baseline",
 )
 
+model_store(
+    pbuilds(
+        Aggregate_CPVAE,
+        builds_bases=(BaselineModelConf,),
+        bps_dim=MISSING,
+    ),
+    name="aggregate_cpvae",
+)
 
 " ================== Losses ================== "
 
@@ -133,6 +150,7 @@ class CHOIRLossConf:
     mano_shape_w: float = 1.0
     mano_agreement_w: float = 1.0
     mano_anchors_w: float = 1.0
+    multi_view: bool = False
 
 
 training_loss_store = store(group="training_loss")
@@ -201,7 +219,7 @@ sched_store(
 
 @dataclass
 class TrainingConfig:
-    epochs: int = 200
+    epochs: int = 1000
     seed: int = 42
     val_every: int = 1
     viz_every: int = 10
@@ -215,6 +233,7 @@ training_store(TrainingConfig, name="default")
 
 trainer_store = store(group="trainer")
 trainer_store(pbuilds(BaseTrainer, populate_full_signature=True), name="base")
+trainer_store(pbuilds(MultiViewTrainer, populate_full_signature=True), name="multiview")
 
 
 Experiment = builds(
@@ -247,6 +266,22 @@ store(Experiment, name="base_experiment")
 # - must be stored under the _global_ package
 # - must inherit from `Experiment`
 experiment_store = store(group="experiment", package="_global_")
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "aggregate_cpvae"},
+            {"override /trainer": "multiview"},
+        ],
+        dataset=dict(perturbation_level=2),
+        training_loss=dict(multi_view=True),
+        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
+        # latent_dim=128),
+        bases=(Experiment,),
+    ),
+    name="multiview",
+)
 
 " ================== Model testing ================== "
 
