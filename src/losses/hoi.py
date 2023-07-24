@@ -32,6 +32,7 @@ class CHOIRLoss(torch.nn.Module):
         mano_shape_w: float,
         mano_agreement_w: float,
         mano_anchors_w: float,
+        kl_w: float,
         multi_view: bool,
     ) -> None:
         super().__init__()
@@ -49,6 +50,7 @@ class CHOIRLoss(torch.nn.Module):
         self._mano_shape_w = mano_shape_w
         self._mano_agreement_w = mano_agreement_w
         self._mano_anchors_w = mano_anchors_w
+        self._kl_w = kl_w
         self._affine_mano = AffineMANO()
         self._hoi_loss = CHOIRFittingLoss() if predict_mano else None
         self._multi_view = multi_view
@@ -99,9 +101,9 @@ class CHOIRLoss(torch.nn.Module):
             * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
         }
         anchor_positions_pred = None
-        if "posterior" in y_hat and "prior" in y_hat:
+        if y_hat["posterior"] is not None and y_hat["prior"] is not None:
             losses["kl_div"] = (
-                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * 1e-3
+                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * self._kl_w
             )
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError

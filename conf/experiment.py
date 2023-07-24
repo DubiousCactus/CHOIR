@@ -92,7 +92,7 @@ class DataloaderConf:
     batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
-    num_workers: int = 8
+    num_workers: int = 2
     pin_memory: bool = True
 
 
@@ -150,6 +150,7 @@ class CHOIRLossConf:
     mano_shape_w: float = 1.0
     mano_agreement_w: float = 1.0
     mano_anchors_w: float = 1.0
+    kl_w: float = 1e-1
     multi_view: bool = False
 
 
@@ -219,10 +220,10 @@ sched_store(
 
 @dataclass
 class TrainingConfig:
-    epochs: int = 1000
+    epochs: int = 500
     seed: int = 42
     val_every: int = 1
-    viz_every: int = 10
+    viz_every: int = 1
     viz_train_every: int = 0
     viz_num_samples: int = 5
     load_from_path: Optional[str] = None
@@ -277,6 +278,7 @@ experiment_store(
         ],
         dataset=dict(perturbation_level=2),
         training_loss=dict(multi_view=True),
+        data_loader=dict(batch_size=32),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
         # latent_dim=128),
         bases=(Experiment,),
