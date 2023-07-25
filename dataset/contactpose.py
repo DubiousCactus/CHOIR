@@ -185,7 +185,7 @@ class ContactPoseDataset(BaseDataset):
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if osp.isfile(dataset_path):
-            _, objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
+            objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
         else:
             # TODO: Refactor this? I think we don't need all that code and dumping into independent
             # files! It's probably light enough in memory that we can dump it all in one file. Also
