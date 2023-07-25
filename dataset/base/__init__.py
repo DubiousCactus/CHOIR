@@ -91,6 +91,10 @@ class BaseDataset(TaskSet, abc.ABC):
         )
 
     @property
+    def base_unit(self) -> float:
+        return self._mm_unit
+
+    @property
     def remap_bps_distances(self) -> bool:
         return self._remap_bps_distances
 
