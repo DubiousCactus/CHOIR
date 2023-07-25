@@ -319,11 +319,8 @@ def visualize_CHOIR_prediction(
     with torch.set_grad_enabled(True):
         pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
             choir_pred,
-            # hand_contacts=None,
             bps=bps,
             bps_dim=bps_dim,
-            # x_mean=pcl_mean,
-            # x_scalar=pcl_scalar,
             scalar=input_scalar,
             max_iterations=5000,
         )

@@ -403,32 +403,107 @@ class ContactPoseDataset(BaseDataset):
                     # ref_pts.float(), verts.float()
                     # )
 
-                    sample = torch.nested.to_padded_tensor(
-                        torch.nested.nested_tensor(
+                    if "2.0" in torch.__version__:
+                        # ============ With Pytorch 2.0 Nested Tensor ============
+                        sample_list = [
+                            choir.squeeze(0),  # (N, 2)
+                            rescaled_ref_pts.squeeze(0),  # (N, 3)
+                            scalar.unsqueeze(0),  # (1, 1)
+                        ]
+                        sample = torch.nested.to_padded_tensor(
+                            torch.nested.nested_tensor(
+                                [
+                                    choir.squeeze(0),  # (N, 2)
+                                    rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                    scalar.unsqueeze(0),  # (1, 1)
+                                ]
+                            ),
+                            0.0,
+                        ).cpu()
+
+                        label_list = [
+                            gt_choir.squeeze(0),  # (N, 2)
+                            gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
+                            gt_scalar.unsqueeze(0),  # (1, 1)
+                            gt_joints.squeeze(0),  # (21, 3)
+                            gt_anchors.squeeze(0),  # (32, 3)
+                            gt_theta,  # (1, 18)
+                            gt_beta,  # (1, 10)
+                            gt_rot_6d,  # (1, 6)
+                            gt_trans,  # (1, 3)
+                        ]
+
+                        label = torch.nested.to_padded_tensor(
+                            torch.nested.nested_tensor(
+                                [
+                                    gt_choir.squeeze(0),  # (N, 2)
+                                    gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                    gt_scalar.unsqueeze(0),  # (1, 1)
+                                    gt_joints.squeeze(0),  # (21, 3)
+                                    gt_anchors.squeeze(0),  # (32, 3)
+                                    gt_theta,  # (1, 18)
+                                    gt_beta,  # (1, 10)
+                                    gt_rot_6d,  # (1, 6)
+                                    gt_trans,  # (1, 3)
+                                ]
+                            ),
+                            0.0,
+                        ).cpu()
+                        # ========================================================
+                    else:
+                        # ============== Without Pytorch 2.0 Nested Tensor ==============
+                        sample = torch.stack(
                             [
-                                choir.squeeze(0),  # (N, 2)
-                                rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                scalar.unsqueeze(0),  # (1, 1)
-                            ]
-                        ),
-                        0.0,
-                    ).cpu()
-                    label = torch.nested.to_padded_tensor(
-                        torch.nested.nested_tensor(
+                                torch.nn.functional.pad(
+                                    choir.squeeze(0), (0, 1), value=0.0
+                                ),
+                                rescaled_ref_pts.squeeze(0),
+                                torch.nn.functional.pad(
+                                    scalar.unsqueeze(0), (0, 2), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                            ],
+                            dim=0,
+                        ).cpu()
+
+                        padded_joints = torch.zeros(
+                            (self._bps_dim, 18), device=gt_joints.device
+                        )
+                        padded_joints[
+                            : gt_joints.squeeze(0).shape[0], :3
+                        ] = gt_joints.squeeze(0)
+                        padded_anchors = torch.zeros(
+                            (self._bps_dim, 18), device=gt_anchors.device
+                        )
+                        padded_anchors[
+                            : gt_anchors.squeeze(0).shape[0], :3
+                        ] = gt_anchors.squeeze(0)
+                        label = torch.stack(
                             [
-                                gt_choir.squeeze(0),  # (N, 2)
-                                gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                gt_scalar.unsqueeze(0),  # (1, 1)
-                                gt_joints.squeeze(0),  # (21, 3)
-                                gt_anchors.squeeze(0),  # (32, 3)
-                                gt_theta,  # (1, 18)
-                                gt_beta,  # (1, 10)
-                                gt_rot_6d,  # (1, 6)
-                                gt_trans,  # (1, 3)
-                            ]
-                        ),
-                        0.0,
-                    ).cpu()
+                                torch.nn.functional.pad(
+                                    gt_choir.squeeze(0), (0, 16), value=0.0
+                                ),
+                                torch.nn.functional.pad(
+                                    gt_rescaled_ref_pts.squeeze(0), (0, 15), value=0.0
+                                ),
+                                torch.nn.functional.pad(
+                                    gt_scalar.unsqueeze(0), (0, 17), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                                padded_joints,
+                                padded_anchors,
+                                gt_theta.repeat((self._bps_dim, 1)),
+                                torch.nn.functional.pad(
+                                    gt_beta, (0, 8), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                                torch.nn.functional.pad(
+                                    gt_rot_6d, (0, 12), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                                torch.nn.functional.pad(
+                                    gt_trans, (0, 15), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                            ],
+                            dim=0,
+                        ).cpu()
+                        # =================================================================
 
                     with open(sample_pth, "wb") as f:
                         pickle.dump((sample, label), f)

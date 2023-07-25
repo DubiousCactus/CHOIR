@@ -223,7 +223,7 @@ class TrainingConfig:
     epochs: int = 500
     seed: int = 42
     val_every: int = 1
-    viz_every: int = 1
+    viz_every: int = 0
     viz_train_every: int = 0
     viz_num_samples: int = 5
     load_from_path: Optional[str] = None
