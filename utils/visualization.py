@@ -89,6 +89,8 @@ def visualize_model_predictions_with_multiple_views(
     step: int,
     bps: torch.Tensor,
     bps_dim: int,
+    remap_bps_distances: bool,
+    exponential_map_w: Optional[float] = None,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
@@ -125,9 +127,10 @@ def visualize_model_predictions_with_multiple_views(
             pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
                 sample_choirs,
                 bps=bps,
-                bps_dim=bps_dim,
                 scalar=input_scalar,
                 max_iterations=5000,
+                remap_bps_distances=remap_bps_distances,
+                exponential_map_w=exponential_map_w,
             )
         verts, _ = affine_mano(pose, shape, rot_6d, trans)
         for i in range(input_choirs.shape[0]):
@@ -161,14 +164,19 @@ def visualize_model_predictions_with_multiple_views(
         with torch.set_grad_enabled(True):
             # Use first batch element and views as batch dimension.
             choir_pred = y_hat["choir"][0].unsqueeze(0)
+            print(
+                "Mean scalar: ",
+                torch.mean(input_scalar).unsqueeze(0).to(input_scalar.device),
+            )
             pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
                 choir_pred,
                 bps=bps,
-                bps_dim=bps_dim,
                 scalar=torch.mean(input_scalar)
                 .unsqueeze(0)
                 .to(input_scalar.device),  # TODO: What should I do here?
                 max_iterations=5000,
+                remap_bps_distances=remap_bps_distances,
+                exponential_map_w=exponential_map_w,
             )
             verts_pred, joints_pred = affine_mano(pose, shape, rot_6d, trans)
         # ============ Display the ground truth CHOIR field with the GT MANO ================
@@ -296,7 +304,8 @@ def visualize_CHOIR_prediction(
     input_ref_pts: torch.Tensor,
     gt_ref_pts: torch.Tensor,
     mano_params_gt: Dict[str, torch.Tensor],
-    bps_dim: int,
+    remap_bps_distances: bool,
+    exponential_map_w: Optional[float] = None,
 ):
     # ============ Get the first element of the batch ============
     choir_pred = choir_pred[0].unsqueeze(0)
@@ -320,9 +329,10 @@ def visualize_CHOIR_prediction(
         pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
             choir_pred,
             bps=bps,
-            bps_dim=bps_dim,
             scalar=input_scalar,
             max_iterations=5000,
+            remap_bps_distances=remap_bps_distances,
+            exponential_map_w=exponential_map_w,
         )
     # ====== Metrics and qualitative comparison ======
     gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())

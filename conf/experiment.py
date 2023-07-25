@@ -69,6 +69,9 @@ class GraspingDatasetConf:
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
     debug: bool = False
+    rescale: str = "pair"  # pair, fixed, none
+    remap_bps_distances: bool = False
+    exponential_map_w: float = 5.0
 
 
 # Pre-set the group for store's dataset entries

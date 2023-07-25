@@ -32,6 +32,10 @@ class BaseDataset(TaskSet, abc.ABC):
         bps_dim: int,
         max_views_per_grasp: int,
         noisy_samples_per_grasp: int,
+        rescale: str,
+        center_on_object_com: bool,
+        remap_bps_distances: bool,
+        exponential_map_w: float,
         augment: bool,
         split: str,
         tiny: bool = False,
@@ -72,6 +76,10 @@ class BaseDataset(TaskSet, abc.ABC):
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)
         self._bps = bps
+        self._center_on_object_com = center_on_object_com
+        self._rescale = rescale
+        self._remap_bps_distances = remap_bps_distances
+        self._exponential_map_w = exponential_map_w
         self._debug = debug
         (
             objects_w_contacts,
@@ -81,6 +89,14 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+
+    @property
+    def remap_bps_distances(self) -> bool:
+        return self._remap_bps_distances
+
+    @property
+    def exponential_map_w(self) -> float:
+        return self._exponential_map_w
 
     @property
     def bps_dim(self) -> int:

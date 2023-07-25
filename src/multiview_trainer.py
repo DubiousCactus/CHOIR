@@ -41,6 +41,8 @@ class MultiViewTrainer(BaseTrainer):
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
+            remap_bps_distances=self._remap_bps_distances,
+            exponential_map_w=self._exponential_map_w,
         )  # User implementation goes here (utils/visualization.py)
 
     @to_cuda

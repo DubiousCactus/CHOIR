@@ -65,6 +65,8 @@ class BaseTrainer:
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
         self._bps = to_cuda_(train_loader.dataset.bps)
+        self._remap_bps_distances = train_loader.dataset.remap_bps_distances
+        self._exponential_map_w = train_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
         self._viz_n_samples = 1
         signal.signal(signal.SIGINT, self._terminator)

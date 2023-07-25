@@ -62,6 +62,9 @@ class ContactPoseDataset(BaseDataset):
         augment: bool = False,
         seed: int = 0,
         debug: bool = False,
+        rescale: str = "none",
+        remap_bps_distances: bool = False,
+        exponential_map_w: float = 5.0,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -82,12 +85,15 @@ class ContactPoseDataset(BaseDataset):
                 "pca": 0.5,
             },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
         ]
-        self._center_on_object_com = center_on_object_com
         super().__init__(
             dataset_name="ContactPose",
             bps_dim=bps_dim,
             max_views_per_grasp=max_views_per_grasp,
             noisy_samples_per_grasp=self._noisy_samples_per_grasp,
+            rescale=rescale,
+            center_on_object_com=center_on_object_com,
+            remap_bps_distances=remap_bps_distances,
+            exponential_map_w=exponential_map_w,
             augment=augment,
             split=split,
             tiny=tiny,
@@ -140,7 +146,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 15 if tiny else 51
+        n_participants = 25 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         if not osp.isdir(self._cache_dir):
@@ -263,6 +269,9 @@ class ContactPoseDataset(BaseDataset):
             + f"perturbed-{self._perturbation_level}_"
             + f"{self._bps_dim}-bps_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
+            + f"{self._rescale}_rescaled_"
+            + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
+            + (f"{self._exponential_map_w}_" if self._remap_bps_distances else "")
             + f"{split}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
@@ -340,7 +349,14 @@ class ContactPoseDataset(BaseDataset):
                 # ===============================================================
                 gt_anchors = affine_mano.get_anchors(gt_verts)
                 # ================== Rescaled Hand-Object Pair ==================
-                gt_scalar = compute_hand_object_pair_scalar(gt_anchors, obj_ptcld)
+                if self._rescale == "pair":
+                    gt_scalar = compute_hand_object_pair_scalar(gt_anchors, obj_ptcld)
+                elif self._rescale == "fixed":
+                    gt_scalar = torch.tensor([20.0]).cuda()
+                elif self._rescale == "none":
+                    gt_scalar = torch.tensor([1.0]).cuda()
+                else:
+                    raise ValueError(f"Unknown rescale type {self._rescale}")
 
                 # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                 # workers, but bps_torch is forcing my hand here so I might as well help it.
@@ -349,6 +365,8 @@ class ContactPoseDataset(BaseDataset):
                     to_cuda_(gt_anchors),
                     scalar=gt_scalar,
                     bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                    remap_bps_distances=self._remap_bps_distances,
+                    exponential_map_w=self._exponential_map_w,
                 )
 
                 sample_paths = []
@@ -386,7 +404,14 @@ class ContactPoseDataset(BaseDataset):
                     verts, _ = affine_mano(theta, beta, rot_6d, trans)
 
                     anchors = affine_mano.get_anchors(verts)
-                    scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
+                    if self._rescale == "pair":
+                        scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
+                    elif self._rescale == "fixed":
+                        scalar = torch.tensor([20.0]).cuda()
+                    elif self._rescale == "none":
+                        scalar = torch.tensor([1.0]).cuda()
+                    else:
+                        raise ValueError(f"Unknown rescale type {self._rescale}")
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
                     choir, rescaled_ref_pts = compute_choir(
@@ -394,6 +419,8 @@ class ContactPoseDataset(BaseDataset):
                         to_cuda_(anchors),
                         scalar=scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
                     )
                     # anchor_orientations = torch.nn.functional.normalize(
                     # anchor_deltas, dim=1
@@ -405,11 +432,6 @@ class ContactPoseDataset(BaseDataset):
 
                     if "2.0" in torch.__version__:
                         # ============ With Pytorch 2.0 Nested Tensor ============
-                        sample_list = [
-                            choir.squeeze(0),  # (N, 2)
-                            rescaled_ref_pts.squeeze(0),  # (N, 3)
-                            scalar.unsqueeze(0),  # (1, 1)
-                        ]
                         sample = torch.nested.to_padded_tensor(
                             torch.nested.nested_tensor(
                                 [
@@ -420,18 +442,6 @@ class ContactPoseDataset(BaseDataset):
                             ),
                             0.0,
                         ).cpu()
-
-                        label_list = [
-                            gt_choir.squeeze(0),  # (N, 2)
-                            gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
-                            gt_scalar.unsqueeze(0),  # (1, 1)
-                            gt_joints.squeeze(0),  # (21, 3)
-                            gt_anchors.squeeze(0),  # (32, 3)
-                            gt_theta,  # (1, 18)
-                            gt_beta,  # (1, 10)
-                            gt_rot_6d,  # (1, 6)
-                            gt_trans,  # (1, 3)
-                        ]
 
                         label = torch.nested.to_padded_tensor(
                             torch.nested.nested_tensor(
@@ -552,7 +562,8 @@ class ContactPoseDataset(BaseDataset):
                                 "rot_6d": gt_rot_6d,
                                 "trans": gt_trans,
                             },
-                            self._bps_dim,
+                            self._remap_bps_distances,
+                            self._exponential_map_w,
                         )
                         has_visualized = True
                 grasp_paths.append(sample_paths)

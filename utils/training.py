@@ -10,7 +10,7 @@ Training utilities. This is a good place for your code that is used in training 
 function, visualization code, etc.)
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import tqdm
@@ -22,15 +22,18 @@ from src.losses.hoi import CHOIRFittingLoss
 def optimize_pose_pca_from_choir(
     choir: torch.Tensor,
     bps: torch.Tensor,
-    bps_dim: int,
-    # x_mean: torch.Tensor,
-    # x_scalar: float,
     scalar: torch.Tensor,
-    # hand_contacts: Optional[torch.Tensor] = None,
+    remap_bps_distances: bool,
+    exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-12,
     max_iterations=8000,
     initial_params=None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    /!\ Important /!\: when computing the CHOIR field, the scalar is applied to the pointclouds
+    before the exponential map, if they are used. So we must first apply the inverse exponential
+    map, and then the inverse of the scalar.
+    """
     ncomps = 15
     affine_mano = AffineMANO(ncomps).cuda()
     B = choir.shape[0]
@@ -59,6 +62,9 @@ def optimize_pose_pca_from_choir(
     prev_loss = float("inf")
 
     # ============== Rescale the CHOIR field to fit the MANO model ==============
+    if remap_bps_distances:
+        assert exponential_map_w is not None
+        choir = -torch.log(choir) / exponential_map_w
     choir = (
         choir / scalar[:, None, None]
     )  # CHOIR was computed with scaled up MANO and object pointclouds.

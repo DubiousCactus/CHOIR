@@ -73,6 +73,8 @@ def compute_choir(
     anchors: torch.Tensor,
     scalar: float,
     bps: torch.Tensor,
+    remap_bps_distances: bool,
+    exponential_map_w: float,
 ) -> torch.Tensor:
     """
     For each BPS point, get the reference object point and compute the distance to the
@@ -86,6 +88,8 @@ def compute_choir(
         anchors: Shape (B, N_ANCHORS, 3)
         scalar (float): Scalar for the hand and object pointcloud such that they end up in the unit sphere.
         bps: Shape (B, N_BPS_POINTS, 3). It is important that we reuse the same BPS!
+        remap_bps_distances: If True, remap the BPS distances to [0, 1] using the exponential map from the GOAL paper.
+        exponential_map_w: The w parameter for the exponential map: exp(-w * d).
     """
     assert len(anchors.shape) == 3
     assert len(pointcloud.shape) == 3
@@ -138,6 +142,10 @@ def compute_choir(
         ],
         dim=-1,
     )
+    if remap_bps_distances:
+        # Remap the BPS distances to [0, 1] using the exponential map from the GOAL paper. 1 is
+        # very close to the BPS point, 0 is very far away.
+        choir = torch.exp(-exponential_map_w * choir)
     return choir, rescaled_ref_pts  # , anchor_deltas
 
 
