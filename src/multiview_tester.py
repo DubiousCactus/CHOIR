@@ -5,9 +5,6 @@
 #
 # Distributed under terms of the MIT license.
 
-"""
-Base tester class.
-"""
 
 import signal
 from collections import defaultdict
@@ -19,12 +16,12 @@ from torchmetrics import MeanMetric
 from tqdm import tqdm
 
 from conf import project as project_conf
-from src.base_trainer import BaseTrainer
+from src.multiview_trainer import MultiViewTrainer
 from utils import update_pbar_str
 from utils.visualization import visualize_model_predictions
 
 
-class BaseTester(BaseTrainer):
+class MultiViewTester(MultiViewTrainer):
     def __init__(
         self,
         run_name: str,
@@ -42,6 +39,7 @@ class BaseTester(BaseTrainer):
         """
         self._run_name = run_name
         self._model = model
+        assert model_ckpt_path is not None, "No checkpoint path provided."
         self._load_checkpoint(model_ckpt_path, model_only=True)
         self._training_loss = training_loss
         self._data_loader = data_loader

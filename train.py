@@ -5,155 +5,13 @@
 #
 # Distributed under terms of the MIT license.
 
-"""
-Training code.
-"""
 
-import os
-
-import hydra_zen
-import torch
-import yaml
-from hydra.core.hydra_config import HydraConfig
-from hydra.utils import to_absolute_path
-from hydra_zen import just, store, zen
-from hydra_zen.typing import Partial
+from hydra_zen import store, zen
 
 import conf.experiment  # Must import the config to add all components to the store!
-import wandb
 from conf import project as project_conf
-from src.base_trainer import BaseTrainer
-from utils import change_dir_if_loading_from_run, colorize, seed_everything, to_cuda_
-
-
-def launch_experiment(
-    training,
-    data_loader: Partial[torch.utils.data.DataLoader],
-    optimizer: Partial[torch.optim.Optimizer],
-    scheduler: Partial[torch.optim.lr_scheduler._LRScheduler],
-    trainer: Partial[BaseTrainer],
-    dataset: torch.utils.data.Dataset,
-    model: Partial[torch.nn.Module],
-    training_loss: Partial[torch.nn.Module],
-):
-    run_name = os.path.basename(HydraConfig.get().runtime.output_dir)
-    # Generate a random ANSI code:
-    color_code = f"38;5;{hash(run_name) % 255}"
-    print(
-        colorize(
-            f"========================= Running {run_name} =========================",
-            color_code,
-        )
-    )
-    exp_conf = hydra_zen.to_yaml(
-        dict(
-            run_name=run_name,
-            training=training,
-            dataset=dataset,
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            training_loss=training_loss,
-        )
-    )
-    print(
-        colorize(
-            "Experiment config:\n" + "_" * 18 + "\n" + exp_conf + "_" * 18, color_code
-        )
-    )
-
-    "============ Partials instantiation ============"
-    model_inst = model(
-        bps_dim=just(dataset).bps_dim,
-        predict_anchor_orientation=just(training_loss).predict_anchor_orientation
-        or just(training_loss).predict_anchor_position,
-        predict_mano=just(training_loss).predict_mano,
-    )  # Use just() to get the config out of the Zen-Partial
-    print(model_inst)
-    print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
-    print(
-        f"Number of trainable parameters: {sum(p.numel() for p in model_inst.parameters() if p.requires_grad)}"
-    )
-    train_dataset, val_dataset = dataset(split="train"), dataset(split="val")
-    opt_inst = optimizer(model_inst.parameters())
-    scheduler_inst = scheduler(
-        opt_inst
-    )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
-    if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
-        scheduler_inst.T_max = training.epochs
-
-    training_loss_inst = training_loss(bps=train_dataset.bps)
-
-    "============ CUDA ============"
-    model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
-    training_loss_inst: torch.nn.Module = to_cuda_(training_loss_inst)  # type: ignore
-    # model_inst = torch.compile(model_inst)
-
-    "============ Weights & Biases ============"
-    if project_conf.USE_WANDB:
-        # exp_conf is a string, so we need to load it back to a dict:
-        exp_conf = yaml.safe_load(exp_conf)
-        wandb.init(
-            project=project_conf.PROJECT_NAME,
-            name=run_name,
-            config=exp_conf,
-        )
-        wandb.watch(model_inst, log="all", log_graph=True)
-    " ============ Reproducibility of data loaders ============ "
-    g = None
-    if project_conf.REPRODUCIBLE:
-        g = torch.Generator()
-        g.manual_seed(training.seed)
-
-    train_loader_inst = data_loader(train_dataset, generator=g)
-    val_loader_inst = data_loader(
-        val_dataset, generator=g, shuffle=False, drop_last=False
-    )
-
-    " ============ Training ============ "
-    model_ckpt_path = None
-
-    if training.load_from_run is not None and training.load_from_path is not None:
-        raise ValueError(
-            "Both training.load_from_path and training.load_from_run are set. Please choose only one."
-        )
-    elif training.load_from_run is not None:
-        run_models = sorted(
-            [
-                f
-                for f in os.listdir(to_absolute_path(f"runs/{training.load_from_run}/"))
-                if f.endswith(".ckpt")
-            ]
-        )
-        if len(run_models) < 1:
-            raise ValueError(f"No model found in runs/{training.load_from_run}/")
-        model_ckpt_path = to_absolute_path(
-            os.path.join(
-                "runs",
-                training.load_from_run,
-                run_models[-1],
-            )
-        )
-    elif training.load_from_path is not None:
-        model_ckpt_path = to_absolute_path(training.load_from_path)
-
-    trainer(
-        run_name=run_name,
-        model=model_inst,
-        opt=opt_inst,
-        scheduler=scheduler_inst,
-        train_loader=train_loader_inst,
-        val_loader=val_loader_inst,
-        training_loss=training_loss_inst,
-    ).train(
-        epochs=training.epochs,
-        val_every=training.val_every,
-        visualize_every=training.viz_every,
-        visualize_train_every=training.viz_train_every,
-        visualize_n_samples=training.viz_num_samples,
-        model_ckpt_path=model_ckpt_path,
-    )
-
+from launch_experiment import launch_experiment
+from utils import change_dir_if_loading_from_run, seed_everything
 
 if __name__ == "__main__":
     # torch.set_num_threads(1) Why was this here???
@@ -165,11 +23,11 @@ if __name__ == "__main__":
         launch_experiment,
         pre_call=[
             lambda cfg: seed_everything(
-                cfg.training.seed
+                cfg.run.seed
             )  # training is the config of the training group, part of the base config
             if project_conf.REPRODUCIBLE
             else lambda: None,
-            lambda cfg: change_dir_if_loading_from_run(cfg.training.load_from_run),
+            lambda cfg: change_dir_if_loading_from_run(cfg.run.load_from_run),
         ],
     ).hydra_main(
         config_name="base_experiment",

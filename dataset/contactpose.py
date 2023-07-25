@@ -175,6 +175,7 @@ class ContactPoseDataset(BaseDataset):
         if split == "train":
             object_names = object_names[: -self._validation_objects]
         else:
+            # TODO: Test set haha
             object_names = object_names[-self._validation_objects :]
         # Now, build the dataset.
         # objects: unique object paths

@@ -296,8 +296,6 @@ def visualize_model_predictions(
 def visualize_CHOIR_prediction(
     choir_pred: torch.Tensor,
     choir_gt: torch.Tensor,
-    # pcl_mean: torch.Tensor,
-    # pcl_scalar: torch.Tensor,
     bps: torch.Tensor,
     input_scalar: float,
     gt_scalar: float,
