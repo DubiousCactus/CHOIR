@@ -26,6 +26,7 @@ def optimize_pose_pca_from_choir(
     remap_bps_distances: bool,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-12,
+    lr: float = 5e-2,
     max_iterations=8000,
     initial_params=None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -55,7 +56,7 @@ def optimize_pose_pca_from_choir(
     }
     params = [{"params": parameters.values()}]
 
-    optimizer = torch.optim.Adam(params, lr=5e-2)
+    optimizer = torch.optim.Adam(params, lr=lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
     proc_bar = tqdm.tqdm(range(max_iterations))
 

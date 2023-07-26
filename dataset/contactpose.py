@@ -353,7 +353,7 @@ class ContactPoseDataset(BaseDataset):
                 if self._rescale == "pair":
                     gt_scalar = compute_hand_object_pair_scalar(gt_anchors, obj_ptcld)
                 elif self._rescale == "fixed":
-                    gt_scalar = torch.tensor([20.0]).cuda()
+                    gt_scalar = torch.tensor([10.0]).cuda()
                 elif self._rescale == "none":
                     gt_scalar = torch.tensor([1.0]).cuda()
                 else:
@@ -408,7 +408,7 @@ class ContactPoseDataset(BaseDataset):
                     if self._rescale == "pair":
                         scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
                     elif self._rescale == "fixed":
-                        scalar = torch.tensor([20.0]).cuda()
+                        scalar = torch.tensor([10.0]).cuda()
                     elif self._rescale == "none":
                         scalar = torch.tensor([1.0]).cuda()
                     else:
@@ -536,7 +536,7 @@ class ContactPoseDataset(BaseDataset):
                             # anchor_orientations,
                             obj_mesh,
                             obj_ptcld,
-                            rescaled_ref_pts.squeeze(0),
+                            gt_rescaled_ref_pts.squeeze(0),
                             affine_mano,
                         )
                         faces = affine_mano.faces

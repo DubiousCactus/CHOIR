@@ -70,7 +70,11 @@ class MultiViewTester(MultiViewTrainer):
         """
         x, y = batch  # type: ignore
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
-        input_scalar = samples["scalar"][0].view(-1, *samples["scalar"].shape[2:])
+        input_scalar = samples["scalar"]
+        if len(input_scalar.shape) == 2:
+            input_scalar = input_scalar.mean(
+                dim=1
+            )  # TODO: Think of a better way for 'pair' scaling
         y_hat = self._model(samples["choir"])
         mano_params_gt = {
             "pose": labels["theta"],
@@ -87,11 +91,10 @@ class MultiViewTester(MultiViewTrainer):
             pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
                 y_hat["choir"],
                 bps=self._bps,
-                scalar=torch.mean(input_scalar)
-                .unsqueeze(0)
-                .to(input_scalar.device),  # TODO: What should I do here?
-                max_iterations=50,
+                scalar=input_scalar,
+                max_iterations=5000,
                 loss_thresh=1e-14,
+                lr=3e-2,
                 remap_bps_distances=self._remap_bps_distances,
                 exponential_map_w=self._exponential_map_w,
             )
@@ -162,7 +165,7 @@ class MultiViewTester(MultiViewTrainer):
                     metrics[k].update(v.item())
                 " ==================== Visualization ==================== "
                 if visualize_every > 0 and (i + 1) % visualize_every == 0:
-                    self._visualize(batch, batch_metrics, color_code)
+                    self._visualize(batch, color_code)
                 self._pbar.update()
         self._pbar.close()
         print("=" * 81)
