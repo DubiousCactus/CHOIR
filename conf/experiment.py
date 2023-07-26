@@ -63,7 +63,7 @@ class GraspingDatasetConf:
     augment: bool = False
     validation_objects: int = 3
     perturbation_level: int = 0
-    noisy_samples_per_grasp: int = 50
+    noisy_samples_per_grasp: int = 30
     max_views_per_grasp: int = 5
     right_hand_only: bool = True
     center_on_object_com: bool = True
@@ -154,7 +154,7 @@ class CHOIRLossConf:
     mano_shape_w: float = 1.0
     mano_agreement_w: float = 1.0
     mano_anchors_w: float = 1.0
-    kl_w: float = 1e-1
+    kl_w: float = 5e-3
     multi_view: bool = False
 
 
@@ -290,8 +290,8 @@ experiment_store(
         dataset=dict(perturbation_level=2),
         training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=32),
+        model=dict(latent_dim=8),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
-        # latent_dim=128),
         bases=(Experiment,),
     ),
     name="multiview",
