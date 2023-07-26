@@ -553,8 +553,8 @@ class ContactPoseDataset(BaseDataset):
                             choir,
                             gt_choir,
                             self._bps,
-                            scalar.unsqueeze(0),
-                            gt_scalar.unsqueeze(0),
+                            scalar,
+                            gt_scalar,
                             rescaled_ref_pts,
                             gt_rescaled_ref_pts,
                             {

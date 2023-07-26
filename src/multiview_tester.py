@@ -56,26 +56,16 @@ class MultiViewTester(MultiViewTrainer):
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         signal.signal(signal.SIGINT, self._terminator)
 
-    @to_cuda
-    def _test_iteration(
-        self,
-        batch: Union[Tuple, List, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
-        """Evaluation procedure for one batch. We want to keep the code DRY and avoid
-        making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
-        Args:
-            batch: The batch to process.
-        Returns:
-            torch.Tensor: The loss for the batch.
-        """
-        x, y = batch  # type: ignore
-        samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+    def _test_batch(self, samples: Dict, labels: Dict, use_prior: bool) -> Tuple:
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling
-        y_hat = self._model(samples["choir"])
+        if use_prior:
+            y_hat = self._model(samples["choir"])
+        else:
+            y_hat = self._model(samples["choir"], labels["choir"])
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -136,11 +126,37 @@ class MultiViewTester(MultiViewTrainer):
             mpvpe, dim=0
         )  # Mean per-vertex position error avgd across batch (1)
         mpvpe *= self._data_loader.dataset.base_unit
+        return anchor_error, mpjpe, root_aligned_mpjpe, mpvpe
+
+    @to_cuda
+    def _test_iteration(
+        self,
+        batch: Union[Tuple, List, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Evaluation procedure for one batch. We want to keep the code DRY and avoid
+        making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
+        Args:
+            batch: The batch to process.
+        Returns:
+            torch.Tensor: The loss for the batch.
+        """
+        x, y = batch  # type: ignore
+        samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+        anchor_error_p, mpjpe_p, root_aligned_mpjpe_p, mpvpe_p = self._test_batch(
+            samples, labels, use_prior=True
+        )
+        anchor_error, mpjpe, root_aligned_mpjpe, mpvpe = self._test_batch(
+            samples, labels, use_prior=False
+        )
         return {
-            "Anchor error (mm)": anchor_error,
-            "MPJPE (mm)": mpjpe,
-            "Root-aligned MPJPE (mm)": root_aligned_mpjpe,
-            "MPVPE (mm)": mpvpe,
+            "[PRIOR] Anchor error (mm)": anchor_error_p,
+            "[PRIOR] MPJPE (mm)": mpjpe_p,
+            "[PRIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe_p,
+            "[PRIOR] MPVPE (mm)": mpvpe_p,
+            "[POSTERIOR] Anchor error (mm)": anchor_error,
+            "[POSTERIOR] MPJPE (mm)": mpjpe,
+            "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
+            "[POSTERIOR] MPVPE (mm)": mpvpe,
         }
 
     def test(self, visualize_every: int = 0):

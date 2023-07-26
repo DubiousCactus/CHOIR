@@ -24,6 +24,7 @@ class Aggregate_CPVAE(torch.nn.Module):
         predict_mano: bool,
         predict_anchor_orientation: bool,
         share_decoder_for_all_tasks: bool,
+        remapped_bps_distances: bool,
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -73,6 +74,9 @@ class Aggregate_CPVAE(torch.nn.Module):
             # decoder.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
             decoder.append(torch.nn.ReLU())
         decoder.append(torch.nn.Linear(decoder_layer_dims[-1], bps_dim))
+        if remapped_bps_distances:
+            decoder.append(torch.nn.Sigmoid())
+        self._remapped_bps_distances = remapped_bps_distances
         self.decoder = torch.nn.Sequential(*decoder)
         # ========================================================
         # ======================= MANO ===========================
@@ -135,7 +139,11 @@ class Aggregate_CPVAE(torch.nn.Module):
             z = posterior.rsample()
 
         sqrt_distances = self.decoder(z)
-        anchor_dist = (sqrt_distances**2).view(B, P, 1)  # N, 1
+        if self._remapped_bps_distances:
+            # No need to square the distances since we're using sigmoid
+            anchor_dist = (sqrt_distances).view(B, P, 1)  # N, 1
+        else:
+            anchor_dist = (sqrt_distances**2).view(B, P, 1)  # N, 1
 
         mano = None
         if self.mano_params_decoder is not None and self.mano_pose_decoder is not None:

@@ -103,7 +103,7 @@ def compute_choir(
         rescaled_obj_pointcloud,
         feature_type=["dists", "deltas"],
     )
-    rescaled_ref_pts = bps + object_bps["deltas"]
+    rescaled_ref_pts = bps + object_bps["deltas"]  # A subset of rescaled_obj_pointcloud
     # Compute the distances between the BPS points and the MANO anchors:
     anchor_distances = torch.cdist(bps, rescaled_anchors)  # Shape: (BPS_LEN, N_ANCHORS)
     anchor_encodings = []

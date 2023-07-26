@@ -224,7 +224,7 @@ class BaseTrainer:
                 # Blink the progress bar to indicate that the validation loop is running
                 blink_pbar(i, self._pbar, 4)
                 loss, loss_components = self._train_val_iteration(
-                    batch
+                    batch, validation=True
                 )  # User implementation goes here (train.py)
                 val_loss.update(loss.item())
                 for k, v in loss_components.items():

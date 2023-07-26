@@ -144,9 +144,9 @@ class BaseDataset(TaskSet, abc.ABC):
         assert n_context <= len(noisy_grasp_samples)
         # Randomly sample n_context grasps from the grasp sequence (ignore n_target since we're not
         # doing meta-learning here):
-        samples_paths = torch.randperm(len(noisy_grasp_samples))[:n_context]
+        samples_path_idx = torch.randperm(len(noisy_grasp_samples))[:n_context]
         samples_paths = [
-            noisy_grasp_samples[i] for i in samples_paths
+            noisy_grasp_samples[i] for i in samples_path_idx
         ]  # Paths to grasp sample/label pairs
         samples, labels = [], []
         for sample_path in samples_paths:

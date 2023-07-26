@@ -66,6 +66,9 @@ def launch_experiment(
     "============ Partials instantiation ============"
     model_inst = model(
         bps_dim=just(dataset).bps_dim,
+        remapped_bps_distances=just(
+            dataset
+        ).remap_bps_distances,  # Whether to use sigmoid in last layer
         predict_anchor_orientation=just(training_loss).predict_anchor_orientation
         or just(training_loss).predict_anchor_position,
         predict_mano=just(training_loss).predict_mano,
@@ -87,7 +90,11 @@ def launch_experiment(
     if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
         scheduler_inst.T_max = run.epochs
 
-    training_loss_inst = training_loss(bps=train_dataset.bps)
+    training_loss_inst = training_loss(
+        bps=train_dataset.bps,
+        remap_bps_distances=train_dataset.remap_bps_distances,
+        exponential_map_w=train_dataset.exponential_map_w,
+    )
 
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
@@ -131,6 +138,7 @@ def launch_experiment(
                 f
                 for f in os.listdir(to_absolute_path(f"runs/{run.load_from_run}/"))
                 if f.endswith(".ckpt")
+                and (not f.startswith("last") if not run.training_mode else True)
             ]
         )
         if len(run_models) < 1:

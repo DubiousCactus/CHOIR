@@ -34,6 +34,8 @@ class CHOIRLoss(torch.nn.Module):
         mano_anchors_w: float,
         kl_w: float,
         multi_view: bool,
+        remap_bps_distances: bool,
+        exponential_map_w: float,
     ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
@@ -55,14 +57,19 @@ class CHOIRLoss(torch.nn.Module):
         self._hoi_loss = CHOIRFittingLoss() if predict_mano else None
         self._multi_view = multi_view
         self.register_buffer("bps", bps)
+        self._remap_bps_distances = remap_bps_distances
+        self._exponential_map_w = exponential_map_w
 
     def forward(
         self,
         samples: Dict[str, torch.Tensor],
         labels: Dict[str, torch.Tensor],
         y_hat,
+        rescale: bool = False,
     ) -> torch.Tensor:
         scalar = samples["scalar"]
+        if len(scalar.shape) == 2:
+            scalar = scalar.mean(dim=1)
         (
             choir_gt,
             scalar_gt,
@@ -84,10 +91,14 @@ class CHOIRLoss(torch.nn.Module):
         )
         if self._multi_view:
             for n in range(choir_gt.shape[1] - 1):
-                assert torch.allclose(choir_gt[:, n, 0], choir_gt[:, n + 1, 0])
+                assert torch.allclose(choir_gt[:, n], choir_gt[:, n + 1])
             # Since all noisy views are of the same grasp, we can just take the first view's ground
             # truth (all views have the same ground truth).
             choir_gt = choir_gt[:, 0]
+            if len(scalar_gt.shape) == 2:
+                scalar_gt = scalar_gt[
+                    :, 0
+                ]  # TODO: Make this consistant in data creation!
             pose_gt = pose_gt[:, 0]
             beta_gt = beta_gt[:, 0]
             rot_gt = rot_gt[:, 0]
@@ -95,7 +106,7 @@ class CHOIRLoss(torch.nn.Module):
             anchors_gt = anchors_gt[:, 0]
 
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
-        # choir_gt, orientations_gt = choir_gt, anchor_orientations
+
         losses = {
             "distances": self._distance_w
             * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
@@ -139,9 +150,13 @@ class CHOIRLoss(torch.nn.Module):
             # this way we can supervise the MANO parameters in the original coordinate system.
             verts, _ = self._affine_mano(pose, shape, rot, trans)
             anchors = self._affine_mano.get_anchors(verts)
+
+            if self._remap_bps_distances:
+                choir_pred = -torch.log(choir_pred) / self._exponential_map_w
+            choir_pred = choir_pred / scalar[:, None, None]
             anchor_agreement_loss, _ = self._hoi_loss(
                 anchors,
-                choir_pred / scalar[:, None],
+                choir_pred,
                 self.bps.unsqueeze(0).repeat(choir_pred.shape[0], 1, 1)
                 / scalar[:, None],
             )

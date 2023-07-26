@@ -133,6 +133,7 @@ model_store(
         Aggregate_CPVAE,
         builds_bases=(BaselineModelConf,),
         bps_dim=MISSING,
+        remapped_bps_distances=MISSING,  # Sigmoid if so
     ),
     name="aggregate_cpvae",
 )
@@ -143,6 +144,8 @@ model_store(
 @dataclass
 class CHOIRLossConf:
     bps = MISSING
+    remap_bps_distances: bool = MISSING
+    exponential_map_w: float = MISSING
     predict_anchor_orientation: bool = False
     predict_anchor_position: bool = False
     predict_mano: bool = False

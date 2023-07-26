@@ -49,6 +49,7 @@ class MultiViewTrainer(BaseTrainer):
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so write this code only once at the cost of many function calls!
@@ -60,13 +61,15 @@ class MultiViewTrainer(BaseTrainer):
         x, y = batch
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
         y_hat = self._model(samples["choir"], labels["choir"])
+        # If we're in validation mode, let's rescale the CHOIR prediction and ground-truth so that
+        # all metrics are comparable  between different scaling modes, etc.
         losses = self._training_loss(
-            samples, labels, y_hat
+            samples, labels, y_hat, rescale=validation
         )  # TODO: Multiview + Contrastive Learning loss
         loss = sum([v for v in losses.values()])
         # Again without using the posterior:
         y_hat = self._model(samples["choir"])
-        losses["distances_from_prior"] = self._training_loss(samples, labels, y_hat)[
-            "distances"
-        ]
+        losses["distances_from_prior"] = self._training_loss(
+            samples, labels, y_hat, rescale=validation
+        )["distances"]
         return loss, losses
