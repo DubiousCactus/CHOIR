@@ -302,7 +302,7 @@ experiment_store(
         dataset=dict(perturbation_level=2),
         training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=32),
-        model=dict(latent_dim=8),
+        model=dict(latent_dim=16),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
         bases=(Experiment,),
     ),
