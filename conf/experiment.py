@@ -70,7 +70,7 @@ class GraspingDatasetConf:
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
     debug: bool = False
-    rescale: str = "fixed"  # pair, fixed, none
+    rescale: str = "none"  # pair, fixed, none
     remap_bps_distances: bool = True
     exponential_map_w: float = 5.0
 
@@ -193,6 +193,7 @@ opt_store(
     pbuilds(
         torch.optim.AdamW,
         builds_bases=(Optimizer,),
+        weight_decay=1e-2,
     ),
     name="adamw",
 )
