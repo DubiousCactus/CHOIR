@@ -154,11 +154,11 @@ class CHOIRLoss(torch.nn.Module):
             if self._remap_bps_distances:
                 choir_pred = -torch.log(choir_pred) / self._exponential_map_w
             choir_pred = choir_pred / scalar[:, None, None]
-            anchor_agreement_loss, _ = self._hoi_loss(
+            anchor_agreement_loss = self._hoi_loss(
                 anchors,
                 choir_pred,
                 self.bps.unsqueeze(0).repeat(choir_pred.shape[0], 1, 1)
-                / scalar[:, None],
+                / scalar[:, None, None],
             )
             losses["mano_pose"] = self._mano_pose_w * self._mse(pose, pose_gt)
             losses["mano_shape"] = self._mano_shape_w * (

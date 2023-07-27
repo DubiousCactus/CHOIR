@@ -63,9 +63,9 @@ class MultiViewTester(MultiViewTrainer):
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling
         if use_prior:
-            y_hat = self._model(samples["choir"])
+            y_hat = self._model(samples["choir"], use_mean=True)
         else:
-            y_hat = self._model(samples["choir"], labels["choir"])
+            y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],

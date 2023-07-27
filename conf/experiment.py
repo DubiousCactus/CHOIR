@@ -70,8 +70,8 @@ class GraspingDatasetConf:
     bps_dim: int = 1024
     obj_ptcld_size: int = 3000
     debug: bool = False
-    rescale: str = "pair"  # pair, fixed, none
-    remap_bps_distances: bool = False
+    rescale: str = "fixed"  # pair, fixed, none
+    remap_bps_distances: bool = True
     exponential_map_w: float = 5.0
 
 
@@ -134,6 +134,8 @@ model_store(
         builds_bases=(BaselineModelConf,),
         bps_dim=MISSING,
         remapped_bps_distances=MISSING,  # Sigmoid if so
+        batch_norm=True,
+        decoder_use_obj=True,
     ),
     name="aggregate_cpvae",
 )
@@ -155,7 +157,7 @@ class CHOIRLossConf:
     mano_pose_w: float = 1.0
     mano_global_pose_w: float = 1.0
     mano_shape_w: float = 1.0
-    mano_agreement_w: float = 1.0
+    mano_agreement_w: float = 100.0
     mano_anchors_w: float = 1.0
     kl_w: float = 5e-3
     multi_view: bool = False
@@ -186,6 +188,13 @@ opt_store(
         builds_bases=(Optimizer,),
     ),
     name="adam",
+)
+opt_store(
+    pbuilds(
+        torch.optim.AdamW,
+        builds_bases=(Optimizer,),
+    ),
+    name="adamw",
 )
 opt_store(
     pbuilds(
