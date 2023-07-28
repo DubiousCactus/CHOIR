@@ -135,7 +135,8 @@ model_store(
         bps_dim=MISSING,
         remapped_bps_distances=MISSING,  # Sigmoid if so
         batch_norm=True,
-        decoder_use_obj=True,
+        decoder_use_obj=False,
+        skip_connections=True,
     ),
     name="aggregate_cpvae",
 )
@@ -304,6 +305,8 @@ experiment_store(
         training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=32),
         model=dict(latent_dim=16),
+        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
+        # decoder_layer_dims=(128, 256, 512, 1024)),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
         bases=(Experiment,),
     ),

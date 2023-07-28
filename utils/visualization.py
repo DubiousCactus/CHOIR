@@ -74,9 +74,9 @@ def add_choir_to_plot(
         plot.add_mesh(
             pv.Cube(
                 center=anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                x_length=3e-2,
+                y_length=3e-2,
+                z_length=3e-2,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -448,14 +448,14 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=scalar * anchors[i].cpu().numpy(),
-                x_length=1e-2,
-                y_length=1e-2,
-                z_length=1e-2,
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
             ),
             color="yellow",
             name=f"anchor{i}",
         )
-    pl.add_axes_at_origin()
+    # pl.add_axes_at_origin(line_width=1, labels_off=True)
 
     # Now we're gonna plot the CHOIR field. For each point in the target point cloud, we'll plot a
     # ray from the point to the closest anchor. The ray will be colored according to the distance
@@ -525,9 +525,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=rescaled_anchors[i].cpu().numpy(),
-                x_length=3e-2,
-                y_length=3e-2,
-                z_length=3e-2,
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -589,9 +589,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=rescaled_anchors[i].cpu().numpy(),
-                x_length=1e-2,
-                y_length=1e-2,
-                z_length=1e-2,
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
             ),
             color="yellow",
             name=f"anchor{i}",

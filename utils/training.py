@@ -25,7 +25,7 @@ def optimize_pose_pca_from_choir(
     scalar: torch.Tensor,
     remap_bps_distances: bool,
     exponential_map_w: Optional[float] = None,
-    loss_thresh: float = 1e-12,
+    loss_thresh: float = 1e-10,
     lr: float = 5e-2,
     max_iterations=8000,
     initial_params=None,
@@ -57,7 +57,7 @@ def optimize_pose_pca_from_choir(
     params = [{"params": parameters.values()}]
 
     optimizer = torch.optim.Adam(params, lr=lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
     proc_bar = tqdm.tqdm(range(max_iterations))
 
     prev_loss = float("inf")

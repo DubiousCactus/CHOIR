@@ -71,7 +71,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 bps = pickle.load(f)
         else:
             bps = sample_sphere_uniform(
-                n_points=self._bps_dim, n_dims=3, radius=1.0, random_seed=1995
+                n_points=self._bps_dim, n_dims=3, radius=0.2, random_seed=1995
             ).cpu()
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)

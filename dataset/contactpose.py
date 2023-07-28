@@ -324,7 +324,7 @@ class ContactPoseDataset(BaseDataset):
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
                 )
-                visualize = self._debug and (random.Random().random() < 0.05)
+                visualize = self._debug and (random.Random().random() < 0.01)
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
                 mano_params = grasp_data["grasp"][0]

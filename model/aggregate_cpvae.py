@@ -12,6 +12,7 @@ Core contribution method: the Aggregate Conditional-Prior Variational Auto-Encod
 from typing import List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 
 
 class Aggregate_CPVAE(torch.nn.Module):
@@ -27,6 +28,7 @@ class Aggregate_CPVAE(torch.nn.Module):
         remapped_bps_distances: bool,
         batch_norm: bool,
         decoder_use_obj: bool,
+        skip_connections: bool,
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -34,8 +36,9 @@ class Aggregate_CPVAE(torch.nn.Module):
         self.use_batch_norm = batch_norm
         self.decoder_use_obj = decoder_use_obj
         self.remapped_bps_distances = remapped_bps_distances
+        self.skip_connections = skip_connections
         if decoder_use_obj:
-            decoder_layer_dims = [bps_dim] * len(decoder_layer_dims)
+            decoder_layer_dims = [bps_dim] * (len(decoder_layer_dims))
 
         # ======================= Encoder =======================
         posterior_encoder: List[torch.nn.Module] = [
@@ -75,22 +78,21 @@ class Aggregate_CPVAE(torch.nn.Module):
             torch.nn.Linear(
                 latent_dim + (bps_dim if decoder_use_obj else 0), decoder_layer_dims[0]
             ),
-            torch.nn.BatchNorm1d(decoder_layer_dims[0])
-            if batch_norm
-            else torch.nn.Identity(),
-            torch.nn.ReLU(),
         ]
+        decoder_bn: List[torch.nn.Module] = [
+            torch.nn.BatchNorm1d(decoder_layer_dims[0])
+        ]
+        z_linear: List[torch.nn.Module] = [torch.nn.Identity()]
         for i in range(len(decoder_layer_dims) - 1):
             decoder.append(
                 torch.nn.Linear(decoder_layer_dims[i], decoder_layer_dims[i + 1])
             )
-            if batch_norm:
-                decoder.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
-            decoder.append(torch.nn.ReLU())
+            decoder_bn.append(torch.nn.BatchNorm1d(decoder_layer_dims[i + 1]))
+            z_linear.append(torch.nn.Linear(latent_dim, decoder_layer_dims[i + 1]))
         decoder.append(torch.nn.Linear(decoder_layer_dims[-1], bps_dim))
-        if remapped_bps_distances:
-            decoder.append(torch.nn.Sigmoid())
-        self.decoder = torch.nn.Sequential(*decoder)
+        self.decoder = torch.nn.ModuleList(decoder)
+        self.decoder_bn = torch.nn.ModuleList(decoder_bn)
+        self.z_linear = torch.nn.ModuleList(z_linear)
         # ========================================================
         # ======================= MANO ===========================
         self.mano_decoder, self.mano_params_decoder, self.mano_pose_decoder = (
@@ -133,7 +135,7 @@ class Aggregate_CPVAE(torch.nn.Module):
             x = layer(x)
             if self.use_batch_norm:
                 x = bn(x.view(B * T, -1)).view(B, T, -1)
-            x = torch.nn.functional.relu(x, inplace=True)
+            x = F.relu(x, inplace=False)
         s = self.prior_encoder[-1](x)
         s_c = torch.mean(s, dim=1)
         z_mu, z_log_var = torch.split(s_c, self.latent_dim, dim=-1)
@@ -157,7 +159,7 @@ class Aggregate_CPVAE(torch.nn.Module):
                 x = layer(x)
                 if self.use_batch_norm:
                     x = bn(x.view(B * T, -1)).view(B, T, -1)
-                x = torch.nn.functional.relu(x, inplace=True)
+                x = F.relu(x, inplace=False)
             s = self.posterior_encoder[-1](x)
             s_c = torch.mean(s, dim=1)
             p_mu, p_log_var = torch.split(s_c, self.latent_dim, dim=-1)
@@ -169,10 +171,24 @@ class Aggregate_CPVAE(torch.nn.Module):
         dec_input = (
             z if not self.decoder_use_obj else torch.cat([z, _x[:, 0, :, 0]], dim=-1)
         )
-        sqrt_distances = self.decoder(dec_input)
+        x = dec_input
+        # sqrt_distances = self.decoder(dec_input)
+        for i, (layer, z_layer, bn) in enumerate(
+            zip(self.decoder, self.z_linear, self.decoder_bn)
+        ):
+            x = layer(x)
+            if (
+                self.skip_connections and i > 0
+            ):  # Skip the first layer since Z is already the input
+                z_l = z_layer(z)
+                x = x + z_l
+            if self.use_batch_norm:
+                x = bn(x)
+            x = F.relu(x, inplace=False)
+        sqrt_distances = self.decoder[-1](x)
         if self.remapped_bps_distances:
             # No need to square the distances since we're using sigmoid
-            anchor_dist = (sqrt_distances).view(B, P, 1)  # N, 1
+            anchor_dist = (F.sigmoid(sqrt_distances)).view(B, P, 1)  # N, 1
         else:
             anchor_dist = (sqrt_distances**2).view(B, P, 1)  # N, 1
 
