@@ -153,14 +153,14 @@ class CHOIRLossConf:
     predict_anchor_position: bool = False
     predict_mano: bool = False
     orientation_w: float = 1.0
-    distance_w: float = 1000.0
+    distance_w: float = 1.0
     assignment_w: float = 1.0
     mano_pose_w: float = 1.0
     mano_global_pose_w: float = 1.0
     mano_shape_w: float = 1.0
-    mano_agreement_w: float = 100.0
+    mano_agreement_w: float = 1.0
     mano_anchors_w: float = 1.0
-    kl_w: float = 5e-3
+    kl_w: float = 3e-5
     multi_view: bool = False
 
 
@@ -238,7 +238,7 @@ sched_store(
 
 @dataclass
 class RunConfig:
-    epochs: int = 500
+    epochs: int = 1000
     seed: int = 42
     val_every: int = 1
     viz_every: int = 0
