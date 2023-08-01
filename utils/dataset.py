@@ -94,9 +94,12 @@ def compute_choir(
     assert len(anchors.shape) == 3
     assert len(pointcloud.shape) == 3
     assert len(bps.shape) == 3
+    B = anchors.shape[0]
     bps_encoder = bps_torch(custom_basis=bps)
     # TODO: Investigate why parts of the pointcloud (i.e. in the wine glass) are ignored during
-    # sampling, especially when reducing the dimensionality of the BPS representation.
+    # sampling, especially when reducing the dimensionality of the BPS representation. Well this is
+    # due to how it works and there's not much we can do about it except rescaling it properly, but
+    # that won't do much.
     rescaled_obj_pointcloud = pointcloud * scalar
     rescaled_anchors = anchors * scalar
     object_bps: Dict[str, Any] = bps_encoder.encode(
@@ -106,7 +109,6 @@ def compute_choir(
     rescaled_ref_pts = bps + object_bps["deltas"]  # A subset of rescaled_obj_pointcloud
     # Compute the distances between the BPS points and the MANO anchors:
     anchor_distances = torch.cdist(bps, rescaled_anchors)  # Shape: (BPS_LEN, N_ANCHORS)
-    anchor_encodings = []
     # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
     # batches. The number of batches is determined by the number of BPS points, and the latter
     # must be a multiple of 32.
@@ -121,24 +123,17 @@ def compute_choir(
         )
         .repeat((bps.shape[1] // 32,))
         .unsqueeze(0)
+        .repeat((B, 1))
     )
     distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
-    # Here we won't need the anchor index since it's a fixed pattern!
-    anchor_encodings = [
-        distances.unsqueeze(-1),
-    ]
-    # rescaled_anchors_repeats = (
-    # torch.gather(rescaled_anchors, 1, anchor_ids.unsqueeze(-1).repeat(1, 1, 3))
-    # .squeeze(-2)
-    # .squeeze(0)
-    # )
-    # anchor_deltas = rescaled_anchors_repeats - bps
-    # assert torch.allclose(anchor_deltas + bps, rescaled_anchors_repeats)
-    # Build the CHOIR representation:
     choir = torch.cat(
         [
-            object_bps["dists"].unsqueeze(-1),
-            *anchor_encodings,
+            object_bps["dists"]
+            .unsqueeze(-1)
+            .repeat(
+                (B, 1, 1)
+            ),  # O(len(BPS)) because the anchor distances don't involve KNN.
+            distances.unsqueeze(-1),
         ],
         dim=-1,
     )

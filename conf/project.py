@@ -41,6 +41,8 @@ PROJECT_NAME = "CHOIR"
 PLOT_ENABLED = str_to_bool(env.get("PLOT_ENABLED", "1"))
 HEADLESS = str_to_bool(env.get("HEADLESS", "0"))
 
+SMPLX_MODEL_PATH = env.get("SMPLX_MODEL_PATH", "/home/cactus/Code/GRAB/SMPLX")
+
 
 # Theming
 class Theme(Enum):

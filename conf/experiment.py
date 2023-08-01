@@ -26,7 +26,9 @@ from metabatch import TaskLoader
 from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
+import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
+from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
 from model.aggregate_cpvae import Aggregate_CPVAE
 from model.baseline import BaselineModel
@@ -62,8 +64,8 @@ class GraspingDatasetConf:
     tiny: bool = False
     augment: bool = False
     validation_objects: int = 3
+    test_objects: int = 2
     perturbation_level: int = 0
-    noisy_samples_per_grasp: int = 30
     max_views_per_grasp: int = 5
     right_hand_only: bool = True
     center_on_object_com: bool = True
@@ -78,7 +80,21 @@ class GraspingDatasetConf:
 # Pre-set the group for store's dataset entries
 dataset_store = store(group="dataset")
 dataset_store(
-    pbuilds(ContactPoseDataset, builds_bases=(GraspingDatasetConf,)), name="contactpose"
+    pbuilds(
+        ContactPoseDataset,
+        builds_bases=(GraspingDatasetConf,),
+        noisy_samples_per_grasp=30,
+    ),
+    name="contactpose",
+)
+dataset_store(
+    pbuilds(
+        GRABDataset,
+        builds_bases=(GraspingDatasetConf,),
+        root_path="/home/cactus/Code/GRAB",
+        smplx_path=project_conf.SMPLX_MODEL_PATH,
+    ),
+    name="grab",
 )
 
 " ================== Dataloader & sampler ================== "
@@ -247,6 +263,7 @@ class RunConfig:
     load_from_path: Optional[str] = None
     load_from_run: Optional[str] = None
     training_mode: bool = True
+    fine_tune: bool = False
 
 
 run_store = store(group="run")

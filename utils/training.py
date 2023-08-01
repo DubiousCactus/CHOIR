@@ -10,13 +10,17 @@ Training utilities. This is a good place for your code that is used in training 
 function, visualization code, etc.)
 """
 
+from contextlib import redirect_stdout
 from typing import Dict, Optional, Tuple
 
+import smplx
 import torch
 import tqdm
 
+import conf.project as project_conf
 from model.affine_mano import AffineMANO
 from src.losses.hoi import CHOIRFittingLoss
+from utils import to_cuda_
 
 
 def optimize_pose_pca_from_choir(
@@ -24,6 +28,8 @@ def optimize_pose_pca_from_choir(
     bps: torch.Tensor,
     scalar: torch.Tensor,
     remap_bps_distances: bool,
+    is_rhand: bool,
+    use_smplx: bool,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-10,
     lr: float = 5e-2,
@@ -35,24 +41,45 @@ def optimize_pose_pca_from_choir(
     before the exponential map, if they are used. So we must first apply the inverse exponential
     map, and then the inverse of the scalar.
     """
-    ncomps = 15
-    affine_mano = AffineMANO(ncomps).cuda()
+    ncomps = 21 if use_smplx else 15  # 21+3 for GRAB, 15+3 for ContactPose
+    assert len(choir.shape) == 3
     B = choir.shape[0]
+    affine_mano, smplx_model = None, None
+    if use_smplx:
+        with redirect_stdout(None):
+            smplx_model = to_cuda_(
+                smplx.create(
+                    model_path=project_conf.SMPLX_MODEL_PATH,
+                    model_type="mano",
+                    is_rhand=is_rhand,
+                    num_pca_comps=24,
+                    flat_hand_mean=False,
+                    batch_size=B,
+                )
+            )
+    affine_mano = to_cuda_(AffineMANO(ncomps))
     if initial_params is None:
-        fingers_pose = (torch.rand((B, ncomps + 3))).cuda().requires_grad_(True)
-        shape = (torch.rand((B, 10))).cuda().requires_grad_(True)
-        rot_6d = torch.rand((B, 6)).cuda().requires_grad_(True)
+        theta = (torch.rand((B, ncomps + 3)) * 0.01).cuda().requires_grad_(True)
+        beta = (torch.rand((B, 10)) * 0.01).cuda().requires_grad_(True)
+        if use_smplx:
+            rot = (
+                (torch.rand((B, 3)) * 0.01).cuda().requires_grad_(True)
+            )  # axis-angle for SMPL-X
+        else:
+            rot = (
+                (torch.rand((B, 6)) * 0.01).cuda().requires_grad_(True)
+            )  # 6D for AffineMANO
         trans = (torch.rand((B, 3)) * 0.001).cuda().requires_grad_(True)
     else:
-        fingers_pose = initial_params["pose"].cuda().requires_grad_(True)
-        shape = initial_params["shape"].cuda().requires_grad_(True)
-        rot_6d = initial_params["rot_6d"].cuda().requires_grad_(True)
+        theta = initial_params["pose"].cuda().requires_grad_(True)
+        beta = initial_params["shape"].cuda().requires_grad_(True)
+        rot = initial_params["rot_6d"].cuda().requires_grad_(True)
         trans = initial_params["trans"].cuda().requires_grad_(True)
     parameters = {
-        "rot": rot_6d,
+        "rot": rot,
         "trans": trans,
-        "fingers_pose": fingers_pose,
-        "shape": shape,
+        "fingers_pose": theta,
+        "shape": beta,
     }
     params = [{"params": parameters.values()}]
 
@@ -75,30 +102,41 @@ def optimize_pose_pca_from_choir(
 
     choir_loss = CHOIRFittingLoss().to(choir.device)
 
+    plateau_cnt = 0
     for _ in proc_bar:
         optimizer.zero_grad()
-        verts, _ = affine_mano(fingers_pose, shape, rot_6d, trans)
+        if use_smplx:
+            output = smplx_model(
+                hand_pose=theta, betas=beta, global_orient=rot, transl=trans
+            )
+            verts, joints = output.vertices, output.joints
+        else:
+            verts, joints = affine_mano(theta, beta, rot, trans)
         anchors = affine_mano.get_anchors(verts)
         loss = choir_loss(anchors, choir, bps)
-        regularizer = (
-            torch.norm(shape) ** 2
-        )  # Encourage the shape parameters to remain close to 0
+        regularizer = torch.norm(
+            beta
+        )  # ** 2  # Encourage the shape parameters to remain close to 0
 
         proc_bar.set_description(f"Anchors loss: {loss.item():.10f}")
         loss = loss + regularizer
-        if torch.abs(prev_loss - loss.detach()) < loss_thresh:
-            break
-        prev_loss = loss.detach()
+        if torch.abs(prev_loss - loss.detach().type(torch.float64)) < loss_thresh:
+            plateau_cnt += 1
+        prev_loss = loss.detach().type(torch.float64)
         loss.backward()
         optimizer.step()
         scheduler.step()
+        if plateau_cnt >= 100:
+            break
 
     return (
-        fingers_pose.detach(),
-        shape.detach(),
-        rot_6d.detach(),
+        theta.detach(),
+        beta.detach(),
+        rot.detach(),
         trans.detach(),
         anchors.detach(),
+        verts.detach(),
+        joints.detach(),
     )
 
 
@@ -130,10 +168,11 @@ def get_dict_from_sample_and_label_tensors(
     Sample: (B, T, 3, P=BPS_DIM, D=3) for 3 padded tensors
     Label: (B, T, 9, P=BPS_DIM, D=18) for 9 padded tensors
     """
-    noisy_choir, rescaled_ref_pts, scalar = (
+    noisy_choir, rescaled_ref_pts, scalar, is_rhand = (
         sample[:, :, 0, :, :2],
         sample[:, :, 1],
         sample[:, :, 2, 0, 0].squeeze(),
+        sample[:, :, 3, 0, 0].squeeze().bool(),
     )
     (
         gt_choir,
@@ -160,6 +199,7 @@ def get_dict_from_sample_and_label_tensors(
         "choir": noisy_choir,
         "rescaled_ref_pts": rescaled_ref_pts,
         "scalar": scalar,
+        "is_rhand": is_rhand,
     }, {
         "choir": gt_choir,
         "rescaled_ref_pts": gt_ref_pts,

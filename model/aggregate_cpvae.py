@@ -6,7 +6,7 @@
 # Distributed under terms of the MIT license.
 
 """
-Core contribution method: the Aggregate Conditional-Prior Variational Auto-Encoder.
+Core contribution method: the Aggregate Data-driven Prior Variational Encoder-Decoder.
 """
 
 from typing import List, Optional, Tuple
@@ -59,12 +59,12 @@ class Aggregate_CPVAE(torch.nn.Module):
         self.posterior_bn = torch.nn.ModuleList(posterior_bn)
         # For the prior encoder, skip the first linear layer because we only have one CHOIR input
         prior_encoder: List[torch.nn.Module] = [
-            torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[1]),
+            torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[0]),
         ]
         prior_bn: List[torch.nn.Module] = [
-            torch.nn.BatchNorm1d(encoder_layer_dims[1]),
+            torch.nn.BatchNorm1d(encoder_layer_dims[0]),
         ]
-        for i in range(1, len(encoder_layer_dims) - 1):
+        for i in range(0, len(encoder_layer_dims) - 1):
             prior_encoder.append(
                 torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1])
             )

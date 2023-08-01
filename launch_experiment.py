@@ -10,6 +10,7 @@ Training code.
 """
 
 import os
+from dataclasses import asdict
 
 import hydra_zen
 import torch
@@ -162,6 +163,7 @@ def launch_experiment(
             train_loader=train_loader_inst,
             val_loader=val_loader_inst,
             training_loss=training_loss_inst,
+            **asdict(run),
         ).train(
             epochs=run.epochs,
             val_every=run.val_every,

@@ -9,7 +9,7 @@
 Visualization utilities.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import open3d
@@ -27,7 +27,7 @@ from utils.training import (
 
 
 def add_choir_to_plot(
-    plot, bps, choir, ref_pts, hand_mesh, anchors, hand_only=False, hand_color=None
+    plot, bps, choir, ref_pts, anchors, hand_mesh=None, hand_only=False, hand_color=None
 ):
     if len(choir.shape) == 3:
         choir = choir[0]
@@ -63,20 +63,21 @@ def add_choir_to_plot(
                 color="#" + hex(color)[2:].zfill(6),
                 name=f"anchor_ray{i}",
             )
-    plot.add_mesh(
-        hand_mesh,
-        opacity=0.4,
-        name="hand_mesh",
-        smooth_shading=True,
-        **(dict(color=hand_color) if hand_color is not None else {}),
-    )
+    if hand_mesh is not None:
+        plot.add_mesh(
+            hand_mesh,
+            opacity=0.4,
+            name="hand_mesh",
+            smooth_shading=True,
+            **(dict(color=hand_color) if hand_color is not None else {}),
+        )
     for i in range(anchors.shape[0]):
         plot.add_mesh(
             pv.Cube(
                 center=anchors[i].cpu().numpy(),
-                x_length=3e-2,
-                y_length=3e-2,
-                z_length=3e-2,
+                x_length=1e-2,
+                y_length=1e-2,
+                z_length=1e-2,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -128,6 +129,7 @@ def visualize_model_predictions_with_multiple_views(
                 sample_choirs,
                 bps=bps,
                 scalar=input_scalar,
+                is_rhand=samples["is_rhand"][0],
                 max_iterations=5000,
                 remap_bps_distances=remap_bps_distances,
                 exponential_map_w=exponential_map_w,
@@ -143,8 +145,8 @@ def visualize_model_predictions_with_multiple_views(
                 bps / input_scalar[i],
                 input_choirs[i] / input_scalar[i],
                 input_ref_pts[i] / input_scalar[i],
-                hand_mesh,
                 anchors_pred[i],
+                hand_mesh,
                 hand_only=True,
             )
         # ===================================================================================
@@ -174,6 +176,7 @@ def visualize_model_predictions_with_multiple_views(
                 scalar=torch.mean(input_scalar)
                 .unsqueeze(0)
                 .to(input_scalar.device),  # TODO: What should I do here?
+                is_rhand=samples["is_rhand"][0],
                 max_iterations=5000,
                 remap_bps_distances=remap_bps_distances,
                 exponential_map_w=exponential_map_w,
@@ -189,8 +192,8 @@ def visualize_model_predictions_with_multiple_views(
             bps / gt_scalar,
             choir_gt / gt_scalar,
             gt_ref_pts / gt_scalar,
-            gt_hand_mesh,
             gt_anchors,
+            gt_hand_mesh,
             hand_only=True,
             hand_color="red",
         )
@@ -301,20 +304,29 @@ def visualize_CHOIR_prediction(
     gt_scalar: float,
     input_ref_pts: torch.Tensor,
     gt_ref_pts: torch.Tensor,
-    mano_params_gt: Dict[str, torch.Tensor],
+    gt_verts: torch.Tensor,
+    gt_joints: torch.Tensor,
+    gt_anchors: torch.Tensor,
+    is_rhand: bool,
+    use_smplx: bool,
     remap_bps_distances: bool,
     exponential_map_w: Optional[float] = None,
 ):
     # ============ Get the first element of the batch ============
-    choir_pred = choir_pred[0].unsqueeze(0)
-    choir_gt = choir_gt[0].unsqueeze(0)
-    # pcl_mean = pcl_mean[0].unsqueeze(0)
-    # pcl_scalar = pcl_scalar[0].unsqueeze(0)
-    input_scalar = input_scalar[0].unsqueeze(0)
-    input_ref_pts = input_ref_pts[0].unsqueeze(0)
-    gt_scalar = gt_scalar[0].unsqueeze(0)
-    gt_ref_pts = gt_ref_pts[0].unsqueeze(0)
-    mano_params_gt = {k: v[0].unsqueeze(0) for k, v in mano_params_gt.items()}
+    if len(choir_pred.shape) > 2:
+        choir_pred = choir_pred[0].unsqueeze(0)
+    if len(choir_gt.shape) > 2:
+        choir_gt = choir_gt[0].unsqueeze(0)
+    if len(bps.shape) > 2:
+        bps = bps[0].unsqueeze(0)
+    if len(input_scalar.shape) > 2:
+        input_scalar = input_scalar[0].unsqueeze(0)
+    if len(input_ref_pts.shape) > 2:
+        input_ref_pts = input_ref_pts[0].unsqueeze(0)
+    if len(gt_scalar.shape) > 2:
+        gt_scalar = gt_scalar[0].unsqueeze(0)
+    if len(gt_ref_pts.shape) > 2:
+        gt_ref_pts = gt_ref_pts[0].unsqueeze(0)
     # =============================================================
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
 
@@ -324,24 +336,45 @@ def visualize_CHOIR_prediction(
 
     # ============ Optimize MANO on the predicted CHOIR field to visualize it ============
     with torch.set_grad_enabled(True):
-        pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+        (
+            pose,
+            shape,
+            rot_6d,
+            trans,
+            anchors_pred,
+            verts_pred,
+            joints_pred,
+        ) = optimize_pose_pca_from_choir(
             choir_pred,
             bps=bps,
             scalar=input_scalar,
-            max_iterations=5000,
+            is_rhand=is_rhand,
+            use_smplx=use_smplx,
+            max_iterations=8000,
+            lr=0.01,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
         )
     # ====== Metrics and qualitative comparison ======
-    gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-    gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
-    gt_anchors = affine_mano.get_anchors(gt_verts)
-    verts_pred, joints_pred = affine_mano(pose, shape, rot_6d, trans)
     # === Anchor error ===
     print(
         f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
     )
     # === MPJPE ===
+    if gt_joints.shape[1] == 16 and joints_pred.shape[1] == 21:
+        # This was obtained with SMPL-X which doesn't include fingertips, so we'll drop them for
+        # the prediction if we used MANO.
+        joints_pred = torch.cat(
+            [
+                joints_pred[:, :4],
+                joints_pred[:, 5:8],
+                joints_pred[:, 9:12],
+                joints_pred[:, 13:16],
+                joints_pred[:, 17:20],
+            ],
+            dim=1,
+        )
+
     pjpe = torch.linalg.vector_norm(
         gt_joints - joints_pred, ord=2, dim=-1
     )  # Per-joint position error (B, N, 21)
@@ -382,8 +415,8 @@ def visualize_CHOIR_prediction(
         bps / input_scalar,
         choir_pred / input_scalar,
         input_ref_pts / input_scalar,
-        hand_mesh,
         anchors_pred,
+        hand_mesh,
     )
     # ===================================================================================
     # ============ Display the ground truth CHOIR field with the GT MANO ================
@@ -393,8 +426,8 @@ def visualize_CHOIR_prediction(
         bps / gt_scalar,
         choir_gt / gt_scalar,
         gt_ref_pts / gt_scalar,
-        gt_hand_mesh,
         gt_anchors,
+        gt_hand_mesh,
     )
     pl.link_views()
     pl.set_background("white")  # type: ignore
@@ -657,5 +690,6 @@ def visualize_MANO(
     pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
+    pl.add_axes_at_origin()
     pl.add_legend(loc="upper left", size=(0.1, 0.1))
     pl.show(interactive=True)

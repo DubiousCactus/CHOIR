@@ -17,7 +17,7 @@ import abc
 import os
 import os.path as osp
 import pickle
-from typing import Any, Dict, List, Tuple
+from typing import Any, List, Tuple
 
 import torch
 from bps_torch.tools import sample_sphere_uniform
@@ -28,38 +28,53 @@ from metabatch import TaskSet
 class BaseDataset(TaskSet, abc.ABC):
     def __init__(
         self,
-        dataset_name: str,
+        split: str,
+        validation_objects: int,
+        test_objects: int,
+        perturbation_level: int,
+        obj_ptcld_size: int,
         bps_dim: int,
-        max_views_per_grasp: int,
         noisy_samples_per_grasp: int,
-        rescale: str,
+        max_views_per_grasp: int,
+        right_hand_only: bool,
         center_on_object_com: bool,
+        tiny: bool,
+        augment: bool,
+        seed: int,
+        debug: bool,
+        rescale: str,
         remap_bps_distances: bool,
         exponential_map_w: float,
-        augment: bool,
-        split: str,
-        tiny: bool = False,
-        seed: int = 0,
-        debug: bool = False,
+        dataset_name: str,
     ) -> None:
         # This feels super hacky because I hadn't designed metabatch to be used this way. It was
         # only meant to be used with the traditional context + target paradigm. This will work but
         # requires min_pts=1 and max_ctx_pts=1, as well as using n_target. Don't change any of
         # these defaults or it will break for this case.
         # TODO: Fix perturbation_level=0
+        noisy_samples_per_grasp = (
+            1 if perturbation_level == 0 else noisy_samples_per_grasp
+        )
         assert noisy_samples_per_grasp >= max_views_per_grasp
         super().__init__(
             min_pts=1,
             max_ctx_pts=max_views_per_grasp,
-            max_tgt_pts=noisy_samples_per_grasp,
+            max_tgt_pts=noisy_samples_per_grasp,  # This is actually irrelevant in our case! Just needs to be higher than max_ctx_pts
             total_tgt_pts=noisy_samples_per_grasp,
             eval=False,
             predict_full_target=False,
             predict_full_target_during_eval=False,
         )
         self._mm_unit = 1.0
+        self._validation_objects = validation_objects
+        self._test_objects = test_objects
+        self._obj_ptcld_size = obj_ptcld_size
+        self._right_hand_only = right_hand_only
+        self._perturbation_level = perturbation_level
         self._augment = augment and split == "train"
         self._bps_dim = bps_dim
+        self._noisy_samples_per_grasp = noisy_samples_per_grasp
+        # self._perturbations = [] # TODO: Implement
         self._cache_dir = osp.join(
             get_original_cwd(), "data", f"{dataset_name}_preprocessed"
         )
@@ -114,7 +129,6 @@ class BaseDataset(TaskSet, abc.ABC):
     def _load(
         self,
         split: str,
-        objects: Dict,
         objects_w_contacts: List,
         grasps: List,
         dataset_name: str,
@@ -126,7 +140,7 @@ class BaseDataset(TaskSet, abc.ABC):
         raise NotImplementedError
 
     def __len__(self) -> int:
-        return len(self._sample_paths)
+        return len(self._sample_paths)  # * self._noisy_samples_per_grasp
 
     def disable_augs(self) -> None:
         self._augment = False
@@ -134,20 +148,25 @@ class BaseDataset(TaskSet, abc.ABC):
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[List[Any], List[Any], str]:
+        """
+        Returns a list of object mesh paths, a list of grasp sequence paths associated, and the dataset name.
+        """
         raise NotImplementedError
 
     def __gettask__(
         self, idx: int, n_context: int, n_target: int
     ) -> Tuple[List[Tuple], List[Tuple]]:
-        noisy_grasp_samples = self._sample_paths[idx]
-        assert noisy_grasp_samples is not None
-        assert n_context <= len(noisy_grasp_samples)
+        noisy_grasp_sequence = self._sample_paths[idx]
+        assert noisy_grasp_sequence is not None
+        assert n_context <= len(noisy_grasp_sequence)
         # Randomly sample n_context grasps from the grasp sequence (ignore n_target since we're not
-        # doing meta-learning here):
-        samples_path_idx = torch.randperm(len(noisy_grasp_samples))[:n_context]
-        samples_paths = [
-            noisy_grasp_samples[i] for i in samples_path_idx
-        ]  # Paths to grasp sample/label pairs
+        # doing meta-learning here). We want a random subset of cardinality n_context from the grasp
+        # sequence, but they must follow each other in the sequence. So we randomly sample a starting
+        # index and then take the next n_context elements.
+        start_idx = torch.randint(
+            low=0, high=len(noisy_grasp_sequence) - n_context + 1, size=(1,)
+        ).item()
+        samples_paths = noisy_grasp_sequence[start_idx : start_idx + n_context]
         samples, labels = [], []
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
@@ -155,8 +174,3 @@ class BaseDataset(TaskSet, abc.ABC):
             samples.append(sample)
             labels.append(label)
         return torch.stack(samples), torch.stack(labels)
-
-    # def __getitem__(self, idx: int) -> Tuple[Any, Any]:
-    # with open(self._sample_paths[idx], "rb") as f:
-    # sample, label = pickle.load(f)
-    # return sample, label

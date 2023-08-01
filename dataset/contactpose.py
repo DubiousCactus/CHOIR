@@ -50,7 +50,8 @@ class ContactPoseDataset(BaseDataset):
     def __init__(
         self,
         split: str,
-        validation_objects: int = 5,
+        validation_objects: int = 3,
+        test_objects: int = 2,
         perturbation_level: int = 0,
         obj_ptcld_size: int = 3000,
         bps_dim: int = 1024,
@@ -68,14 +69,7 @@ class ContactPoseDataset(BaseDataset):
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
-        self._validation_objects = validation_objects
-        self._obj_ptcld_size = obj_ptcld_size
-        self._right_hand_only = right_hand_only
-        self._perturbation_level = perturbation_level
         assert noisy_samples_per_grasp > 0, "noisy_samples_per_grasp must be > 0"
-        self._noisy_samples_per_grasp = (
-            1 if perturbation_level == 0 else noisy_samples_per_grasp
-        )
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
             {"trans": 0.02, "rot": 0.05, "pca": 0.3},  # Level 1
@@ -88,8 +82,13 @@ class ContactPoseDataset(BaseDataset):
         super().__init__(
             dataset_name="ContactPose",
             bps_dim=bps_dim,
+            validation_objects=validation_objects,
+            test_objects=test_objects,
+            right_hand_only=right_hand_only,
+            obj_ptcld_size=obj_ptcld_size,
+            perturbation_level=perturbation_level,
             max_views_per_grasp=max_views_per_grasp,
-            noisy_samples_per_grasp=self._noisy_samples_per_grasp,
+            noisy_samples_per_grasp=noisy_samples_per_grasp,
             rescale=rescale,
             center_on_object_com=center_on_object_com,
             remap_bps_distances=remap_bps_distances,
@@ -146,11 +145,9 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 25 if tiny else 51
+        n_participants = 15 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
-        if not osp.isdir(self._cache_dir):
-            os.makedirs(self._cache_dir)
         for p_num in p_nums:
             for intent in intents:
                 for obj_name in get_object_names(p_num, intent):
@@ -165,18 +162,24 @@ class ContactPoseDataset(BaseDataset):
         # validation_objects if we're in eval mode:
         object_names = sorted(list(cp_dataset.keys()))
         random.Random(seed).shuffle(object_names)
-        assert self._validation_objects < len(object_names), (
-            f"validation_objects ({self._validation_objects})"
-            + " must be less than n_objects ({len(object_names)})"
+        assert (self._validation_objects + self._test_objects) < len(object_names), (
+            f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
+            + f" must be less than n_objects ({len(object_names)})"
         )
         assert (
             self._validation_objects >= 1
         ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
+        assert (
+            self._test_objects >= 1
+        ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
         if split == "train":
             object_names = object_names[: -self._validation_objects]
-        else:
-            # TODO: Test set haha
-            object_names = object_names[-self._validation_objects :]
+        elif split == "val":
+            object_names = object_names[
+                -(self._validation_objects + self._test_objects) : -self._test_objects
+            ]
+        elif split == "test":
+            object_names = object_names[-self._test_objects :]
         # Now, build the dataset.
         # objects: unique object paths
         # objects_w_contacts: object with contacts paths
@@ -187,7 +190,8 @@ class ContactPoseDataset(BaseDataset):
         dataset_path = osp.join(
             self._cache_dir,
             f"dataset_{split}_{n_participants}-participants"
-            + f"_{self._validation_objects}-hold-out"
+            + f"_{self._validation_objects}-val-held-out"
+            + f"_{self._test_objects}-test-held-out"
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
@@ -256,11 +260,6 @@ class ContactPoseDataset(BaseDataset):
         dataset_name: str,
     ) -> List[str]:
         grasp_paths = []
-        """
-        Make sure that we're using the same BPS for CHOIR generation, training and test-time
-        optimization! It's very important otherwise we can't learn anything meaningful and
-        generalize.
-        """
         # TODO: We should just hash all the class properties and use that as the cache key. This is
         # a bit hacky and not scalable.
         samples_labels_pickle_pth = osp.join(
@@ -423,13 +422,6 @@ class ContactPoseDataset(BaseDataset):
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
-                    # anchor_orientations = torch.nn.functional.normalize(
-                    # anchor_deltas, dim=1
-                    # )
-                    # Compute the dense MANO contact map
-                    # hand_contacts = compute_hand_contacts_simple(
-                    # ref_pts.float(), verts.float()
-                    # )
 
                     if "2.0" in torch.__version__:
                         # ============ With Pytorch 2.0 Nested Tensor ============
@@ -439,6 +431,9 @@ class ContactPoseDataset(BaseDataset):
                                     choir.squeeze(0),  # (N, 2)
                                     rescaled_ref_pts.squeeze(0),  # (N, 3)
                                     scalar.unsqueeze(0),  # (1, 1)
+                                    torch.ones((1, 1)).cuda()
+                                    if hand_idx == "right"
+                                    else torch.zeros((1, 1)).cuda(),  # (1, 1)
                                 ]
                             ),
                             0.0,
@@ -471,6 +466,15 @@ class ContactPoseDataset(BaseDataset):
                                 rescaled_ref_pts.squeeze(0),
                                 torch.nn.functional.pad(
                                     scalar.unsqueeze(0), (0, 2), value=0.0
+                                ).repeat((self._bps_dim, 1)),
+                                torch.nn.functional.pad(
+                                    (
+                                        torch.ones((1, 1)).cuda()
+                                        if hand_idx == "right"
+                                        else torch.zeros((1, 1)).cuda()
+                                    ),
+                                    (0, 2),
+                                    value=0.0,
                                 ).repeat((self._bps_dim, 1)),
                             ],
                             dim=0,
@@ -521,19 +525,12 @@ class ContactPoseDataset(BaseDataset):
                     sample_paths.append(sample_pth)
                     if visualize and not has_visualized:
                         print("[*] Plotting CHOIR... (please be patient)")
-                        # hand_contacts = (
-                        # compute_hand_contacts_simple(ref_pts.float(), verts.float())
-                        # .squeeze(0)
-                        # .cpu()
-                        # )
                         visualize_CHOIR(
                             gt_choir.squeeze(0),
                             self._bps,
                             gt_scalar,
-                            # hand_contacts,
                             gt_verts.squeeze(0),
                             gt_anchors.squeeze(0),
-                            # anchor_orientations,
                             obj_mesh,
                             obj_ptcld,
                             gt_rescaled_ref_pts.squeeze(0),
@@ -550,21 +547,20 @@ class ContactPoseDataset(BaseDataset):
                             pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )
                         visualize_CHOIR_prediction(
-                            choir,
+                            gt_choir,
                             gt_choir,
                             self._bps,
                             scalar,
                             gt_scalar,
                             rescaled_ref_pts,
                             gt_rescaled_ref_pts,
-                            {
-                                "pose": gt_theta,
-                                "beta": gt_beta,
-                                "rot_6d": gt_rot_6d,
-                                "trans": gt_trans,
-                            },
-                            self._remap_bps_distances,
-                            self._exponential_map_w,
+                            gt_verts,
+                            gt_joints,
+                            gt_anchors,
+                            is_rhand=(hand_idx == "right"),
+                            use_smplx=False,
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
                         )
                         has_visualized = True
                 grasp_paths.append(sample_paths)

@@ -6,9 +6,11 @@
 # Distributed under terms of the MIT license.
 
 
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+from torch.optim import Optimizer
+from torch.utils.data import DataLoader
 
 from src.base_trainer import BaseTrainer
 from utils import to_cuda
@@ -19,10 +21,25 @@ from utils.visualization import visualize_model_predictions_with_multiple_views
 class MultiViewTrainer(BaseTrainer):
     def __init__(
         self,
-        *args,
+        run_name: str,
+        model: torch.nn.Module,
+        opt: Optimizer,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        training_loss: torch.nn.Module,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            run_name,
+            model,
+            opt,
+            train_loader,
+            val_loader,
+            training_loss,
+            scheduler,
+        )
+        self._fine_tune = kwargs.get("fine_tune", False)
 
     @to_cuda
     def _visualize(
@@ -60,12 +77,15 @@ class MultiViewTrainer(BaseTrainer):
         """
         x, y = batch
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
-        y_hat = self._model(samples["choir"], labels["choir"])
+        # If we're fine tuning, we'll skip the labels and train the prior!
+        y_hat = self._model(
+            samples["choir"], labels["choir"] if not self._fine_tune else None
+        )
         # If we're in validation mode, let's rescale the CHOIR prediction and ground-truth so that
         # all metrics are comparable  between different scaling modes, etc.
         losses = self._training_loss(
             samples, labels, y_hat, rescale=validation
-        )  # TODO: Multiview + Contrastive Learning loss
+        )  # TODO: Contrastive Learning loss
         loss = sum([v for v in losses.values()])
         # Again without using the posterior:
         y_hat = self._model(samples["choir"])
