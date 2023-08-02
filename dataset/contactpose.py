@@ -175,7 +175,9 @@ class ContactPoseDataset(BaseDataset):
             self._test_objects >= 1
         ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
         if split == "train":
-            object_names = object_names[: -self._validation_objects]
+            object_names = object_names[
+                : -(self._validation_objects + self._test_objects)
+            ]
         elif split == "val":
             object_names = object_names[
                 -(self._validation_objects + self._test_objects) : -self._test_objects
