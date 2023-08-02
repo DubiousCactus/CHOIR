@@ -82,7 +82,7 @@ def launch_experiment(
     train_dataset, val_dataset, test_dataset = (
         dataset(split="train"),
         dataset(split="val"),
-        dataset(split="test"),
+        dataset(split="test", augment=False),
     )
     opt_inst = optimizer(model_inst.parameters())
     scheduler_inst = scheduler(

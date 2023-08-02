@@ -147,7 +147,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 25 if tiny else 51
+        n_participants = 15 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         for p_num in p_nums:
@@ -232,8 +232,6 @@ class ContactPoseDataset(BaseDataset):
                         )
                     objects_w_contacts.append(obj_mesh_w_contacts_path)
                     grasps.append(grasp_path)
-                    # if obj_name not in objects:
-                    # objects[obj_name] = obj_mesh_w_contacts_path
             pickle.dump((objects_w_contacts, grasps), open(dataset_path, "wb"))
         n_left = sum([1 for g in grasps if "left-hand" in g])
         n_right = sum([1 for g in grasps if "right-hand" in g])
