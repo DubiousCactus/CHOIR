@@ -239,9 +239,14 @@ class ContactPoseDataset(BaseDataset):
         print(
             f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
         )
+        split_name = (
+            "train"
+            if split == "train"
+            else ("validation" if split == "val" else "Test")
+        )
         print(
             colorize(
-                f"[*] {'Training' if split == 'train' else 'Validation'} objects: {', '.join(object_names)}",
+                f"[*] {split_name} objects: {', '.join(object_names)}",
                 ANSI_COLORS[
                     Theme.TRAINING.value if split == "train" else Theme.VALIDATION.value
                 ],

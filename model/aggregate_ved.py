@@ -188,7 +188,7 @@ class Aggregate_VED(torch.nn.Module):
         sqrt_distances = self.decoder[-1](x)
         if self.remapped_bps_distances:
             # No need to square the distances since we're using sigmoid
-            anchor_dist = (F.sigmoid(sqrt_distances)).view(B, P, 1)  # N, 1
+            anchor_dist = (torch.sigmoid(sqrt_distances)).view(B, P, 1)  # N, 1
         else:
             anchor_dist = (sqrt_distances**2).view(B, P, 1)  # N, 1
 

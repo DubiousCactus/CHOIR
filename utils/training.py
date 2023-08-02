@@ -123,14 +123,16 @@ def optimize_pose_pca_from_choir(
         )  # ** 2  # Encourage the shape parameters to remain close to 0
 
         proc_bar.set_description(f"Anchors loss: {loss.item():.10f}")
-        loss = loss + regularizer
-        if torch.abs(prev_loss - loss.detach().type(torch.float64)) < loss_thresh:
+        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
             plateau_cnt += 1
+        else:
+            plateau_cnt = 0
         prev_loss = loss.detach().type(torch.float64)
+        loss = loss + regularizer
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if plateau_cnt >= 5:
+        if plateau_cnt >= 10:
             break
 
     return (
