@@ -30,7 +30,7 @@ import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
-from model.aggregate_cpvae import Aggregate_CPVAE
+from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
@@ -146,7 +146,7 @@ model_store(
 
 model_store(
     pbuilds(
-        Aggregate_CPVAE,
+        Aggregate_VED,
         builds_bases=(BaselineModelConf,),
         bps_dim=MISSING,
         remapped_bps_distances=MISSING,  # Sigmoid if so

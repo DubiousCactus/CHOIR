@@ -292,9 +292,7 @@ class GRABDataset(BaseDataset):
                         )
                         pose_noise = torch.cat(
                             [
-                                torch.rand(3)
-                                * self._perturbations[self._perturbation_level]["rot"],
-                                torch.rand(21)
+                                torch.rand(24)
                                 * self._perturbations[self._perturbation_level]["pca"],
                             ]
                         )

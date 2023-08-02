@@ -22,20 +22,14 @@ import numpy as np
 import torch
 from hydra.utils import get_original_cwd
 from open3d import io as o3dio
-from pytorch3d.transforms import matrix_to_rotation_6d
+from pytorch3d.transforms import Transform3d, matrix_to_rotation_6d, random_rotation
 from tqdm import tqdm
-from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
 from utils.dataset import compute_choir, compute_hand_object_pair_scalar
-from utils.visualization import (
-    visualize_CHOIR,
-    visualize_CHOIR_prediction,
-    visualize_MANO,
-)
 
 
 class ContactPoseDataset(BaseDataset):
@@ -145,7 +139,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
-        n_participants = 15 if tiny else 51
+        n_participants = 25 if tiny else 51
         p_nums = list(range(1, n_participants))
         intents = ["use", "handoff"]
         for p_num in p_nums:
@@ -272,11 +266,13 @@ class ContactPoseDataset(BaseDataset):
             + f"{self._rescale}_rescaled_"
             + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
             + (f"{self._exponential_map_w}_" if self._remap_bps_distances else "")
-            + f"{split}",
+            + f"{split}{'_augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
         affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
+
+        n_augs = 2 if self._augment else 1
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
@@ -301,267 +297,311 @@ class ContactPoseDataset(BaseDataset):
                 grasp_data["intent"],
                 grasp_data["hand_idx"],
             )
-            grasp_name = f"{obj_name}_{p_num}_{intent}_{hand_idx}"
-            if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
-                os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
-            if (
-                len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
-                >= self._noisy_samples_per_grasp
-            ):
-                grasp_paths.append(
-                    [
-                        osp.join(
-                            samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
-                        )
-                        for i in range(self._noisy_samples_per_grasp)
-                    ]
-                )
-            else:
-                obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                obj_ptcld = torch.from_numpy(
-                    np.asarray(
-                        obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
+            for k in range(n_augs):
+                grasp_name = f"{obj_name}_{p_num}_{intent}_{hand_idx}_aug-{k}"
+                if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
+                    os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
+                if (
+                    len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
+                    >= self._noisy_samples_per_grasp
+                ):
+                    grasp_paths.append(
+                        [
+                            osp.join(
+                                samples_labels_pickle_pth,
+                                grasp_name,
+                                f"sample_{i:06d}.pkl",
+                            )
+                            for i in range(self._noisy_samples_per_grasp)
+                        ]
                     )
-                )
-                visualize = self._debug and (random.Random().random() < 0.01)
-                has_visualized = False
-                # ================== Original Hand-Object Pair ==================
-                mano_params = grasp_data["grasp"][0]
-                gt_hTm = (
-                    torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
-                )
-                gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
-                gt_trans = gt_hTm[:, :3, 3]
-                gt_theta, gt_beta = (
-                    torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
-                    torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
-                )
-                # ============ Shift the pair to the object's center ============
-                if self._center_on_object_com:
-                    obj_center = torch.from_numpy(obj_mesh.get_center())
-                    obj_mesh.translate(-obj_center)
-                    obj_ptcld -= obj_center.to(obj_ptcld.device)
-                    gt_trans -= obj_center.to(gt_trans.device)
-                # ===============================================================
-                gt_verts, gt_joints = affine_mano(
-                    gt_theta, gt_beta, gt_rot_6d, gt_trans
-                )
-                # ===============================================================
-                gt_anchors = affine_mano.get_anchors(gt_verts)
-                # ================== Rescaled Hand-Object Pair ==================
-                if self._rescale == "pair":
-                    gt_scalar = compute_hand_object_pair_scalar(gt_anchors, obj_ptcld)
-                elif self._rescale == "fixed":
-                    gt_scalar = torch.tensor([10.0]).cuda()
-                elif self._rescale == "none":
-                    gt_scalar = torch.tensor([1.0]).cuda()
                 else:
-                    raise ValueError(f"Unknown rescale type {self._rescale}")
+                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
 
-                # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
-                # workers, but bps_torch is forcing my hand here so I might as well help it.
-                gt_choir, gt_rescaled_ref_pts = compute_choir(
-                    to_cuda_(obj_ptcld).unsqueeze(0),
-                    to_cuda_(gt_anchors),
-                    scalar=gt_scalar,
-                    bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                    remap_bps_distances=self._remap_bps_distances,
-                    exponential_map_w=self._exponential_map_w,
-                )
-
-                sample_paths = []
-                # ================== Perturbed Hand-Object Pair ==================
-                for j in range(self._noisy_samples_per_grasp):
-                    sample_pth = osp.join(
-                        samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
-                    )
-                    if osp.isfile(sample_pth):
-                        sample_paths.append(sample_pth)
-                        continue
-
-                    theta, beta, rot_6d, trans = (
-                        deepcopy(gt_theta),
-                        deepcopy(gt_beta),
-                        deepcopy(gt_rot_6d),
-                        deepcopy(gt_trans),
-                    )
-                    if self._perturbation_level > 0:
-                        trans_noise = (
-                            torch.rand(3, device=trans.device)
-                            * self._perturbations[self._perturbation_level]["trans"]
+                    obj_ptcld = (
+                        torch.from_numpy(
+                            np.asarray(
+                                obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
+                            )
                         )
-                        pose_noise = torch.cat(
-                            [
-                                torch.rand(3)
-                                * self._perturbations[self._perturbation_level]["rot"],
-                                torch.rand(15)
-                                * self._perturbations[self._perturbation_level]["pca"],
-                            ]
-                        ).to(theta.device)
-                        theta += pose_noise
-                        trans += trans_noise
-
-                    verts, _ = affine_mano(theta, beta, rot_6d, trans)
-
-                    anchors = affine_mano.get_anchors(verts)
+                        .cuda()
+                        .float()
+                    )
+                    visualize = self._debug and (random.Random().random() < 0.05)
+                    has_visualized = False
+                    # ================== Original Hand-Object Pair ==================
+                    mano_params = grasp_data["grasp"][0]
+                    gt_hTm = (
+                        torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
+                    )
+                    # =================== Apply augmentation =========================
+                    if k > 0:  # Skip augmentation for the first sample
+                        print("Augmenting")
+                        # Randomly rotate the object and hand meshes
+                        rot_mat = random_rotation().to(gt_hTm.device)
+                        # rot_mat = torch.eye(3).to(gt_hTm.device)
+                        rand_rotation = (
+                            Transform3d().rotate(rot_mat).to(obj_ptcld.device)
+                        )
+                        # obj_ptcld = rand_rotation.transform_points(obj_ptcld)
+                        # gt_hTm =  gt_hTm @ rand_rotation.get_matrix()
+                        # gt_hTm[:, :3, :3] = gt_hTm[:, :3, :3] @ rot_mat
+                    # =================================================================
+                    # gt_hTm = torch.eye(4).to(gt_hTm.device).unsqueeze(0)
+                    gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
+                    gt_trans = gt_hTm[:, :3, 3]
+                    gt_theta, gt_beta = (
+                        torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
+                        torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
+                    )
+                    # gt_theta[:, :3] = torch.zeros_like(gt_theta[:, :3])
+                    # print("Wrist rot: ", gt_theta[:, :3])
+                    # if k > 0:
+                    # gt_theta[:, :3] = matrix_to_axis_angle(rot_mat @ axis_angle_to_matrix(gt_theta[:, :3]))
+                    # ============ Shift the pair to the object's center ============
+                    if self._center_on_object_com:
+                        obj_center = torch.from_numpy(obj_mesh.get_center())
+                        obj_mesh.translate(-obj_center)
+                        obj_ptcld -= obj_center.to(obj_ptcld.device)
+                        gt_trans -= obj_center.to(gt_trans.device)
+                    # ===============================================================
+                    gt_verts, gt_joints = affine_mano(
+                        gt_theta, gt_beta, gt_rot_6d, gt_trans
+                    )
+                    # mesh = Trimesh(gt_verts[0].cpu().numpy(), affine_mano.faces.cpu().numpy())
+                    # visualize_MANO(mesh, obj_ptcld=obj_ptcld)
+                    # ===============================================================
+                    gt_anchors = affine_mano.get_anchors(gt_verts)
+                    # ================== Rescaled Hand-Object Pair ==================
                     if self._rescale == "pair":
-                        scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
+                        gt_scalar = compute_hand_object_pair_scalar(
+                            gt_anchors, obj_ptcld
+                        )
+                    elif self._rescale == "object":
+                        gt_scalar = compute_hand_object_pair_scalar(
+                            gt_anchors, obj_ptcld, scale_by_object_only=True
+                        )
                     elif self._rescale == "fixed":
-                        scalar = torch.tensor([10.0]).cuda()
+                        gt_scalar = torch.tensor([10.0]).cuda()
                     elif self._rescale == "none":
-                        scalar = torch.tensor([1.0]).cuda()
+                        gt_scalar = torch.tensor([1.0]).cuda()
                     else:
                         raise ValueError(f"Unknown rescale type {self._rescale}")
+
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
-                    choir, rescaled_ref_pts = compute_choir(
+                    gt_choir, gt_rescaled_ref_pts = compute_choir(
                         to_cuda_(obj_ptcld).unsqueeze(0),
-                        to_cuda_(anchors),
-                        scalar=scalar,
+                        to_cuda_(gt_anchors),
+                        scalar=gt_scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
 
-                    if "2.0" in torch.__version__:
-                        # ============ With Pytorch 2.0 Nested Tensor ============
-                        sample = torch.nested.to_padded_tensor(
-                            torch.nested.nested_tensor(
+                    sample_paths = []
+                    # ================== Perturbed Hand-Object Pair ==================
+                    for j in range(self._noisy_samples_per_grasp):
+                        sample_pth = osp.join(
+                            samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
+                        )
+                        if osp.isfile(sample_pth):
+                            sample_paths.append(sample_pth)
+                            continue
+
+                        theta, beta, rot_6d, trans = (
+                            deepcopy(gt_theta),
+                            deepcopy(gt_beta),
+                            deepcopy(gt_rot_6d),
+                            deepcopy(gt_trans),
+                        )
+                        if self._perturbation_level > 0:
+                            trans_noise = (
+                                torch.rand(3, device=trans.device)
+                                * self._perturbations[self._perturbation_level]["trans"]
+                            )
+                            pose_noise = torch.cat(
                                 [
-                                    choir.squeeze(0),  # (N, 2)
-                                    rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                    scalar.unsqueeze(0),  # (1, 1)
-                                    torch.ones((1, 1)).cuda()
-                                    if hand_idx == "right"
-                                    else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                                    torch.rand(3)
+                                    * self._perturbations[self._perturbation_level][
+                                        "rot"
+                                    ],
+                                    torch.rand(15)
+                                    * self._perturbations[self._perturbation_level][
+                                        "pca"
+                                    ],
                                 ]
-                            ),
-                            0.0,
-                        ).cpu()
+                            ).to(theta.device)
+                            theta += pose_noise
+                            trans += trans_noise
 
-                        label = torch.nested.to_padded_tensor(
-                            torch.nested.nested_tensor(
-                                [
-                                    gt_choir.squeeze(0),  # (N, 2)
-                                    gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                    gt_scalar.unsqueeze(0),  # (1, 1)
-                                    gt_joints.squeeze(0),  # (21, 3)
-                                    gt_anchors.squeeze(0),  # (32, 3)
-                                    gt_theta,  # (1, 18)
-                                    gt_beta,  # (1, 10)
-                                    gt_rot_6d,  # (1, 6)
-                                    gt_trans,  # (1, 3)
-                                ]
-                            ),
-                            0.0,
-                        ).cpu()
-                        # ========================================================
-                    else:
-                        # ============== Without Pytorch 2.0 Nested Tensor ==============
-                        sample = torch.stack(
-                            [
-                                torch.nn.functional.pad(
-                                    choir.squeeze(0), (0, 1), value=0.0
-                                ),
-                                rescaled_ref_pts.squeeze(0),
-                                torch.nn.functional.pad(
-                                    scalar.unsqueeze(0), (0, 2), value=0.0
-                                ).repeat((self._bps_dim, 1)),
-                                torch.nn.functional.pad(
-                                    (
-                                        torch.ones((1, 1)).cuda()
-                                        if hand_idx == "right"
-                                        else torch.zeros((1, 1)).cuda()
-                                    ),
-                                    (0, 2),
-                                    value=0.0,
-                                ).repeat((self._bps_dim, 1)),
-                            ],
-                            dim=0,
-                        ).cpu()
+                        verts, _ = affine_mano(theta, beta, rot_6d, trans)
 
-                        padded_joints = torch.zeros(
-                            (self._bps_dim, 18), device=gt_joints.device
-                        )
-                        padded_joints[
-                            : gt_joints.squeeze(0).shape[0], :3
-                        ] = gt_joints.squeeze(0)
-                        padded_anchors = torch.zeros(
-                            (self._bps_dim, 18), device=gt_anchors.device
-                        )
-                        padded_anchors[
-                            : gt_anchors.squeeze(0).shape[0], :3
-                        ] = gt_anchors.squeeze(0)
-                        label = torch.stack(
-                            [
-                                torch.nn.functional.pad(
-                                    gt_choir.squeeze(0), (0, 16), value=0.0
-                                ),
-                                torch.nn.functional.pad(
-                                    gt_rescaled_ref_pts.squeeze(0), (0, 15), value=0.0
-                                ),
-                                torch.nn.functional.pad(
-                                    gt_scalar.unsqueeze(0), (0, 17), value=0.0
-                                ).repeat((self._bps_dim, 1)),
-                                padded_joints,
-                                padded_anchors,
-                                gt_theta.repeat((self._bps_dim, 1)),
-                                torch.nn.functional.pad(
-                                    gt_beta, (0, 8), value=0.0
-                                ).repeat((self._bps_dim, 1)),
-                                torch.nn.functional.pad(
-                                    gt_rot_6d, (0, 12), value=0.0
-                                ).repeat((self._bps_dim, 1)),
-                                torch.nn.functional.pad(
-                                    gt_trans, (0, 15), value=0.0
-                                ).repeat((self._bps_dim, 1)),
-                            ],
-                            dim=0,
-                        ).cpu()
-                        # =================================================================
-
-                    with open(sample_pth, "wb") as f:
-                        pickle.dump((sample, label), f)
-                    sample_paths.append(sample_pth)
-                    if visualize and not has_visualized:
-                        print("[*] Plotting CHOIR... (please be patient)")
-                        visualize_CHOIR(
-                            gt_choir.squeeze(0),
-                            self._bps,
-                            gt_scalar,
-                            gt_verts.squeeze(0),
-                            gt_anchors.squeeze(0),
-                            obj_mesh,
-                            obj_ptcld,
-                            gt_rescaled_ref_pts.squeeze(0),
-                            affine_mano,
-                        )
-                        faces = affine_mano.faces
-                        gt_MANO_mesh = Trimesh(
-                            gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                        )
-                        pred_MANO_mesh = Trimesh(
-                            verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                        )
-                        visualize_MANO(
-                            pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                        )
-                        visualize_CHOIR_prediction(
-                            gt_choir,
-                            gt_choir,
-                            self._bps,
-                            scalar,
-                            gt_scalar,
-                            rescaled_ref_pts,
-                            gt_rescaled_ref_pts,
-                            gt_verts,
-                            gt_joints,
-                            gt_anchors,
-                            is_rhand=(hand_idx == "right"),
-                            use_smplx=False,
+                        anchors = affine_mano.get_anchors(verts)
+                        if self._rescale == "pair":
+                            scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
+                        elif self._rescale == "object":
+                            scalar = compute_hand_object_pair_scalar(
+                                anchors, obj_ptcld, scale_by_object_only=True
+                            )
+                        elif self._rescale == "fixed":
+                            scalar = torch.tensor([10.0]).cuda()
+                        elif self._rescale == "none":
+                            scalar = torch.tensor([1.0]).cuda()
+                        else:
+                            raise ValueError(f"Unknown rescale type {self._rescale}")
+                        # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
+                        # workers, but bps_torch is forcing my hand here so I might as well help it.
+                        choir, rescaled_ref_pts = compute_choir(
+                            to_cuda_(obj_ptcld).unsqueeze(0),
+                            to_cuda_(anchors),
+                            scalar=scalar,
+                            bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
-                        has_visualized = True
-                grasp_paths.append(sample_paths)
+
+                        if "2.0" in torch.__version__:
+                            # ============ With Pytorch 2.0 Nested Tensor ============
+                            sample = torch.nested.to_padded_tensor(
+                                torch.nested.nested_tensor(
+                                    [
+                                        choir.squeeze(0),  # (N, 2)
+                                        rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                        scalar.unsqueeze(0),  # (1, 1)
+                                        torch.ones((1, 1)).cuda()
+                                        if hand_idx == "right"
+                                        else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                                    ]
+                                ),
+                                0.0,
+                            ).cpu()
+
+                            label = torch.nested.to_padded_tensor(
+                                torch.nested.nested_tensor(
+                                    [
+                                        gt_choir.squeeze(0),  # (N, 2)
+                                        gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
+                                        gt_scalar.unsqueeze(0),  # (1, 1)
+                                        gt_joints.squeeze(0),  # (21, 3)
+                                        gt_anchors.squeeze(0),  # (32, 3)
+                                        gt_theta,  # (1, 18)
+                                        gt_beta,  # (1, 10)
+                                        gt_rot_6d,  # (1, 6)
+                                        gt_trans,  # (1, 3)
+                                    ]
+                                ),
+                                0.0,
+                            ).cpu()
+                            # ========================================================
+                        else:
+                            # ============== Without Pytorch 2.0 Nested Tensor ==============
+                            sample = torch.stack(
+                                [
+                                    torch.nn.functional.pad(
+                                        choir.squeeze(0), (0, 1), value=0.0
+                                    ),
+                                    rescaled_ref_pts.squeeze(0),
+                                    torch.nn.functional.pad(
+                                        scalar.unsqueeze(0), (0, 2), value=0.0
+                                    ).repeat((self._bps_dim, 1)),
+                                    torch.nn.functional.pad(
+                                        (
+                                            torch.ones((1, 1)).cuda()
+                                            if hand_idx == "right"
+                                            else torch.zeros((1, 1)).cuda()
+                                        ),
+                                        (0, 2),
+                                        value=0.0,
+                                    ).repeat((self._bps_dim, 1)),
+                                ],
+                                dim=0,
+                            ).cpu()
+
+                            padded_joints = torch.zeros(
+                                (self._bps_dim, 18), device=gt_joints.device
+                            )
+                            padded_joints[
+                                : gt_joints.squeeze(0).shape[0], :3
+                            ] = gt_joints.squeeze(0)
+                            padded_anchors = torch.zeros(
+                                (self._bps_dim, 18), device=gt_anchors.device
+                            )
+                            padded_anchors[
+                                : gt_anchors.squeeze(0).shape[0], :3
+                            ] = gt_anchors.squeeze(0)
+                            label = torch.stack(
+                                [
+                                    torch.nn.functional.pad(
+                                        gt_choir.squeeze(0), (0, 16), value=0.0
+                                    ),
+                                    torch.nn.functional.pad(
+                                        gt_rescaled_ref_pts.squeeze(0),
+                                        (0, 15),
+                                        value=0.0,
+                                    ),
+                                    torch.nn.functional.pad(
+                                        gt_scalar.unsqueeze(0), (0, 17), value=0.0
+                                    ).repeat((self._bps_dim, 1)),
+                                    padded_joints,
+                                    padded_anchors,
+                                    gt_theta.repeat((self._bps_dim, 1)),
+                                    torch.nn.functional.pad(
+                                        gt_beta, (0, 8), value=0.0
+                                    ).repeat((self._bps_dim, 1)),
+                                    torch.nn.functional.pad(
+                                        gt_rot_6d, (0, 12), value=0.0
+                                    ).repeat((self._bps_dim, 1)),
+                                    torch.nn.functional.pad(
+                                        gt_trans, (0, 15), value=0.0
+                                    ).repeat((self._bps_dim, 1)),
+                                ],
+                                dim=0,
+                            ).cpu()
+                            # =================================================================
+
+                        with open(sample_pth, "wb") as f:
+                            pickle.dump((sample, label), f)
+                        sample_paths.append(sample_pth)
+                        if visualize and not has_visualized:
+                            print("[*] Plotting CHOIR... (please be patient)")
+                            # visualize_CHOIR(
+                            # gt_choir.squeeze(0),
+                            # self._bps,
+                            # gt_scalar,
+                            # gt_verts.squeeze(0),
+                            # gt_anchors.squeeze(0),
+                            # obj_mesh,
+                            # obj_ptcld,
+                            # gt_rescaled_ref_pts.squeeze(0),
+                            # affine_mano,
+                            # )
+                            # faces = affine_mano.faces
+                            # gt_MANO_mesh = Trimesh(
+                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # pred_MANO_mesh = Trimesh(
+                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # visualize_MANO(
+                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            # )
+                            # visualize_CHOIR_prediction(
+                            # gt_choir,
+                            # gt_choir,
+                            # self._bps,
+                            # scalar,
+                            # gt_scalar,
+                            # rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # )
+                            has_visualized = True
+                    grasp_paths.append(sample_paths)
         return grasp_paths

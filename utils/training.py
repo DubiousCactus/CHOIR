@@ -41,7 +41,7 @@ def optimize_pose_pca_from_choir(
     before the exponential map, if they are used. So we must first apply the inverse exponential
     map, and then the inverse of the scalar.
     """
-    ncomps = 21 if use_smplx else 15  # 21+3 for GRAB, 15+3 for ContactPose
+    ncomps = 24 if use_smplx else 15  # 24 for GRAB, 15 for ContactPose
     assert len(choir.shape) == 3
     B = choir.shape[0]
     affine_mano, smplx_model = None, None
@@ -52,14 +52,18 @@ def optimize_pose_pca_from_choir(
                     model_path=project_conf.SMPLX_MODEL_PATH,
                     model_type="mano",
                     is_rhand=is_rhand,
-                    num_pca_comps=24,
+                    num_pca_comps=ncomps,
                     flat_hand_mean=False,
                     batch_size=B,
                 )
             )
     affine_mano = to_cuda_(AffineMANO(ncomps))
     if initial_params is None:
-        theta = (torch.rand((B, ncomps + 3)) * 0.01).cuda().requires_grad_(True)
+        theta = (
+            (torch.rand((B, ncomps + (3 if not use_smplx else 0))) * 0.01)
+            .cuda()
+            .requires_grad_(True)
+        )
         beta = (torch.rand((B, 10)) * 0.01).cuda().requires_grad_(True)
         if use_smplx:
             rot = (
@@ -126,7 +130,7 @@ def optimize_pose_pca_from_choir(
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if plateau_cnt >= 100:
+        if plateau_cnt >= 5:
             break
 
     return (

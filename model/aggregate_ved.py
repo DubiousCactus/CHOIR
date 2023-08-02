@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 
 
-class Aggregate_CPVAE(torch.nn.Module):
+class Aggregate_VED(torch.nn.Module):
     def __init__(
         self,
         bps_dim: int,

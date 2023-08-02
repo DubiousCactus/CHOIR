@@ -80,13 +80,18 @@ class BaseDataset(TaskSet, abc.ABC):
         )
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
-        bps_path = osp.join(self._cache_dir, f"bps_{self._bps_dim}.pkl")
+        bps_path = osp.join(
+            get_original_cwd(), "data", f"bps_{self._bps_dim}_{rescale}-rescaled.pkl"
+        )
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
                 bps = pickle.load(f)
         else:
             bps = sample_sphere_uniform(
-                n_points=self._bps_dim, n_dims=3, radius=0.2, random_seed=1995
+                n_points=self._bps_dim,
+                n_dims=3,
+                radius=0.2 if rescale == "none" else 0.6,
+                random_seed=1995,
             ).cpu()
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)

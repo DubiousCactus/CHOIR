@@ -35,10 +35,15 @@ def transform_verts(
 def compute_hand_object_pair_scalar(
     hand_anchors: torch.Tensor,
     object_point_cloud: torch.Tensor,
+    scale_by_object_only: bool = False,
 ) -> torch.Tensor:
     # Build a pointcloud from the object points + hand anchors with open3D/Pytorch3D.
-    hand_object_pointcloud = Pointclouds(
-        torch.cat([object_point_cloud, hand_anchors.squeeze(0).cpu()], dim=0)
+    pointcloud = Pointclouds(
+        (
+            torch.cat([object_point_cloud, hand_anchors.squeeze(0).cpu()], dim=0)
+            if not scale_by_object_only
+            else object_point_cloud
+        )
         .unsqueeze(0)
         .cuda()
     )
@@ -49,21 +54,15 @@ def compute_hand_object_pair_scalar(
     # (N, 3, 2) where bbox[i,j] gives the min and max values of mesh i along axis j. So
     # bbox[i,:,0] is the min values of mesh i along all axes, and bbox[i,:,1] is the max
     # values of mesh i along all axes.
-    hand_object_bboxes = hand_object_pointcloud.get_bounding_boxes()
-    hand_object_bboxes_diag = torch.norm(
-        hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
-    )  # (N,) but N=1
-    hand_object_scalar = 1.0 / hand_object_bboxes_diag  # (N,)
+    bboxes = pointcloud.get_bounding_boxes()
+    bboxes_diag = torch.norm(bboxes[:, :, 1] - bboxes[:, :, 0], dim=1)  # (N,) but N=1
+    hand_object_scalar = 1.0 / bboxes_diag  # (N,)
     # Make sure that the new bounding boxes have a diagonal of 1.
-    rescaled_hand_object_pointcloud = hand_object_pointcloud.scale(
-        hand_object_scalar.unsqueeze(1)
-    )  # (N, 3, M)
-    hand_object_bboxes = rescaled_hand_object_pointcloud.get_bounding_boxes()
-    hand_object_bboxes_diag = torch.norm(
-        hand_object_bboxes[:, :, 1] - hand_object_bboxes[:, :, 0], dim=1
-    )
+    rescaled_pointcloud = pointcloud.scale(hand_object_scalar.unsqueeze(1))  # (N, 3, M)
+    bboxes = rescaled_pointcloud.get_bounding_boxes()
+    bboxes_diag = torch.norm(bboxes[:, :, 1] - bboxes[:, :, 0], dim=1)
     assert torch.allclose(
-        hand_object_bboxes_diag, torch.ones_like(hand_object_bboxes_diag)
+        bboxes_diag, torch.ones_like(bboxes_diag)
     ), "Bounding boxes are not unit cubes."
     return hand_object_scalar.float()
 

@@ -78,17 +78,27 @@ class MultiViewTester(MultiViewTrainer):
         gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         with torch.set_grad_enabled(True):
-            pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+            (
+                pose,
+                shape,
+                rot_6d,
+                trans,
+                anchors_pred,
+                verts_pred,
+                joints_pred,
+            ) = optimize_pose_pca_from_choir(
                 y_hat["choir"],
                 bps=self._bps,
                 scalar=input_scalar,
-                max_iterations=5000,
-                loss_thresh=1e-14,
+                max_iterations=8000,
+                loss_thresh=1e-10,
                 lr=3e-2,
+                is_rhand=False,  # TODO
+                use_smplx=False,  # TODO
                 remap_bps_distances=self._remap_bps_distances,
                 exponential_map_w=self._exponential_map_w,
             )
-            verts_pred, joints_pred = self._affine_mano(pose, shape, rot_6d, trans)
+            # verts_pred, joints_pred = self._affine_mano(pose, shape, rot_6d, trans)
         # === Anchor error ===
         anchor_error = (
             torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0)
