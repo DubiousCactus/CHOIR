@@ -63,6 +63,7 @@ class GraspingDatasetConf:
     split: str = "train"
     tiny: bool = False
     augment: bool = False
+    n_augs: int = 10
     validation_objects: int = 3
     test_objects: int = 2
     perturbation_level: int = 0

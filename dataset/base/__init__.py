@@ -40,6 +40,7 @@ class BaseDataset(TaskSet, abc.ABC):
         center_on_object_com: bool,
         tiny: bool,
         augment: bool,
+        n_augs: int,
         seed: int,
         debug: bool,
         rescale: str,
@@ -72,6 +73,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._right_hand_only = right_hand_only
         self._perturbation_level = perturbation_level
         self._augment = augment and split == "train"
+        self._n_augs = n_augs
         self._bps_dim = bps_dim
         self._noisy_samples_per_grasp = noisy_samples_per_grasp
         # self._perturbations = [] # TODO: Implement

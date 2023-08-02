@@ -58,6 +58,7 @@ class GRABDataset(BaseDataset):
         max_views_per_grasp: int = 5,  # Corresponds to window frames here
         tiny: bool = False,
         augment: bool = False,
+        n_augs: int = 1,
         seed: int = 0,
         debug: bool = False,
         rescale: str = "none",
@@ -92,6 +93,7 @@ class GRABDataset(BaseDataset):
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
             augment=augment,
+            n_augs=n_augs,
             split=split,
             tiny=tiny,
             seed=seed,

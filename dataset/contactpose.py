@@ -22,14 +22,20 @@ import numpy as np
 import torch
 from hydra.utils import get_original_cwd
 from open3d import io as o3dio
-from pytorch3d.transforms import Transform3d, matrix_to_rotation_6d, random_rotation
+from pytorch3d.transforms import matrix_to_rotation_6d, random_rotation
 from tqdm import tqdm
+from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
 from utils.dataset import compute_choir, compute_hand_object_pair_scalar
+from utils.visualization import (
+    visualize_CHOIR,
+    visualize_CHOIR_prediction,
+    visualize_MANO,
+)
 
 
 class ContactPoseDataset(BaseDataset):
@@ -55,6 +61,7 @@ class ContactPoseDataset(BaseDataset):
         center_on_object_com: bool = True,
         tiny: bool = False,
         augment: bool = False,
+        n_augs: int = 10,
         seed: int = 0,
         debug: bool = False,
         rescale: str = "none",
@@ -88,6 +95,7 @@ class ContactPoseDataset(BaseDataset):
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
             augment=augment,
+            n_augs=n_augs,
             split=split,
             tiny=tiny,
             seed=seed,
@@ -272,13 +280,12 @@ class ContactPoseDataset(BaseDataset):
             os.makedirs(samples_labels_pickle_pth)
         affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
 
-        n_augs = 2 if self._augment else 1
+        n_augs = self._n_augs if self._augment else 1
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
-        for mesh_pth, grasp_pth in tqdm(
-            zip(objects_w_contacts, grasps), total=len(objects_w_contacts)
-        ):
+        pbar = tqdm(total=len(objects_w_contacts) * n_augs)
+        for mesh_pth, grasp_pth in zip(objects_w_contacts, grasps):
             # Load the object mesh and MANO params
             with open(grasp_pth, "rb") as f:
                 grasp_data = pickle.load(f)
@@ -316,8 +323,42 @@ class ContactPoseDataset(BaseDataset):
                         ]
                     )
                 else:
+                    visualize = self._debug and (random.Random().random() < 0.05)
+                    has_visualized = False
+                    # ================== Original Hand-Object Pair ==================
+                    mano_params = grasp_data["grasp"][0]
+                    gt_hTm = (
+                        torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
+                    )
                     obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                    # =================== Apply augmentation =========================
+                    if self._augment:
+                        # Randomly rotate the object and hand meshes
+                        R = random_rotation().to(gt_hTm.device)
+                        # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
+                        # are expressed w.r.t. the object center. Otherwise, weird things happen.
+                        rotate_origin = obj_mesh.get_center()
+                        obj_mesh.translate(-rotate_origin)
+                        # Rotate the object and hand
+                        obj_mesh.rotate(R.cpu().numpy(), np.array([0, 0, 0]))
+                        r_hTm = torch.eye(4)
+                        # We need to rotate the 4x4 MANO root pose as well, by first converting R to a
+                        # 4x4 homogeneous matrix so we can apply it to the 4x4 pose matrix:
+                        R4 = torch.eye(4)
+                        R4[:3, :3] = R.float()
+                        gt_hTm[:, :3, 3] -= (
+                            torch.from_numpy(rotate_origin).to(gt_hTm.device).float()
+                        )
+                        r_hTm = R4.to(gt_hTm.device) @ gt_hTm
+                        gt_hTm = r_hTm
 
+                    # =================================================================
+                    gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
+                    gt_trans = gt_hTm[:, :3, 3]
+                    gt_theta, gt_beta = (
+                        torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
+                        torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
+                    )
                     obj_ptcld = (
                         torch.from_numpy(
                             np.asarray(
@@ -327,39 +368,9 @@ class ContactPoseDataset(BaseDataset):
                         .cuda()
                         .float()
                     )
-                    visualize = self._debug and (random.Random().random() < 0.05)
-                    has_visualized = False
-                    # ================== Original Hand-Object Pair ==================
-                    mano_params = grasp_data["grasp"][0]
-                    gt_hTm = (
-                        torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
-                    )
-                    # =================== Apply augmentation =========================
-                    if k > 0:  # Skip augmentation for the first sample
-                        print("Augmenting")
-                        # Randomly rotate the object and hand meshes
-                        rot_mat = random_rotation().to(gt_hTm.device)
-                        # rot_mat = torch.eye(3).to(gt_hTm.device)
-                        rand_rotation = (
-                            Transform3d().rotate(rot_mat).to(obj_ptcld.device)
-                        )
-                        # obj_ptcld = rand_rotation.transform_points(obj_ptcld)
-                        # gt_hTm =  gt_hTm @ rand_rotation.get_matrix()
-                        # gt_hTm[:, :3, :3] = gt_hTm[:, :3, :3] @ rot_mat
-                    # =================================================================
-                    # gt_hTm = torch.eye(4).to(gt_hTm.device).unsqueeze(0)
-                    gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
-                    gt_trans = gt_hTm[:, :3, 3]
-                    gt_theta, gt_beta = (
-                        torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
-                        torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
-                    )
-                    # gt_theta[:, :3] = torch.zeros_like(gt_theta[:, :3])
-                    # print("Wrist rot: ", gt_theta[:, :3])
-                    # if k > 0:
-                    # gt_theta[:, :3] = matrix_to_axis_angle(rot_mat @ axis_angle_to_matrix(gt_theta[:, :3]))
                     # ============ Shift the pair to the object's center ============
-                    if self._center_on_object_com:
+                    # When we augment we necessarily recenter on the object, so we don't need to do it here.
+                    if self._center_on_object_com and not self._augment:
                         obj_center = torch.from_numpy(obj_mesh.get_center())
                         obj_mesh.translate(-obj_center)
                         obj_ptcld -= obj_center.to(obj_ptcld.device)
@@ -368,8 +379,6 @@ class ContactPoseDataset(BaseDataset):
                     gt_verts, gt_joints = affine_mano(
                         gt_theta, gt_beta, gt_rot_6d, gt_trans
                     )
-                    # mesh = Trimesh(gt_verts[0].cpu().numpy(), affine_mano.faces.cpu().numpy())
-                    # visualize_MANO(mesh, obj_ptcld=obj_ptcld)
                     # ===============================================================
                     gt_anchors = affine_mano.get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
@@ -565,43 +574,44 @@ class ContactPoseDataset(BaseDataset):
                         sample_paths.append(sample_pth)
                         if visualize and not has_visualized:
                             print("[*] Plotting CHOIR... (please be patient)")
-                            # visualize_CHOIR(
-                            # gt_choir.squeeze(0),
-                            # self._bps,
-                            # gt_scalar,
-                            # gt_verts.squeeze(0),
-                            # gt_anchors.squeeze(0),
-                            # obj_mesh,
-                            # obj_ptcld,
-                            # gt_rescaled_ref_pts.squeeze(0),
-                            # affine_mano,
-                            # )
-                            # faces = affine_mano.faces
-                            # gt_MANO_mesh = Trimesh(
-                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # pred_MANO_mesh = Trimesh(
-                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # visualize_MANO(
-                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            # )
-                            # visualize_CHOIR_prediction(
-                            # gt_choir,
-                            # gt_choir,
-                            # self._bps,
-                            # scalar,
-                            # gt_scalar,
-                            # rescaled_ref_pts,
-                            # gt_rescaled_ref_pts,
-                            # gt_verts,
-                            # gt_joints,
-                            # gt_anchors,
-                            # is_rhand=(hand_idx == "right"),
-                            # use_smplx=False,
-                            # remap_bps_distances=self._remap_bps_distances,
-                            # exponential_map_w=self._exponential_map_w,
-                            # )
+                            visualize_CHOIR(
+                                gt_choir.squeeze(0),
+                                self._bps,
+                                gt_scalar,
+                                gt_verts.squeeze(0),
+                                gt_anchors.squeeze(0),
+                                obj_mesh,
+                                obj_ptcld,
+                                gt_rescaled_ref_pts.squeeze(0),
+                                affine_mano,
+                            )
+                            faces = affine_mano.faces
+                            gt_MANO_mesh = Trimesh(
+                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            pred_MANO_mesh = Trimesh(
+                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            visualize_MANO(
+                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            )
+                            visualize_CHOIR_prediction(
+                                gt_choir,
+                                gt_choir,
+                                self._bps,
+                                scalar,
+                                gt_scalar,
+                                rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                is_rhand=(hand_idx == "right"),
+                                use_smplx=False,
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                            )
                             has_visualized = True
                     grasp_paths.append(sample_paths)
+                pbar.update()
         return grasp_paths

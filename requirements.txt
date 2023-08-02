@@ -9,10 +9,10 @@ black
 autoflake
 pre-commit
 chumpy
-open3d
 transforms3d
 pyvista
 trimesh
 smplx[all]
+open3d
 git+https://github.com/otaheri/chamfer_distance
 git+https://github.com/otaheri/bps_torch
