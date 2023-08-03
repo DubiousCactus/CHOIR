@@ -19,6 +19,7 @@ import os.path as osp
 import pickle
 from typing import Any, List, Tuple
 
+import blosc
 import torch
 from bps_torch.tools import sample_sphere_uniform
 from hydra.utils import get_original_cwd
@@ -177,7 +178,8 @@ class BaseDataset(TaskSet, abc.ABC):
         samples, labels = [], []
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
-                sample, label = pickle.load(f)
+                compressed_pkl = f.read()
+                sample, label = pickle.loads(blosc.decompress(compressed_pkl))
             samples.append(sample)
             labels.append(label)
         return torch.stack(samples), torch.stack(labels)

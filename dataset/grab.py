@@ -19,6 +19,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from typing import Any, List, Tuple
 
+import blosc
 import numpy as np
 import smplx
 import torch
@@ -438,7 +439,9 @@ class GRABDataset(BaseDataset):
                         # =================================================================
 
                     with open(sample_pth, "wb") as f:
-                        pickle.dump((sample, label), f)
+                        pkl = pickle.dumps((sample, label))
+                        compressed_pkl = blosc.compress(pkl)
+                        f.write(compressed_pkl)
                     choir_sequence_paths.append(sample_pth)
                     if (
                         visualize
@@ -541,9 +544,11 @@ class GRABDataset(BaseDataset):
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if os.path.isfile(dataset_path):
-            objects, grasp_sequences, n_left, n_right = pickle.load(
-                open(dataset_path, "rb")
-            )
+            with open(dataset_path, "rb") as f:
+                compressed_pkl = f.read()
+                objects, grasp_sequences, n_left, n_right = pickle.loads(
+                    blosc.decompress(compressed_pkl)
+                )
         else:
             n_left, n_right = 0, 0
             pbar = tqdm(total=n_participants)
@@ -595,9 +600,11 @@ class GRABDataset(BaseDataset):
                 pbar.update()
                 if n == n_participants:
                     break
-            pickle.dump(
-                (objects, grasp_sequences, n_left, n_right), open(dataset_path, "wb")
-            )
+            with open(dataset_path, "wb") as f:
+                compressed_pkl = blosc.compress(
+                    pickle.dumps((objects, grasp_sequences, n_left, n_right))
+                )
+                f.write(compressed_pkl)
         print(
             f"[*] Loaded {len(object_names)} objects and {len(grasp_sequences)} grasp sequences ({n_left} left hand, {n_right} right hand)"
         )

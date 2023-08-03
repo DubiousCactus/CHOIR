@@ -16,8 +16,9 @@ import random
 import sys
 from contextlib import redirect_stdout
 from copy import deepcopy
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
+import blosc
 import numpy as np
 import torch
 from hydra.utils import get_original_cwd
@@ -125,33 +126,13 @@ class ContactPoseDataset(BaseDataset):
         )
         from vendor.ContactPose.utilities.dataset import ContactPose, get_object_names
 
-        def load_contact_pose_data(
-            p_num: int, intent: str, object_name: str, hand_idx: int
-        ) -> Optional[Tuple]:
-            with redirect_stdout(None):
-                cp = ContactPose(p_num, intent, object_name)
-            random_grasp_frame = (
-                cp.mano_params[hand_idx],
-                cp.mano_meshes()[hand_idx],
-            )  # {'pose': _, 'betas': _, 'hTm': _} for mano, {'vertices': _, 'faces': _, 'joints': _} for mesh
-            if random_grasp_frame[0] is None or random_grasp_frame[1] is None:
-                # Some participants don't manipulate all objects :/
-                # print(f"[!] Couldn't load {p_num}, {intent}, {object_name}")
-                return None
-            return (
-                cp.contactmap_filename,
-                random_grasp_frame,
-            )
-
         # First, build a dictionary of object names to the participant, intent, and hand used. The
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {}
         n_participants = 15 if tiny else 51
-        p_nums = list(range(1, n_participants))
-        intents = ["use", "handoff"]
-        for p_num in p_nums:
-            for intent in intents:
+        for p_num in range(1, n_participants):
+            for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
                     if obj_name not in cp_dataset:
                         cp_dataset[obj_name] = []
@@ -200,39 +181,41 @@ class ContactPoseDataset(BaseDataset):
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if osp.isfile(dataset_path):
-            objects_w_contacts, grasps = pickle.load(open(dataset_path, "rb"))
+            with open(dataset_path, "rb") as f:
+                compressed_pkl = f.read()
+                objects_w_contacts, grasps = pickle.loads(
+                    blosc.decompress(compressed_pkl)
+                )
         else:
-            # TODO: Refactor this? I think we don't need all that code and dumping into independent
-            # files! It's probably light enough in memory that we can dump it all in one file. Also
-            # Python being Python, this loop is horribly slow.
             for obj_name in tqdm(object_names):
                 for p_num, intent, hand in cp_dataset[obj_name]:
-                    # Generate the data since the dataset file does not exist.
-                    grasp_path = osp.join(
-                        self._cache_dir,
-                        f"{obj_name}_{p_num}_{intent}_{hand}-hand.pkl",
-                    )
-                    data = load_contact_pose_data(
-                        p_num, intent, obj_name, hand_indices[hand]
-                    )
-                    if data is None:
+                    with redirect_stdout(None):
+                        cp = ContactPose(p_num, intent, obj_name)
+                    random_grasp_frame = (
+                        cp.mano_params[hand_indices[hand]],
+                        cp.mano_meshes()[hand_indices[hand]],
+                    )  # {'pose': _, 'betas': _, 'hTm': _} for mano, {'vertices': _, 'faces': _, 'joints': _} for mesh
+                    if cp._valid_hands != [1] and hand_indices[hand] == 1:
+                        # We want the right hand, but this is anything else than just the right hand
                         continue
-                    obj_mesh_w_contacts_path, grasp = data
-                    with open(grasp_path, "wb") as f:
-                        # Log participant no and intent in the data so we can debug later on.
-                        pickle.dump(
-                            {
-                                "grasp": grasp,
-                                "p_num": p_num,
-                                "intent": intent,
-                                "obj_name": obj_name,
-                                "hand_idx": hand,
-                            },
-                            f,
-                        )
+                    obj_mesh_w_contacts_path, grasp = (
+                        cp.contactmap_filename,
+                        random_grasp_frame,
+                    )
                     objects_w_contacts.append(obj_mesh_w_contacts_path)
-                    grasps.append(grasp_path)
-            pickle.dump((objects_w_contacts, grasps), open(dataset_path, "wb"))
+                    grasps.append(
+                        {
+                            "grasp": grasp,
+                            "p_num": p_num,
+                            "intent": intent,
+                            "obj_name": obj_name,
+                            "hand_idx": hand,
+                        }
+                    )
+            with open(dataset_path, "wb") as f:
+                pkl = pickle.dumps((objects_w_contacts, grasps))
+                compressed_pkl = blosc.compress(pkl)
+                f.write(compressed_pkl)
         n_left = sum([1 for g in grasps if "left-hand" in g])
         n_right = sum([1 for g in grasps if "right-hand" in g])
 
@@ -290,12 +273,9 @@ class ContactPoseDataset(BaseDataset):
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
         pbar = tqdm(total=len(objects_w_contacts) * n_augs)
-        for mesh_pth, grasp_pth in zip(objects_w_contacts, grasps):
-            # Load the object mesh and MANO params
-            with open(grasp_pth, "rb") as f:
-                grasp_data = pickle.load(f)
+        for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
             """
-            {
+            grasp_data = {
                 'grasp': (
                     {'pose': _, 'betas': _, 'hTm': _},
                     {'vertices': _, 'faces': _, 'joints': _}
@@ -331,7 +311,7 @@ class ContactPoseDataset(BaseDataset):
                     visualize = self._debug and (random.Random().random() < 0.05)
                     has_visualized = False
                     # ================== Original Hand-Object Pair ==================
-                    mano_params = grasp_data["grasp"][0]
+                    mano_params = deepcopy(grasp_data["grasp"][0])
                     gt_hTm = (
                         torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
                     )
@@ -575,7 +555,9 @@ class ContactPoseDataset(BaseDataset):
                             # =================================================================
 
                         with open(sample_pth, "wb") as f:
-                            pickle.dump((sample, label), f)
+                            pkl = pickle.dumps((sample, label))
+                            compressed_pkl = blosc.compress(pkl)
+                            f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
                         if visualize and not has_visualized:
                             print("[*] Plotting CHOIR... (please be patient)")
