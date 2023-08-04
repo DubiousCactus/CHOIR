@@ -226,9 +226,7 @@ class ContactPoseDataset(BaseDataset):
         if osp.isfile(dataset_path):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
-                # objects_w_contacts, grasps, n_left, n_right = pickle.loads(
-                n_left, n_right = 0, 0
-                objects_w_contacts, grasps = pickle.loads(
+                objects_w_contacts, grasps, n_left, n_right = pickle.loads(
                     blosc.decompress(compressed_pkl)
                 )
         else:
