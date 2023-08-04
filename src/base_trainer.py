@@ -246,16 +246,23 @@ class BaseTrainer:
                     self._visualize(batch, epoch)
                     has_visualized += 1
             val_loss = val_loss.compute().item()
+            for k, v in val_loss_components.items():
+                val_loss_components[k] = v.compute().item()
             if project_conf.USE_WANDB:
                 wandb.log({"val_loss": val_loss}, step=epoch)
                 wandb.log(
                     {
-                        f"Detailed loss - Validation/{k}": v.compute().item()
+                        f"Detailed loss - Validation/{k}": v
                         for k, v in val_loss_components.items()
                     },
                     step=epoch,
                 )
-            self._model_saver(epoch, val_loss)
+            self._model_saver(
+                epoch,
+                val_loss,
+                val_loss_components,
+                minimize_metric="distances_from_prior",
+            )
             return val_loss
 
     def train(
@@ -364,9 +371,9 @@ class BaseTrainer:
         )
         best_metrics = (
             "["
-            + ",".join(
+            + ", ".join(
                 [
-                    f"{metric_name}={metric_value:.4f} "
+                    f"{metric_name}={metric_value:.2e}"
                     for metric_name, metric_value in self._model_saver.best_metrics.items()
                 ]
             )
