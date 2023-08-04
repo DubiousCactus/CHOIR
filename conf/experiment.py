@@ -85,6 +85,7 @@ dataset_store(
         ContactPoseDataset,
         builds_bases=(GraspingDatasetConf,),
         noisy_samples_per_grasp=30,
+        use_contactopt_splits=False,
     ),
     name="contactpose",
 )
@@ -329,4 +330,30 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="multiview",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "aggregate_cpvae"},
+            {"override /trainer": "multiview"},
+            {"override /tester": "multiview"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=4,
+            use_contactopt_splits=True,
+            augment=False,
+        ),
+        training_loss=dict(multi_view=True),
+        data_loader=dict(batch_size=32),
+        model=dict(latent_dim=16),
+        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
+        # decoder_layer_dims=(128, 256, 512, 1024)),
+        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
+        bases=(Experiment,),
+    ),
+    name="multiview_contactopt_replica",
 )

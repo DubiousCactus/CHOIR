@@ -10,6 +10,7 @@ import signal
 from collections import defaultdict
 from typing import Dict, List, Tuple, Union
 
+import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
@@ -48,7 +49,7 @@ class MultiViewTester(MultiViewTrainer):
         self._training_loss = training_loss
         self._data_loader = data_loader
         self._running = True
-        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar = tqdm(total=1, desc="Testing")
         self._affine_mano = to_cuda_(AffineMANO())
         self._bps_dim = data_loader.dataset.bps_dim
         self._bps = to_cuda_(data_loader.dataset.bps)
@@ -56,27 +57,49 @@ class MultiViewTester(MultiViewTrainer):
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         signal.signal(signal.SIGINT, self._terminator)
 
-    def _test_batch(self, samples: Dict, labels: Dict, use_prior: bool) -> Tuple:
+    def _test_batch(
+        self,
+        samples: Dict,
+        labels: Dict,
+        use_prior: bool = True,
+        use_input: bool = False,
+    ) -> Tuple:
         input_scalar = samples["scalar"]
-        if len(input_scalar.shape) == 2:
+        if len(input_scalar.shape) == 2 and not use_input:
             input_scalar = input_scalar.mean(
                 dim=1
-            )  # TODO: Think of a better way for 'pair' scaling
-        if use_prior:
-            y_hat = self._model(samples["choir"], use_mean=True)
+            )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
+        elif len(input_scalar.shape) == 2 and use_input:
+            input_scalar = input_scalar.view(-1)
+        if use_input:
+            B, N, P, D = samples["choir"].shape
+            y_hat = {
+                "choir": samples["choir"].view(B * N, P, D),
+            }
         else:
-            y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
+            if use_prior:
+                y_hat = self._model(samples["choir"], use_mean=True)
+            else:
+                y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
             "rot_6d": labels["rot"],
             "trans": labels["trans"],
         }
-        # Only use the first view for each batch element
-        mano_params_gt = {k: v[:, 0] for k, v in mano_params_gt.items()}
+        if use_input:
+            # Use all views for each batch element
+            mano_params_gt = {
+                k: v.view(B * N, *v.shape[2:]) for k, v in mano_params_gt.items()
+            }
+        else:
+            # Only use the first view for each batch element
+            mano_params_gt = {k: v[:, 0] for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
+        if not self._data_loader.dataset.is_right_hand_only:
+            raise NotImplementedError("Right hand only is implemented for testing.")
         with torch.set_grad_enabled(True):
             (
                 pose,
@@ -92,7 +115,7 @@ class MultiViewTester(MultiViewTrainer):
                 scalar=input_scalar,
                 max_iterations=8000,
                 loss_thresh=1e-10,
-                lr=3e-2,
+                lr=4e-2,
                 is_rhand=False,  # TODO
                 use_smplx=False,  # TODO
                 remap_bps_distances=self._remap_bps_distances,
@@ -152,6 +175,9 @@ class MultiViewTester(MultiViewTrainer):
         """
         x, y = batch  # type: ignore
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+        anchor_error_x, mpjpe_x, root_aligned_mpjpe_x, mpvpe_x = self._test_batch(
+            samples, labels, use_input=True
+        )
         anchor_error_p, mpjpe_p, root_aligned_mpjpe_p, mpvpe_p = self._test_batch(
             samples, labels, use_prior=True
         )
@@ -167,36 +193,127 @@ class MultiViewTester(MultiViewTrainer):
             "[POSTERIOR] MPJPE (mm)": mpjpe,
             "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
             "[POSTERIOR] MPVPE (mm)": mpvpe,
+            "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
+            "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
+            "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
+            "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
         }
 
-    def test(self, visualize_every: int = 0):
+    def test_n_observations(
+        self, n_observations: int, visualize_every: int = 0
+    ) -> Dict[str, float]:
+        metrics = defaultdict(MeanMetric)
+        color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
+        self._data_loader.dataset.set_observations_number(n_observations)
+        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar.refresh()
+        for i, batch in enumerate(self._data_loader):
+            if not self._running:
+                print("[!] Testing aborted.")
+                break
+            batch_metrics = self._test_iteration(batch)
+            for k, v in batch_metrics.items():
+                metrics[k].update(v.item())
+            " ==================== Visualization ==================== "
+            if visualize_every > 0 and (i + 1) % visualize_every == 0:
+                self._visualize(batch, color_code)
+            self._pbar.update()
+        self._pbar.close()
+        print("=" * 81)
+        print(
+            "==" + " " * 28 + f" Test results (N={n_observations}) " + " " * 28 + "=="
+        )
+        print("=" * 81)
+        # Compute all metrics:
+        computed_metrics = {}
+        for k, v in metrics.items():
+            computed_metrics[k] = v.compute().item()
+            print(f"\t -> {k}: {computed_metrics[k]:.2f}")
+        print("_" * 81)
+        return computed_metrics
+
+    def test(self, visualize_every: int = 0, **kwargs):
         """Computes the average loss on the test set.
         Args:
             visualize_every (int, optional): Visualize the model predictions every n batches.
             Defaults to 0 (no visualization).
         """
-        metrics = defaultdict(MeanMetric)
-        self._pbar.reset()
-        self._pbar.set_description("Testing")
-        color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
         self._model.eval()
-        " ==================== Training loop for one epoch ==================== "
+        test_errors = []
         with torch.no_grad():
-            for i, batch in enumerate(self._data_loader):
-                if not self._running:
-                    print("[!] Testing aborted.")
-                    break
-                batch_metrics = self._test_iteration(batch)
-                for k, v in batch_metrics.items():
-                    metrics[k].update(v.item())
-                " ==================== Visualization ==================== "
-                if visualize_every > 0 and (i + 1) % visualize_every == 0:
-                    self._visualize(batch, color_code)
-                self._pbar.update()
-        self._pbar.close()
-        print("=" * 81)
-        print("==" + " " * 31 + " Test results " + " " * 31 + "==")
-        print("=" * 81)
-        for k, v in metrics.items():
-            print(f"\t -> {k}: {v.compute().item():.2f}")
-        print("_" * 81)
+            test_errors.append(
+                self.test_n_observations(1, visualize_every=visualize_every)
+            )
+            test_errors.append(
+                self.test_n_observations(2, visualize_every=visualize_every)
+            )
+            test_errors.append(
+                self.test_n_observations(3, visualize_every=visualize_every)
+            )
+            test_errors.append(
+                self.test_n_observations(4, visualize_every=visualize_every)
+            )
+            # self.test_n_observations(5, visualize_every=visualize_every)
+        # Plot a curve of the test errors and compute Area Under Curve (AUC). Add marker for the
+        # reported ContactPose results of (25.05mm and replicate the results of the paper to have a
+        # fair comparison with my different additive noise for Perturbed ContactPose).
+        plt.figure(figsize=(8, 6))
+        plt.plot(
+            [1, 2, 3, 4],
+            [x["[PRIOR] MPJPE (mm)"] for x in test_errors],
+            "-o",
+            label="MPJPE (mm)",
+        )
+        plt.plot(
+            [1, 2, 3, 4],
+            [x["[PRIOR] Root-aligned MPJPE (mm)"] for x in test_errors],
+            "-o",
+            label="Root-aligned MPJPE (mm)",
+        )
+        # ContactOpt reported an absolute MPJPE of 25.05mm:
+        plt.plot(
+            [1],
+            [25.05],
+            "*",
+            label="ContactOpt",
+        )
+        # Compute the AUC for the MPJPE curve:
+        auc = torch.trapz(
+            torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
+            torch.tensor([1, 2, 3, 4]),
+        )
+        plt.title(f"Test MPJPE and Root-aligned MPJPE for N observations")
+        # Add the AUC to the legend:
+        plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        plt.xlabel("N observations")
+        plt.ylabel("(Root-aligned) MPJPE (mm)")
+        plt.savefig("test_error.png")
+        plt.show()
+
+        plt.figure(figsize=(8, 6))
+        plt.plot(
+            [1, 2, 3, 4],
+            [x["[PRIOR] MPJPE (mm)"] for x in test_errors],
+            "-o",
+            label="MPJPE (mm)",
+        )
+
+        # ContactOpt reported an absolute MPJPE of 25.05mm:
+        plt.plot(
+            [1],
+            [25.05],
+            "*",
+            label="ContactOpt",
+        )
+        # Compute the AUC for the MPJPE curve:
+        auc = torch.trapz(
+            torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
+            torch.tensor([1, 2, 3, 4]),
+        )
+        plt.title(f"Test MPJPE for N observations")
+        # Add the AUC to the legend:
+        plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        plt.xlabel("N observations")
+        plt.ylabel("MPJPE (mm)")
+        plt.savefig("test_error_mpjpe_only.png")
+        plt.show()

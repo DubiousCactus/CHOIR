@@ -24,6 +24,7 @@ import torch
 from hydra.utils import get_original_cwd
 from open3d import io as o3dio
 from pytorch3d.transforms import matrix_to_rotation_6d, random_rotation
+from torchmetrics import MeanMetric
 from tqdm import tqdm
 from trimesh import Trimesh
 
@@ -51,6 +52,7 @@ class ContactPoseDataset(BaseDataset):
     def __init__(
         self,
         split: str,
+        use_contactopt_splits: bool = False,
         validation_objects: int = 3,
         test_objects: int = 2,
         perturbation_level: int = 0,
@@ -81,6 +83,14 @@ class ContactPoseDataset(BaseDataset):
                 "pca": 0.5,
             },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
         ]
+        self._use_contactopt_splits = use_contactopt_splits
+        # Using ContactOpt's parameters
+        if self._use_contactopt_splits:
+            if split == "train":
+                noisy_samples_per_grasp = 16
+            else:
+                noisy_samples_per_grasp = 4
+
         super().__init__(
             dataset_name="ContactPose",
             bps_dim=bps_dim,
@@ -129,42 +139,71 @@ class ContactPoseDataset(BaseDataset):
         # First, build a dictionary of object names to the participant, intent, and hand used. The
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
-        cp_dataset = {}
+        cp_dataset = {} if not self._use_contactopt_splits else []
         n_participants = 15 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
-                    if obj_name not in cp_dataset:
-                        cp_dataset[obj_name] = []
-                    cp_dataset[obj_name].append((p_num, intent, "right"))
-                    if not self._right_hand_only:
-                        cp_dataset[obj_name].append((p_num, intent, "left"))
+                    if self._use_contactopt_splits:
+                        cp_dataset.append((p_num, intent, obj_name))
+                    else:
+                        if obj_name not in cp_dataset:
+                            cp_dataset[obj_name] = []
+                        cp_dataset[obj_name].append((p_num, intent, "right"))
+                        if not self._right_hand_only:
+                            cp_dataset[obj_name].append((p_num, intent, "left"))
         hand_indices = {"right": 1, "left": 0}
 
-        # Keep only the first n_objects - validation_objects if we're in training mode, and the last
-        # validation_objects if we're in eval mode:
-        object_names = sorted(list(cp_dataset.keys()))
-        random.Random(seed).shuffle(object_names)
-        assert (self._validation_objects + self._test_objects) < len(object_names), (
-            f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
-            + f" must be less than n_objects ({len(object_names)})"
-        )
-        assert (
-            self._validation_objects >= 1
-        ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
-        assert (
-            self._test_objects >= 1
-        ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
-        if split == "train":
-            object_names = object_names[
-                : -(self._validation_objects + self._test_objects)
-            ]
-        elif split == "val":
-            object_names = object_names[
-                -(self._validation_objects + self._test_objects) : -self._test_objects
-            ]
-        elif split == "test":
-            object_names = object_names[-self._test_objects :]
+        if self._use_contactopt_splits:
+            # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
+            low_split = int(len(cp_dataset) * (0.0 if split == "train" else 0.8))
+            high_split = int(len(cp_dataset) * (0.8 if split == "train" else 1.0))
+            cp_dataset = cp_dataset[
+                low_split:high_split
+            ]  # [0.0, 0.8] for train, [0.8, 1.0] for test
+            # Now, reformat the dataset to be a dictionary of object names to a list of grasps so
+            # that the rest of the code works as is (I wrote this code before I knew about the
+            # splits in ContactOpt).
+            by_object = {}
+            for p_num, intent, obj_name in cp_dataset:
+                if obj_name not in by_object:
+                    by_object[obj_name] = []
+                by_object[obj_name].append((p_num, intent, "right"))
+                if not self._right_hand_only:
+                    by_object[obj_name].append((p_num, intent, "left"))
+            cp_dataset = by_object
+            object_names = sorted(list(cp_dataset.keys()))
+        else:
+            # Split by objects
+            # Keep only the first n_objects - validation_objects if we're in training mode, and the last
+            # validation_objects if we're in eval mode:
+            object_names = sorted(list(cp_dataset.keys()))
+            random.Random(seed).shuffle(object_names)
+            assert (self._validation_objects + self._test_objects) < len(
+                object_names
+            ), (
+                f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
+                + f" must be less than n_objects ({len(object_names)})"
+            )
+            assert (
+                self._validation_objects >= 1
+            ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
+            assert (
+                self._test_objects >= 1
+            ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
+            if split == "train":
+                object_names = object_names[
+                    : -(self._validation_objects + self._test_objects)
+                ]
+            elif split == "val":
+                object_names = object_names[
+                    -(
+                        self._validation_objects + self._test_objects
+                    ) : -self._test_objects
+                ]
+            elif split == "test":
+                object_names = object_names[-self._test_objects :]
+
         # Now, build the dataset.
         # objects: unique object paths
         # objects_w_contacts: object with contacts paths
@@ -175,18 +214,25 @@ class ContactPoseDataset(BaseDataset):
         dataset_path = osp.join(
             self._cache_dir,
             f"dataset_{split}_{n_participants}-participants"
-            + f"_{self._validation_objects}-val-held-out"
-            + f"_{self._test_objects}-test-held-out"
+            + (
+                f"_{self._validation_objects}-val-held-out"
+                + f"_{self._test_objects}-test-held-out"
+                if not self._use_contactopt_splits
+                else "_contactopt-splits"
+            )
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if osp.isfile(dataset_path):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
+                # objects_w_contacts, grasps, n_left, n_right = pickle.loads(
+                n_left, n_right = 0, 0
                 objects_w_contacts, grasps = pickle.loads(
                     blosc.decompress(compressed_pkl)
                 )
         else:
+            n_left, n_right = 0, 0
             for obj_name in tqdm(object_names):
                 for p_num, intent, hand in cp_dataset[obj_name]:
                     with redirect_stdout(None):
@@ -212,12 +258,12 @@ class ContactPoseDataset(BaseDataset):
                             "hand_idx": hand,
                         }
                     )
+                    n_left += 1 if hand == "left" else 0
+                    n_right += 1 if hand == "right" else 0
             with open(dataset_path, "wb") as f:
-                pkl = pickle.dumps((objects_w_contacts, grasps))
+                pkl = pickle.dumps((objects_w_contacts, grasps, n_left, n_right))
                 compressed_pkl = blosc.compress(pkl)
                 f.write(compressed_pkl)
-        n_left = sum([1 for g in grasps if "left-hand" in g])
-        n_right = sum([1 for g in grasps if "right-hand" in g])
 
         print(
             f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
@@ -273,6 +319,7 @@ class ContactPoseDataset(BaseDataset):
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
         pbar = tqdm(total=len(objects_w_contacts) * n_augs)
+        dataset_mpjpe = MeanMetric()
         for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
             """
             grasp_data = {
@@ -411,16 +458,16 @@ class ContactPoseDataset(BaseDataset):
                         )
                         if self._perturbation_level > 0:
                             trans_noise = (
-                                torch.rand(3, device=trans.device)
+                                torch.randn(3, device=trans.device)
                                 * self._perturbations[self._perturbation_level]["trans"]
                             )
                             pose_noise = torch.cat(
                                 [
-                                    torch.rand(3)
+                                    torch.randn(3)
                                     * self._perturbations[self._perturbation_level][
                                         "rot"
                                     ],
-                                    torch.rand(15)
+                                    torch.randn(15)
                                     * self._perturbations[self._perturbation_level][
                                         "pca"
                                     ],
@@ -429,7 +476,12 @@ class ContactPoseDataset(BaseDataset):
                             theta += pose_noise
                             trans += trans_noise
 
-                        verts, _ = affine_mano(theta, beta, rot_6d, trans)
+                        verts, joints = affine_mano(theta, beta, rot_6d, trans)
+
+                        mpjpe = torch.linalg.vector_norm(
+                            joints.squeeze(0) - gt_joints.squeeze(0), dim=1, ord=2
+                        ).mean()
+                        dataset_mpjpe.update(mpjpe.item())
 
                         anchors = affine_mano.get_anchors(verts)
                         if self._rescale == "pair":
@@ -601,4 +653,7 @@ class ContactPoseDataset(BaseDataset):
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()
+        print(
+            f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
+        )
         return grasp_paths

@@ -290,16 +290,16 @@ class GRABDataset(BaseDataset):
 
                     if self._perturbation_level > 0:
                         trans_noise = (
-                            torch.rand(3)
+                            torch.randn(3)
                             * self._perturbations[self._perturbation_level]["trans"]
                         )
                         pose_noise = torch.cat(
                             [
-                                torch.rand(24)
+                                torch.randn(24)
                                 * self._perturbations[self._perturbation_level]["pca"],
                             ]
                         )
-                        global_orient_noise = torch.rand(3) * 0.1
+                        global_orient_noise = torch.randn(3) * 0.1
                         h_params["hand_pose"] += pose_noise
                         h_params["transl"] += trans_noise
                         h_params["global_orient"] += global_orient_noise

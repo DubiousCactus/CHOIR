@@ -181,4 +181,5 @@ def launch_experiment(
             training_loss=training_loss_inst,
         ).test(
             visualize_every=run.viz_every,
+            **asdict(run),
         )
