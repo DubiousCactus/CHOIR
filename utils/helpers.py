@@ -29,6 +29,7 @@ class BestNModelSaver:
         self._min_val_loss = float("inf")
         self._min_val_loss_epoch: int = 0
         self._best_metrics = {}
+        self._min_val_metric = float("inf")
 
     def __call__(
         self,
@@ -37,9 +38,9 @@ class BestNModelSaver:
         metrics: Optional[dict] = None,
         minimize_metric: str = "loss",
     ) -> Any:
-        if minimize_metric != "loss":
-            val_loss = metrics.get(minimize_metric, val_loss)
-        if val_loss < self._min_val_loss:
+        if (val_loss < self._min_val_loss) or (
+            metrics.get(minimize_metric, val_loss) < self._min_val_metric
+        ):
             ckpt_path = osp.join(
                 HydraConfig.get().runtime.output_dir,
                 f"epoch_{epoch:03d}_val-loss_{val_loss:06f}.ckpt",
@@ -48,6 +49,7 @@ class BestNModelSaver:
                 val_loss, ckpt_path
             ) if self._n > 0 else self._save_callback(val_loss, ckpt_path)
             self._min_val_loss = val_loss
+            self._min_val_metric = metrics.get(minimize_metric, val_loss)
             self._min_val_loss_epoch = epoch
             self._best_metrics = metrics
 

@@ -178,7 +178,7 @@ class CHOIRLossConf:
     mano_shape_w: float = 1.0
     mano_agreement_w: float = 1.0
     mano_anchors_w: float = 1.0
-    kl_w: float = 3e-5
+    kl_w: float = 1e-4
     multi_view: bool = False
 
 

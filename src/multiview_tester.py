@@ -6,10 +6,12 @@
 # Distributed under terms of the MIT license.
 
 
+import pickle
 import signal
 from collections import defaultdict
 from typing import Dict, List, Tuple, Union
 
+import blosc
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
@@ -254,6 +256,11 @@ class MultiViewTester(MultiViewTrainer):
                 self.test_n_observations(4, visualize_every=visualize_every)
             )
             # self.test_n_observations(5, visualize_every=visualize_every)
+
+        with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
+            compressed_pkl = blosc.compress_pickle(pickle.dumps(test_errors))
+            f.write(compressed_pkl)
+
         # Plot a curve of the test errors and compute Area Under Curve (AUC). Add marker for the
         # reported ContactPose results of (25.05mm and replicate the results of the paper to have a
         # fair comparison with my different additive noise for Perturbed ContactPose).
@@ -287,7 +294,7 @@ class MultiViewTester(MultiViewTrainer):
         plt.legend(title=f"MPJPE AUC: {auc:.2f}")
         plt.xlabel("N observations")
         plt.ylabel("(Root-aligned) MPJPE (mm)")
-        plt.savefig("test_error.png")
+        plt.savefig(f"test_error_{self._run_name}.png")
         plt.show()
 
         plt.figure(figsize=(8, 6))
@@ -315,5 +322,5 @@ class MultiViewTester(MultiViewTrainer):
         plt.legend(title=f"MPJPE AUC: {auc:.2f}")
         plt.xlabel("N observations")
         plt.ylabel("MPJPE (mm)")
-        plt.savefig("test_error_mpjpe_only.png")
+        plt.savefig(f"test_error_mpjpe_only_{self._run_name}.png")
         plt.show()
