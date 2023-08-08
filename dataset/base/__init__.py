@@ -203,6 +203,8 @@ class BaseDataset(TaskSet, abc.ABC):
         noisy_grasp_sequence = self._sample_paths[
             idx if not self._split == "test" else sequence_idx
         ]
+        # TODO: We have an anchor sequence, let's sample a positive sequence and N negative
+        # sequences for the mini batch. Can this be done with multiple workers?
         assert noisy_grasp_sequence is not None
         assert n_context <= len(noisy_grasp_sequence)
         if self._split == "test":
@@ -225,7 +227,7 @@ class BaseDataset(TaskSet, abc.ABC):
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
                 compressed_pkl = f.read()
-                sample, label = pickle.loads(blosc.decompress(compressed_pkl))
+                sample, label, mesh_pth = pickle.loads(blosc.decompress(compressed_pkl))
             samples.append(sample)
             labels.append(label)
-        return torch.stack(samples), torch.stack(labels)
+        return torch.stack(samples), torch.stack(labels), mesh_pth

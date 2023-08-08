@@ -63,6 +63,7 @@ class MultiViewTester(MultiViewTrainer):
         self,
         samples: Dict,
         labels: Dict,
+        mesh_pths: List[str],
         use_prior: bool = True,
         use_input: bool = False,
     ) -> Tuple:
@@ -115,7 +116,7 @@ class MultiViewTester(MultiViewTrainer):
                 y_hat["choir"],
                 bps=self._bps,
                 scalar=input_scalar,
-                max_iterations=8000,
+                max_iterations=80,
                 loss_thresh=1e-10,
                 lr=4e-2,
                 is_rhand=False,  # TODO
@@ -161,7 +162,28 @@ class MultiViewTester(MultiViewTrainer):
             mpvpe, dim=0
         )  # Mean per-vertex position error avgd across batch (1)
         mpvpe *= self._data_loader.dataset.base_unit
-        return anchor_error, mpjpe, root_aligned_mpjpe, mpvpe
+        # ====== Intersection volume ======
+        # Compute the intersection volume between the predicted hand meshes and the object meshes.
+        # TODO: Implement it with another method cause it crashes (see
+        # https://github.com/isl-org/Open3D/issues/5911)
+        # intersection_volumes = []
+        # mano_faces = self._affine_mano.faces.cpu().numpy()
+        # for i, path in enumerate(mesh_pths):
+        # obj_mesh = o3dtg.TriangleMesh.from_legacy(o3dio.read_triangle_mesh(path))
+        # hand_mesh = o3dtg.TriangleMesh.from_legacy(
+        # o3dg.TriangleMesh(
+        # o3du.Vector3dVector(verts_pred[i].cpu().numpy()),
+        # o3du.Vector3iVector(mano_faces),
+        # )
+        # )
+        # intersection = obj_mesh.boolean_intersection(hand_mesh)
+        # intersection_volumes.append(intersection.to_legacy().get_volume())
+        # intersection_volume = torch.tensor(intersection_volumes).mean()
+        # intersection_volume *= (
+        # self._data_loader.dataset.base_unit / 10
+        # )  # m^3 -> mm^3 -> cm^3
+        intersection_volume = torch.tensor(0.0)
+        return anchor_error, mpjpe, root_aligned_mpjpe, mpvpe, intersection_volume
 
     @to_cuda
     def _test_iteration(
@@ -175,30 +197,45 @@ class MultiViewTester(MultiViewTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        x, y = batch  # type: ignore
+        x, y, mesh_pths = batch  # type: ignore
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
-        anchor_error_x, mpjpe_x, root_aligned_mpjpe_x, mpvpe_x = self._test_batch(
-            samples, labels, use_input=True
-        )
-        anchor_error_p, mpjpe_p, root_aligned_mpjpe_p, mpvpe_p = self._test_batch(
-            samples, labels, use_prior=True
-        )
-        anchor_error, mpjpe, root_aligned_mpjpe, mpvpe = self._test_batch(
-            samples, labels, use_prior=False
-        )
+        (
+            anchor_error_x,
+            mpjpe_x,
+            root_aligned_mpjpe_x,
+            mpvpe_x,
+            intesection_volume_x,
+        ) = self._test_batch(samples, labels, mesh_pths, use_input=True)
+        (
+            anchor_error_p,
+            mpjpe_p,
+            root_aligned_mpjpe_p,
+            mpvpe_p,
+            intersection_volume_p,
+        ) = self._test_batch(samples, labels, mesh_pths, use_prior=True)
+        (
+            anchor_error,
+            mpjpe,
+            root_aligned_mpjpe,
+            mpvpe,
+            intersection_volume,
+        ) = self._test_batch(samples, labels, mesh_pths, use_prior=False)
         return {
             "[PRIOR] Anchor error (mm)": anchor_error_p,
             "[PRIOR] MPJPE (mm)": mpjpe_p,
             "[PRIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe_p,
             "[PRIOR] MPVPE (mm)": mpvpe_p,
+            "[PRIOR] Intersection volume (cm3)": intersection_volume_p,
             "[POSTERIOR] Anchor error (mm)": anchor_error,
             "[POSTERIOR] MPJPE (mm)": mpjpe,
             "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
             "[POSTERIOR] MPVPE (mm)": mpvpe,
+            "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
             "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
             "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
             "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
             "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
+            "[NOISY INPUT] Intersection volume (cm3)": intesection_volume_x,
         }
 
     def test_n_observations(

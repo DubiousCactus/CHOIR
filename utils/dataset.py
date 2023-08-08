@@ -320,7 +320,7 @@ def augment_hand_object_pose(
             np.array([0, 0, np.random.uniform(0, 2 * np.pi)])
         )
     else:
-        R = random_rotation()
+        R = random_rotation().cpu().numpy()
     # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
     # are expressed w.r.t. the object center. Otherwise, weird things happen.
     rotate_origin = obj_mesh.get_center()

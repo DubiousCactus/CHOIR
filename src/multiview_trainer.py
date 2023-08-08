@@ -75,7 +75,7 @@ class MultiViewTrainer(BaseTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        x, y = batch
+        x, y, _ = batch
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
         # If we're fine tuning, we'll skip the labels and train the prior!
         y_hat = self._model(

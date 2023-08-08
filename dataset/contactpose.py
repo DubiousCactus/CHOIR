@@ -379,7 +379,7 @@ class ContactPoseDataset(BaseDataset):
                     # =================== Apply augmentation =========================
                     if self._augment and k > 0:
                         obj_mesh, gt_hTm = augment_hand_object_pose(
-                            obj_mesh, gt_hTm, around_z=True
+                            obj_mesh, gt_hTm, around_z=False
                         )
                     # =================================================================
                     gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
@@ -493,7 +493,7 @@ class ContactPoseDataset(BaseDataset):
                         # =================================================================
 
                         with open(sample_pth, "wb") as f:
-                            pkl = pickle.dumps((sample, label))
+                            pkl = pickle.dumps((sample, label, mesh_pth))
                             compressed_pkl = blosc.compress(pkl)
                             f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
