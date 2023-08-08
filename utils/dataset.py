@@ -9,12 +9,15 @@
 Dataset-related functions.
 """
 
+from copy import deepcopy
 from typing import Any, Dict, Tuple
 
+import numpy as np
+import open3d
 import torch
 from bps_torch.bps import bps_torch
 from pytorch3d.structures import Pointclouds
-from pytorch3d.transforms import Transform3d
+from pytorch3d.transforms import Transform3d, random_rotation
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
 
@@ -183,3 +186,148 @@ def compute_hand_contacts_bps(
     Compute the hand contacts and encode it all in a BPS representation.
     """
     raise NotImplementedError
+
+
+def pack_and_pad_sample_label(
+    choir,
+    rescaled_ref_pts,
+    scalar,
+    hand_idx,
+    gt_choir,
+    gt_rescaled_ref_pts,
+    gt_scalar,
+    gt_joints,
+    gt_anchors,
+    gt_theta,
+    gt_beta,
+    gt_rot_6d,
+    gt_trans,
+    bps_dim,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if "2.0" in torch.__version__:
+        # ============ With Pytorch 2.0 Nested Tensor ============
+        sample = torch.nested.to_padded_tensor(
+            torch.nested.nested_tensor(
+                [
+                    choir.squeeze(0),  # (N, 2)
+                    rescaled_ref_pts.squeeze(0),  # (N, 3)
+                    scalar.unsqueeze(0),  # (1, 1)
+                    torch.ones((1, 1)).cuda()
+                    if hand_idx == "right"
+                    else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                ]
+            ),
+            0.0,
+        ).cpu()
+
+        label = torch.nested.to_padded_tensor(
+            torch.nested.nested_tensor(
+                [
+                    gt_choir.squeeze(0),  # (N, 2)
+                    gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
+                    gt_scalar.unsqueeze(0),  # (1, 1)
+                    gt_joints.squeeze(0),  # (21, 3)
+                    gt_anchors.squeeze(0),  # (32, 3)
+                    gt_theta,  # (1, 18)
+                    gt_beta,  # (1, 10)
+                    gt_rot_6d,  # (1, 6)
+                    gt_trans,  # (1, 3)
+                ]
+            ),
+            0.0,
+        ).cpu()
+        # ========================================================
+    else:
+        # ============== Without Pytorch 2.0 Nested Tensor ==============
+        sample = torch.stack(
+            [
+                torch.nn.functional.pad(choir.squeeze(0), (0, 1), value=0.0),
+                rescaled_ref_pts.squeeze(0),
+                torch.nn.functional.pad(scalar.unsqueeze(0), (0, 2), value=0.0).repeat(
+                    (bps_dim, 1)
+                ),
+                torch.nn.functional.pad(
+                    (
+                        torch.ones((1, 1)).cuda()
+                        if hand_idx == "right"
+                        else torch.zeros((1, 1)).cuda()
+                    ),
+                    (0, 2),
+                    value=0.0,
+                ).repeat((bps_dim, 1)),
+            ],
+            dim=0,
+        ).cpu()
+
+        padded_joints = torch.zeros((bps_dim, 18), device=gt_joints.device)
+        padded_joints[: gt_joints.squeeze(0).shape[0], :3] = gt_joints.squeeze(0)
+        padded_anchors = torch.zeros((bps_dim, 18), device=gt_anchors.device)
+        padded_anchors[: gt_anchors.squeeze(0).shape[0], :3] = gt_anchors.squeeze(0)
+        label = torch.stack(
+            [
+                torch.nn.functional.pad(gt_choir.squeeze(0), (0, 16), value=0.0),
+                torch.nn.functional.pad(
+                    gt_rescaled_ref_pts.squeeze(0),
+                    (0, 15),
+                    value=0.0,
+                ),
+                torch.nn.functional.pad(
+                    gt_scalar.unsqueeze(0), (0, 17), value=0.0
+                ).repeat((bps_dim, 1)),
+                padded_joints,
+                padded_anchors,
+                gt_theta.repeat((bps_dim, 1)),
+                torch.nn.functional.pad(gt_beta, (0, 8), value=0.0).repeat(
+                    (bps_dim, 1)
+                ),
+                torch.nn.functional.pad(gt_rot_6d, (0, 12), value=0.0).repeat(
+                    (bps_dim, 1)
+                ),
+                torch.nn.functional.pad(gt_trans, (0, 15), value=0.0).repeat(
+                    (bps_dim, 1)
+                ),
+            ],
+            dim=0,
+        ).cpu()
+    return sample, label
+
+
+def get_scalar(anchors, obj_ptcld, scaling) -> torch.Tensor:
+    if scaling == "pair":
+        scalar = compute_hand_object_pair_scalar(deepcopy(anchors), deepcopy(obj_ptcld))
+    elif scaling == "object":
+        scalar = compute_hand_object_pair_scalar(
+            deepcopy(anchors), deepcopy(obj_ptcld), scale_by_object_only=True
+        )
+    elif scaling == "fixed":
+        scalar = torch.tensor([10.0]).cuda()
+    elif scaling == "none":
+        scalar = torch.tensor([1.0]).cuda()
+    else:
+        raise ValueError(f"Unknown rescale type {scaling}")
+    return scalar
+
+
+def augment_hand_object_pose(
+    obj_mesh: open3d.geometry.TriangleMesh, hTm: torch.Tensor
+) -> None:
+    """
+    Augment the object mesh with a random rotation and translation.
+    """
+    # Randomly rotate the object and hand meshes
+    R = random_rotation().to(hTm.device)
+    # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
+    # are expressed w.r.t. the object center. Otherwise, weird things happen.
+    rotate_origin = obj_mesh.get_center()
+    obj_mesh.translate(-rotate_origin)
+    # Rotate the object and hand
+    obj_mesh.rotate(R.cpu().numpy(), np.array([0, 0, 0]))
+    r_hTm = torch.eye(4)
+    # We need to rotate the 4x4 MANO root pose as well, by first converting R to a
+    # 4x4 homogeneous matrix so we can apply it to the 4x4 pose matrix:
+    R4 = torch.eye(4)
+    R4[:3, :3] = R.float()
+    hTm[:, :3, 3] -= torch.from_numpy(rotate_origin).to(hTm.device).float()
+    r_hTm = R4.to(hTm.device) @ hTm
+    hTm = r_hTm
+    return obj_mesh, hTm

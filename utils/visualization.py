@@ -481,9 +481,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=scalar * anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                x_length=5e-3,
+                y_length=5e-3,
+                z_length=5e-3,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -558,9 +558,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=rescaled_anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                x_length=5e-3,
+                y_length=5e-3,
+                z_length=5e-3,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -622,9 +622,9 @@ def visualize_CHOIR(
         pl.add_mesh(
             pv.Cube(
                 center=rescaled_anchors[i].cpu().numpy(),
-                x_length=3e-3,
-                y_length=3e-3,
-                z_length=3e-3,
+                x_length=5e-3,
+                y_length=5e-3,
+                z_length=5e-3,
             ),
             color="yellow",
             name=f"anchor{i}",

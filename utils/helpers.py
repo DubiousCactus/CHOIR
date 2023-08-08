@@ -38,9 +38,9 @@ class BestNModelSaver:
         metrics: Optional[dict] = None,
         minimize_metric: str = "loss",
     ) -> Any:
-        if (val_loss < self._min_val_loss) or (
+        if (
             metrics.get(minimize_metric, val_loss) < self._min_val_metric
-        ):
+        ):  # Either val_loss or min_val_metric
             ckpt_path = osp.join(
                 HydraConfig.get().runtime.output_dir,
                 f"epoch_{epoch:03d}_val-loss_{val_loss:06f}.ckpt",

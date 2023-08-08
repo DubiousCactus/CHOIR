@@ -54,7 +54,6 @@ class BaseDataset(TaskSet, abc.ABC):
         # only meant to be used with the traditional context + target paradigm. This will work but
         # requires min_pts=1 and max_ctx_pts=1, as well as using n_target. Don't change any of
         # these defaults or it will break for this case.
-        # TODO: Fix perturbation_level=0
         noisy_samples_per_grasp = (
             1 if perturbation_level == 0 else noisy_samples_per_grasp
         )

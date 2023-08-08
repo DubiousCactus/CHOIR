@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from hydra.utils import get_original_cwd
 from open3d import io as o3dio
-from pytorch3d.transforms import matrix_to_rotation_6d, random_rotation
+from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 from trimesh import Trimesh
@@ -32,12 +32,13 @@ from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
-from utils.dataset import compute_choir, compute_hand_object_pair_scalar
-from utils.visualization import (
-    visualize_CHOIR,
-    visualize_CHOIR_prediction,
-    visualize_MANO,
+from utils.dataset import (
+    augment_hand_object_pose,
+    compute_choir,
+    get_scalar,
+    pack_and_pad_sample_label,
 )
+from utils.visualization import visualize_CHOIR, visualize_MANO
 
 
 class ContactPoseDataset(BaseDataset):
@@ -156,8 +157,18 @@ class ContactPoseDataset(BaseDataset):
 
         if self._use_contactopt_splits:
             # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
-            low_split = int(len(cp_dataset) * (0.0 if split == "train" else 0.8))
-            high_split = int(len(cp_dataset) * (0.8 if split == "train" else 1.0))
+            low_split = int(
+                len(cp_dataset)
+                * (0.0 if split == "train" else (0.8 if not tiny else 0.5))
+            )
+            high_split = int(
+                len(cp_dataset)
+                * (
+                    (0.8 if not tiny else 0.5)
+                    if split == "train"
+                    else (1.0 if not tiny else 0.7)
+                )
+            )
             cp_dataset = cp_dataset[
                 low_split:high_split
             ]  # [0.0, 0.8] for train, [0.8, 1.0] for test
@@ -316,7 +327,7 @@ class ContactPoseDataset(BaseDataset):
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
-        pbar = tqdm(total=len(objects_w_contacts) * n_augs)
+        pbar = tqdm(total=len(objects_w_contacts) * (n_augs + 1))
         dataset_mpjpe = MeanMetric()
         for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
             """
@@ -334,7 +345,11 @@ class ContactPoseDataset(BaseDataset):
                 grasp_data["intent"],
                 grasp_data["hand_idx"],
             )
-            for k in range(n_augs):
+            # TODO: Compute Procrustes Aligned grasp, then procrustes distances for the whole
+            # dataset. Each augmented grasp is still the same shape. And we'll maintain that for
+            # perturbed grasps as well so that the model learns the underlying shape similarities
+            # even with noise.
+            for k in range(n_augs + 1):
                 grasp_name = f"{obj_name}_{p_num}_{intent}_{hand_idx}_aug-{k}"
                 if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                     os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
@@ -362,26 +377,8 @@ class ContactPoseDataset(BaseDataset):
                     )
                     obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                     # =================== Apply augmentation =========================
-                    if self._augment:
-                        # Randomly rotate the object and hand meshes
-                        R = random_rotation().to(gt_hTm.device)
-                        # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
-                        # are expressed w.r.t. the object center. Otherwise, weird things happen.
-                        rotate_origin = obj_mesh.get_center()
-                        obj_mesh.translate(-rotate_origin)
-                        # Rotate the object and hand
-                        obj_mesh.rotate(R.cpu().numpy(), np.array([0, 0, 0]))
-                        r_hTm = torch.eye(4)
-                        # We need to rotate the 4x4 MANO root pose as well, by first converting R to a
-                        # 4x4 homogeneous matrix so we can apply it to the 4x4 pose matrix:
-                        R4 = torch.eye(4)
-                        R4[:3, :3] = R.float()
-                        gt_hTm[:, :3, 3] -= (
-                            torch.from_numpy(rotate_origin).to(gt_hTm.device).float()
-                        )
-                        r_hTm = R4.to(gt_hTm.device) @ gt_hTm
-                        gt_hTm = r_hTm
-
+                    if self._augment and k > 0:
+                        obj_mesh, gt_hTm = augment_hand_object_pose(obj_mesh, gt_hTm)
                     # =================================================================
                     gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
                     gt_trans = gt_hTm[:, :3, 3]
@@ -405,27 +402,13 @@ class ContactPoseDataset(BaseDataset):
                         obj_mesh.translate(-obj_center)
                         obj_ptcld -= obj_center.to(obj_ptcld.device)
                         gt_trans -= obj_center.to(gt_trans.device)
-                    # ===============================================================
+                    # ================ Compute GT anchors and verts ==================
                     gt_verts, gt_joints = affine_mano(
                         gt_theta, gt_beta, gt_rot_6d, gt_trans
                     )
-                    # ===============================================================
                     gt_anchors = affine_mano.get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
-                    if self._rescale == "pair":
-                        gt_scalar = compute_hand_object_pair_scalar(
-                            gt_anchors, obj_ptcld
-                        )
-                    elif self._rescale == "object":
-                        gt_scalar = compute_hand_object_pair_scalar(
-                            gt_anchors, obj_ptcld, scale_by_object_only=True
-                        )
-                    elif self._rescale == "fixed":
-                        gt_scalar = torch.tensor([10.0]).cuda()
-                    elif self._rescale == "none":
-                        gt_scalar = torch.tensor([1.0]).cuda()
-                    else:
-                        raise ValueError(f"Unknown rescale type {self._rescale}")
+                    gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
 
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
@@ -439,7 +422,7 @@ class ContactPoseDataset(BaseDataset):
                     )
 
                     sample_paths = []
-                    # ================== Perturbed Hand-Object Pair ==================
+                    # ================= Perturbed Hand-Object pairs =================
                     for j in range(self._noisy_samples_per_grasp):
                         sample_pth = osp.join(
                             samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
@@ -454,25 +437,20 @@ class ContactPoseDataset(BaseDataset):
                             deepcopy(gt_rot_6d),
                             deepcopy(gt_trans),
                         )
-                        if self._perturbation_level > 0:
-                            trans_noise = (
-                                torch.randn(3, device=trans.device)
-                                * self._perturbations[self._perturbation_level]["trans"]
-                            )
-                            pose_noise = torch.cat(
-                                [
-                                    torch.randn(3)
-                                    * self._perturbations[self._perturbation_level][
-                                        "rot"
-                                    ],
-                                    torch.randn(15)
-                                    * self._perturbations[self._perturbation_level][
-                                        "pca"
-                                    ],
-                                ]
-                            ).to(theta.device)
-                            theta += pose_noise
-                            trans += trans_noise
+                        trans_noise = (
+                            torch.randn(3, device=trans.device)
+                            * self._perturbations[self._perturbation_level]["trans"]
+                        )
+                        pose_noise = torch.cat(
+                            [
+                                torch.randn(3, device=theta.device)
+                                * self._perturbations[self._perturbation_level]["rot"],
+                                torch.randn(15, device=theta.device)
+                                * self._perturbations[self._perturbation_level]["pca"],
+                            ]
+                        )
+                        theta += pose_noise
+                        trans += trans_noise
 
                         verts, joints = affine_mano(theta, beta, rot_6d, trans)
 
@@ -482,18 +460,7 @@ class ContactPoseDataset(BaseDataset):
                         dataset_mpjpe.update(mpjpe.item())
 
                         anchors = affine_mano.get_anchors(verts)
-                        if self._rescale == "pair":
-                            scalar = compute_hand_object_pair_scalar(anchors, obj_ptcld)
-                        elif self._rescale == "object":
-                            scalar = compute_hand_object_pair_scalar(
-                                anchors, obj_ptcld, scale_by_object_only=True
-                            )
-                        elif self._rescale == "fixed":
-                            scalar = torch.tensor([10.0]).cuda()
-                        elif self._rescale == "none":
-                            scalar = torch.tensor([1.0]).cuda()
-                        else:
-                            raise ValueError(f"Unknown rescale type {self._rescale}")
+                        scalar = get_scalar(anchors, obj_ptcld, self._rescale)
                         # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                         # workers, but bps_torch is forcing my hand here so I might as well help it.
                         choir, rescaled_ref_pts = compute_choir(
@@ -504,119 +471,40 @@ class ContactPoseDataset(BaseDataset):
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
-
-                        if "2.0" in torch.__version__:
-                            # ============ With Pytorch 2.0 Nested Tensor ============
-                            sample = torch.nested.to_padded_tensor(
-                                torch.nested.nested_tensor(
-                                    [
-                                        choir.squeeze(0),  # (N, 2)
-                                        rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                        scalar.unsqueeze(0),  # (1, 1)
-                                        torch.ones((1, 1)).cuda()
-                                        if hand_idx == "right"
-                                        else torch.zeros((1, 1)).cuda(),  # (1, 1)
-                                    ]
-                                ),
-                                0.0,
-                            ).cpu()
-
-                            label = torch.nested.to_padded_tensor(
-                                torch.nested.nested_tensor(
-                                    [
-                                        gt_choir.squeeze(0),  # (N, 2)
-                                        gt_rescaled_ref_pts.squeeze(0),  # (N, 3)
-                                        gt_scalar.unsqueeze(0),  # (1, 1)
-                                        gt_joints.squeeze(0),  # (21, 3)
-                                        gt_anchors.squeeze(0),  # (32, 3)
-                                        gt_theta,  # (1, 18)
-                                        gt_beta,  # (1, 10)
-                                        gt_rot_6d,  # (1, 6)
-                                        gt_trans,  # (1, 3)
-                                    ]
-                                ),
-                                0.0,
-                            ).cpu()
-                            # ========================================================
-                        else:
-                            # ============== Without Pytorch 2.0 Nested Tensor ==============
-                            sample = torch.stack(
-                                [
-                                    torch.nn.functional.pad(
-                                        choir.squeeze(0), (0, 1), value=0.0
-                                    ),
-                                    rescaled_ref_pts.squeeze(0),
-                                    torch.nn.functional.pad(
-                                        scalar.unsqueeze(0), (0, 2), value=0.0
-                                    ).repeat((self._bps_dim, 1)),
-                                    torch.nn.functional.pad(
-                                        (
-                                            torch.ones((1, 1)).cuda()
-                                            if hand_idx == "right"
-                                            else torch.zeros((1, 1)).cuda()
-                                        ),
-                                        (0, 2),
-                                        value=0.0,
-                                    ).repeat((self._bps_dim, 1)),
-                                ],
-                                dim=0,
-                            ).cpu()
-
-                            padded_joints = torch.zeros(
-                                (self._bps_dim, 18), device=gt_joints.device
-                            )
-                            padded_joints[
-                                : gt_joints.squeeze(0).shape[0], :3
-                            ] = gt_joints.squeeze(0)
-                            padded_anchors = torch.zeros(
-                                (self._bps_dim, 18), device=gt_anchors.device
-                            )
-                            padded_anchors[
-                                : gt_anchors.squeeze(0).shape[0], :3
-                            ] = gt_anchors.squeeze(0)
-                            label = torch.stack(
-                                [
-                                    torch.nn.functional.pad(
-                                        gt_choir.squeeze(0), (0, 16), value=0.0
-                                    ),
-                                    torch.nn.functional.pad(
-                                        gt_rescaled_ref_pts.squeeze(0),
-                                        (0, 15),
-                                        value=0.0,
-                                    ),
-                                    torch.nn.functional.pad(
-                                        gt_scalar.unsqueeze(0), (0, 17), value=0.0
-                                    ).repeat((self._bps_dim, 1)),
-                                    padded_joints,
-                                    padded_anchors,
-                                    gt_theta.repeat((self._bps_dim, 1)),
-                                    torch.nn.functional.pad(
-                                        gt_beta, (0, 8), value=0.0
-                                    ).repeat((self._bps_dim, 1)),
-                                    torch.nn.functional.pad(
-                                        gt_rot_6d, (0, 12), value=0.0
-                                    ).repeat((self._bps_dim, 1)),
-                                    torch.nn.functional.pad(
-                                        gt_trans, (0, 15), value=0.0
-                                    ).repeat((self._bps_dim, 1)),
-                                ],
-                                dim=0,
-                            ).cpu()
-                            # =================================================================
+                        sample, label = pack_and_pad_sample_label(
+                            choir,
+                            rescaled_ref_pts,
+                            scalar,
+                            hand_idx,
+                            gt_choir,
+                            gt_rescaled_ref_pts,
+                            gt_scalar,
+                            gt_joints,
+                            gt_anchors,
+                            gt_theta,
+                            gt_beta,
+                            gt_rot_6d,
+                            gt_trans,
+                            self._bps_dim,
+                        )
+                        # =================================================================
 
                         with open(sample_pth, "wb") as f:
                             pkl = pickle.dumps((sample, label))
                             compressed_pkl = blosc.compress(pkl)
                             f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
+
                         if visualize and not has_visualized:
-                            print("[*] Plotting CHOIR... (please be patient)")
+                            print(
+                                f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
+                            )
                             visualize_CHOIR(
-                                gt_choir.squeeze(0),
+                                choir.squeeze(0),
                                 self._bps,
-                                gt_scalar,
-                                gt_verts.squeeze(0),
-                                gt_anchors.squeeze(0),
+                                scalar,
+                                verts.squeeze(0),
+                                anchors.squeeze(0),
                                 obj_mesh,
                                 obj_ptcld,
                                 gt_rescaled_ref_pts.squeeze(0),
@@ -632,22 +520,22 @@ class ContactPoseDataset(BaseDataset):
                             visualize_MANO(
                                 pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                             )
-                            visualize_CHOIR_prediction(
-                                gt_choir,
-                                gt_choir,
-                                self._bps,
-                                scalar,
-                                gt_scalar,
-                                rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                            )
+                            # visualize_CHOIR_prediction(
+                            # gt_choir,
+                            # gt_choir,
+                            # self._bps,
+                            # scalar,
+                            # gt_scalar,
+                            # rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # )
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()
