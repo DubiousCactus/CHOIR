@@ -116,9 +116,9 @@ class MultiViewTester(MultiViewTrainer):
                 y_hat["choir"],
                 bps=self._bps,
                 scalar=input_scalar,
-                max_iterations=80,
+                max_iterations=8000,
                 loss_thresh=1e-10,
-                lr=4e-2,
+                lr=2e-2,
                 is_rhand=False,  # TODO
                 use_smplx=False,  # TODO
                 remap_bps_distances=self._remap_bps_distances,

@@ -84,12 +84,12 @@ class MultiViewTrainer(BaseTrainer):
         # If we're in validation mode, let's rescale the CHOIR prediction and ground-truth so that
         # all metrics are comparable  between different scaling modes, etc.
         losses = self._training_loss(
-            samples, labels, y_hat, rescale=validation
+            samples, labels, y_hat, rescale=validation, epoch=self._epoch
         )  # TODO: Contrastive Learning loss
         loss = sum([v for v in losses.values()])
         # Again without using the posterior:
         y_hat = self._model(samples["choir"])
         losses["distances_from_prior"] = self._training_loss(
-            samples, labels, y_hat, rescale=validation
+            samples, labels, y_hat, rescale=validation, epoch=self._epoch
         )["distances"]
         return loss, losses

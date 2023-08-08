@@ -187,15 +187,16 @@ class Aggregate_VED(torch.nn.Module):
             x = F.dropout(x, p=0.1, training=self.training)
         s = self.prior_encoder[-1](x)
         s_c = torch.mean(s, dim=1)
-        z_mu, z_log_var = torch.split(s_c, self.latent_dim, dim=-1)
-        z_var = 0.1 + 0.9 * torch.sigmoid(z_log_var)
-        prior, posterior = torch.distributions.Normal(z_mu, z_var), None
+        p_mu, p_log_var = torch.split(s_c, self.latent_dim, dim=-1)
+        p_var = 0.1 + 0.9 * torch.sigmoid(p_log_var)
+        prior, posterior = torch.distributions.Normal(p_mu, p_var), None
 
         if y is None:
             # Sample from the prior latent distribution q(z|O) at test time, with O being the
             # noisy observations. rsample() uses the reparameterization trick, allowing us to
             # differentiate through z and into the latent encoder layers.
-            z = z_mu if use_mean else prior.rsample()
+            z = p_mu if use_mean else prior.rsample()
+            q_mu, q_var = None, None
         else:
             # ======================= Posterior distribution =======================
             # Sample from the posterior latent distribution p(z|O, T) at training time, with O
@@ -219,10 +220,10 @@ class Aggregate_VED(torch.nn.Module):
             # x = F.dropout(x, p=0.5, training=self.training)
             s = self.posterior_encoder[-1](x)
             s_c = torch.mean(s, dim=1)
-            p_mu, p_log_var = torch.split(s_c, self.latent_dim, dim=-1)
-            p_var = 0.1 + 0.9 * torch.sigmoid(p_log_var)
-            posterior = torch.distributions.Normal(p_mu, p_var)
-            z = p_mu if use_mean else posterior.rsample()
+            q_mu, q_log_var = torch.split(s_c, self.latent_dim, dim=-1)
+            q_var = 0.1 + 0.9 * torch.sigmoid(q_log_var)
+            posterior = torch.distributions.Normal(q_mu, q_var)
+            z = q_mu if use_mean else posterior.rsample()
 
         if self.decoder_use_obj:
             dec_input = torch.cat([z, _x[:, 0, :, 0]], dim=-1)
@@ -300,8 +301,8 @@ class Aggregate_VED(torch.nn.Module):
             "choir": choir,
             "orientations": None,
             "mano": mano,
-            "prior": prior,
-            "posterior": posterior,
+            "prior": (p_mu, p_var),
+            "posterior": (q_mu, q_var),
         }
 
 

@@ -12,9 +12,30 @@ Hand-Object Interaction loss.
 from typing import Dict, Tuple
 
 import torch
-from torch.distributions import kl_divergence
 
 from model.affine_mano import AffineMANO
+
+
+def kl_normal(qm, qv, pm, pv):
+    # From https://github.com/davrempe/humor/blob/main/humor/losses/humor_loss.py#L359
+    """
+    Computes the elem-wise KL divergence between two normal distributions KL(q || p) and
+    sum over the last dimension
+    ​
+    Args:
+        qm: tensor: (batch, dim): q mean
+        qv: tensor: (batch, dim): q variance
+        pm: tensor: (batch, dim): p mean
+        pv: tensor: (batch, dim): p variance
+    ​
+    Return:
+        kl: tensor: (batch,): kl between each sample
+    """
+    element_wise = 0.5 * (
+        torch.log(pv) - torch.log(qv) + qv / pv + (qm - pm).pow(2) / pv - 1
+    )
+    kl = element_wise.sum(-1)
+    return kl
 
 
 class CHOIRLoss(torch.nn.Module):
@@ -62,14 +83,15 @@ class CHOIRLoss(torch.nn.Module):
         self._remap_bps_distances = remap_bps_distances
         self._exponential_map_w = exponential_map_w
         self.predict_residuals = predict_residuals
-        self._kl_decay = 1.0 if not use_kl_scheduler else 1.4
-        self._iterations = 0
+        self._kl_decay = 1.0 if not use_kl_scheduler else 1.2
+        self._decayed = False
 
     def forward(
         self,
         samples: Dict[str, torch.Tensor],
         labels: Dict[str, torch.Tensor],
         y_hat,
+        epoch: int,
         rescale: bool = False,
     ) -> torch.Tensor:
         scalar = samples["scalar"]
@@ -118,14 +140,23 @@ class CHOIRLoss(torch.nn.Module):
         }
         anchor_positions_pred = None
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
-            kl_w = self._kl_w
-            if self._iterations > 0 and self._iterations % 5000 == 0:
-                kl_w = min(
-                    0.01, self._kl_w * (self._kl_decay ** (self._iterations // 5000))
+            # TODO: Refactor this shit
+            if epoch > 0 and epoch % 5 == 0 and not self._decayed:
+                self._kl_w = min(0.01, self._kl_w * self._kl_decay)
+                self._decayed = True
+            elif epoch % 5 != 0:
+                self._decayed = False
+            if y_hat["posterior"][0] is not None:
+                losses["kl_div"] = (
+                    # kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * kl_w
+                    kl_normal(
+                        y_hat["posterior"][0],
+                        y_hat["posterior"][1],
+                        y_hat["prior"][0],
+                        y_hat["prior"][1],
+                    ).mean()
+                    * self._kl_w
                 )
-            losses["kl_div"] = (
-                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * kl_w
-            )
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
             B, P, D = orientations_pred.shape
@@ -186,7 +217,6 @@ class CHOIRLoss(torch.nn.Module):
             # TODO: Penalize MANO penetration into the object pointcloud (recoverable through the
             # input CHOIR field which must include the delta vectors, or we can pass the delta
             # vectors to this loss separately).
-        self._iterations += 1
         return losses
 
 
