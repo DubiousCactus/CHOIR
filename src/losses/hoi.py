@@ -36,6 +36,8 @@ class CHOIRLoss(torch.nn.Module):
         multi_view: bool,
         remap_bps_distances: bool,
         exponential_map_w: float,
+        predict_residuals: bool,
+        use_kl_scheduler: bool,
     ) -> None:
         super().__init__()
         self._mse = torch.nn.MSELoss()
@@ -59,6 +61,9 @@ class CHOIRLoss(torch.nn.Module):
         self.register_buffer("bps", bps)
         self._remap_bps_distances = remap_bps_distances
         self._exponential_map_w = exponential_map_w
+        self.predict_residuals = predict_residuals
+        self._kl_decay = 1.0 if not use_kl_scheduler else 1.4
+        self._iterations = 0
 
     def forward(
         self,
@@ -94,7 +99,7 @@ class CHOIRLoss(torch.nn.Module):
                 assert torch.allclose(choir_gt[:, n], choir_gt[:, n + 1])
             # Since all noisy views are of the same grasp, we can just take the first view's ground
             # truth (all views have the same ground truth).
-            choir_gt = choir_gt[:, 0]
+            choir_gt = choir_gt[:, 0] if not self.predict_residuals else choir_gt
             if len(scalar_gt.shape) == 2:
                 scalar_gt = scalar_gt[
                     :, 0
@@ -109,12 +114,17 @@ class CHOIRLoss(torch.nn.Module):
 
         losses = {
             "distances": self._distance_w
-            * self._mse(choir_gt[:, :, 1], choir_pred[:, :, 1])
+            * self._mse(choir_gt[..., 1], choir_pred[..., 1])
         }
         anchor_positions_pred = None
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
+            kl_w = self._kl_w
+            if self._iterations > 0 and self._iterations % 5000 == 0:
+                kl_w = min(
+                    0.01, self._kl_w * (self._kl_decay ** (self._iterations // 5000))
+                )
             losses["kl_div"] = (
-                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * self._kl_w
+                kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * kl_w
             )
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
@@ -176,6 +186,7 @@ class CHOIRLoss(torch.nn.Module):
             # TODO: Penalize MANO penetration into the object pointcloud (recoverable through the
             # input CHOIR field which must include the delta vectors, or we can pass the delta
             # vectors to this loss separately).
+        self._iterations += 1
         return losses
 
 
