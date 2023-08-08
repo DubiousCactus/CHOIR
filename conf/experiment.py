@@ -30,7 +30,11 @@ import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
-from model.aggregate_ved import Aggregate_VED
+from model.aggregate_ved import (
+    Aggregate_VED,
+    Aggregate_VED_Simple,
+    Aggregate_VED_SuperSimple,
+)
 from model.baseline import BaselineModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
@@ -129,9 +133,9 @@ model_store = store(group="model")
 @dataclass
 class BaselineModelConf:
     bps_dim: int
-    encoder_layer_dims: Tuple[int] = (1024, 512, 256, 128)
-    decoder_layer_dims: Tuple[int] = (128, 256, 512)
-    latent_dim: int = 32
+    encoder_layer_dims: Tuple[int] = (2048, 1024, 512, 256)
+    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
+    latent_dim: int = 128
     predict_anchor_orientation: bool = MISSING
     predict_mano: bool = MISSING
     share_decoder_for_all_tasks: bool = True
@@ -155,10 +159,41 @@ model_store(
         batch_norm=True,
         decoder_use_obj=False,
         skip_connections=True,
+        residual_connections=False,
+        encoder_dropout=False,
+        decoder_dropout=False,
+        predict_residuals=MISSING,
     ),
     name="aggregate_cpvae",
 )
 
+model_store(
+    pbuilds(
+        Aggregate_VED_Simple,
+        builds_bases=(BaselineModelConf,),
+        bps_dim=MISSING,
+        remapped_bps_distances=MISSING,  # Sigmoid if so
+        batch_norm=True,
+        decoder_use_obj=False,
+        skip_connections=True,
+        use_dropout=False,
+    ),
+    name="aggregate_cpvae_s",
+)
+
+model_store(
+    pbuilds(
+        Aggregate_VED_SuperSimple,
+        builds_bases=(BaselineModelConf,),
+        bps_dim=MISSING,
+        remapped_bps_distances=MISSING,  # Sigmoid if so
+        batch_norm=True,
+        decoder_use_obj=False,
+        skip_connections=True,
+        use_dropout=False,
+    ),
+    name="aggregate_cpvae_ss",
+)
 " ================== Losses ================== "
 
 
@@ -180,6 +215,8 @@ class CHOIRLossConf:
     mano_anchors_w: float = 1.0
     kl_w: float = 1e-4
     multi_view: bool = False
+    predict_residuals: bool = False
+    use_kl_scheduler: bool = False
 
 
 training_loss_store = store(group="training_loss")
@@ -323,7 +360,7 @@ experiment_store(
         dataset=dict(perturbation_level=2),
         training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=32),
-        model=dict(latent_dim=16),
+        model=dict(latent_dim=128),
         # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
         # decoder_layer_dims=(128, 256, 512, 1024)),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
@@ -349,11 +386,41 @@ experiment_store(
         ),
         training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=32),
-        model=dict(latent_dim=16),
+        model=dict(latent_dim=128),
         # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
         # decoder_layer_dims=(128, 256, 512, 1024)),
         # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
         bases=(Experiment,),
     ),
     name="multiview_contactopt_replica",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "aggregate_cpvae"},
+            {"override /trainer": "multiview"},
+            {"override /tester": "multiview"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=4,
+            use_contactopt_splits=True,
+            augment=True,
+        ),
+        training_loss=dict(multi_view=True),
+        data_loader=dict(batch_size=32),
+        model=dict(
+            latent_dim=128,
+            encoder_layer_dims=(1024, 1024, 1024, 1024),
+            decoder_layer_dims=(1024, 1024, 1024),
+        ),
+        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
+        # decoder_layer_dims=(128, 256, 512, 1024)),
+        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
+        bases=(Experiment,),
+    ),
+    name="multiview_contactopt_replica_aug",
 )
