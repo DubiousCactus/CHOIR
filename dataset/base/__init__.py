@@ -151,6 +151,12 @@ class BaseDataset(TaskSet, abc.ABC):
         )
         self._n_combinations = len(self._combinations)
 
+    def _mine_neg_pos_pairs(self):
+        """
+        Mine negative-positive pairs for the training split using the Procrustes distance.
+        """
+        raise NotImplementedError
+
     @abc.abstractmethod
     def _load(
         self,

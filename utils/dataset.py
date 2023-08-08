@@ -309,24 +309,29 @@ def get_scalar(anchors, obj_ptcld, scaling) -> torch.Tensor:
 
 
 def augment_hand_object_pose(
-    obj_mesh: open3d.geometry.TriangleMesh, hTm: torch.Tensor
+    obj_mesh: open3d.geometry.TriangleMesh, hTm: torch.Tensor, around_z: bool = True
 ) -> None:
     """
     Augment the object mesh with a random rotation and translation.
     """
-    # Randomly rotate the object and hand meshes
-    R = random_rotation().to(hTm.device)
+    # Randomly rotate the object and hand meshes around the z-axis only:
+    if around_z:
+        R = open3d.geometry.get_rotation_matrix_from_xyz(
+            np.array([0, 0, np.random.uniform(0, 2 * np.pi)])
+        )
+    else:
+        R = random_rotation()
     # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
     # are expressed w.r.t. the object center. Otherwise, weird things happen.
     rotate_origin = obj_mesh.get_center()
     obj_mesh.translate(-rotate_origin)
     # Rotate the object and hand
-    obj_mesh.rotate(R.cpu().numpy(), np.array([0, 0, 0]))
+    obj_mesh.rotate(R, np.array([0, 0, 0]))
     r_hTm = torch.eye(4)
     # We need to rotate the 4x4 MANO root pose as well, by first converting R to a
     # 4x4 homogeneous matrix so we can apply it to the 4x4 pose matrix:
     R4 = torch.eye(4)
-    R4[:3, :3] = R.float()
+    R4[:3, :3] = torch.from_numpy(R).float()
     hTm[:, :3, 3] -= torch.from_numpy(rotate_origin).to(hTm.device).float()
     r_hTm = R4.to(hTm.device) @ hTm
     hTm = r_hTm

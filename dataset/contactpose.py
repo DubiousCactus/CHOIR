@@ -378,7 +378,9 @@ class ContactPoseDataset(BaseDataset):
                     obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                     # =================== Apply augmentation =========================
                     if self._augment and k > 0:
-                        obj_mesh, gt_hTm = augment_hand_object_pose(obj_mesh, gt_hTm)
+                        obj_mesh, gt_hTm = augment_hand_object_pose(
+                            obj_mesh, gt_hTm, around_z=True
+                        )
                     # =================================================================
                     gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
                     gt_trans = gt_hTm[:, :3, 3]
@@ -396,8 +398,9 @@ class ContactPoseDataset(BaseDataset):
                         .float()
                     )
                     # ============ Shift the pair to the object's center ============
-                    # When we augment we necessarily recenter on the object, so we don't need to do it here.
-                    if self._center_on_object_com and not self._augment:
+                    # When we augment we necessarily recenter on the object, so we don't need to do
+                    # it here (except for k=0).
+                    if self._center_on_object_com and not (self._augment and k > 0):
                         obj_center = torch.from_numpy(obj_mesh.get_center())
                         obj_mesh.translate(-obj_center)
                         obj_ptcld -= obj_center.to(obj_ptcld.device)
