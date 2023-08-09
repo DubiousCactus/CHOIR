@@ -142,6 +142,10 @@ class BaseDataset(TaskSet, abc.ABC):
     def bps(self) -> torch.Tensor:
         return self._bps
 
+    @property
+    def center_on_object_com(self) -> bool:
+        return self._center_on_object_com
+
     def set_observations_number(self, n: int) -> None:
         # This SO thread explains the problem and the (super simple) solution:
         # https://stackoverflow.com/questions/27974126/get-all-n-choose-k-combinations-of-length-n

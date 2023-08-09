@@ -669,8 +669,9 @@ def visualize_MANO(
             color="blue",
         )
     if obj_mesh is not None:
-        obj_tmesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
-        obj_mesh_pv = pv.wrap(obj_tmesh)
+        if not isinstance(obj_mesh, Trimesh):
+            obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+        obj_mesh_pv = pv.wrap(obj_mesh)
         pl.add_mesh(
             obj_mesh_pv,
             opacity=0.3,

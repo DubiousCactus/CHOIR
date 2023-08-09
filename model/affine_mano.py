@@ -42,5 +42,9 @@ class AffineMANO(torch.nn.Module):
     def faces(self) -> torch.Tensor:
         return self.mano_layer.th_faces  # type: ignore
 
+    @property
+    def closed_faces(self) -> torch.Tensor:
+        return self.mano_layer.get_mano_closed_faces()  # type: ignore
+
     def get_anchors(self, verts: torch.Tensor) -> torch.Tensor:
         return self.anchor_layer(verts)

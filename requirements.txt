@@ -15,5 +15,6 @@ trimesh
 smplx[all]
 open3d
 blosc
+rtree
 git+https://github.com/otaheri/chamfer_distance
 git+https://github.com/otaheri/bps_torch
