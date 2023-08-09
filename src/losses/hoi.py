@@ -141,10 +141,10 @@ class CHOIRLoss(torch.nn.Module):
         anchor_positions_pred = None
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
             # TODO: Refactor this shit
-            if epoch > 0 and epoch % 5 == 0 and not self._decayed:
-                self._kl_w = min(0.01, self._kl_w * self._kl_decay)
+            if epoch > 0 and epoch % 10 == 0 and not self._decayed:
+                self._kl_w = min(1e-8, self._kl_w * self._kl_decay)
                 self._decayed = True
-            elif epoch % 5 != 0:
+            elif epoch % 10 != 0:
                 self._decayed = False
             if y_hat["posterior"][0] is not None:
                 losses["kl_div"] = (
