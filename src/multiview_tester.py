@@ -210,7 +210,7 @@ class MultiViewTester(MultiViewTrainer):
         # intersection_volumes.append(intersection.volume)
         # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
         # both meshes:
-        pitch_mm = 1
+        pitch_mm = 2
         pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
         # TODO: The radius only needs to be slightly larger than the object bounding box.
         radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
@@ -221,6 +221,7 @@ class MultiViewTester(MultiViewTrainer):
         obj_voxels = {}
         # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
         for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
+            break
             if path not in obj_voxels:
                 obj_mesh = o3dio.read_triangle_mesh(path)
                 if self._data_loader.dataset.center_on_object_com:
@@ -424,13 +425,13 @@ class MultiViewTester(MultiViewTrainer):
             label="ContactOpt",
         )
         # Compute the AUC for the MPJPE curve:
-        auc = torch.trapz(
-            torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
-            torch.tensor([1, 2, 3, 4]),
-        )
+        # auc = torch.trapz(
+        # torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
+        # torch.tensor([1, 2, 3, 4]),
+        # )
         plt.title(f"Test MPJPE and Root-aligned MPJPE for N observations")
         # Add the AUC to the legend:
-        plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        # plt.legend(title=f"MPJPE AUC: {auc:.2f}")
         plt.xlabel("N observations")
         plt.ylabel("(Root-aligned) MPJPE (mm)")
         plt.savefig(f"test_error_{self._run_name}.png")
@@ -452,13 +453,13 @@ class MultiViewTester(MultiViewTrainer):
             label="ContactOpt",
         )
         # Compute the AUC for the MPJPE curve:
-        auc = torch.trapz(
-            torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
-            torch.tensor([1, 2, 3, 4]),
-        )
+        # auc = torch.trapz(
+        # torch.tensor([x["[PRIOR] MPJPE (mm)"] for x in test_errors]),
+        # torch.tensor([1, 2, 3, 4]),
+        # )
         plt.title(f"Test MPJPE for N observations")
         # Add the AUC to the legend:
-        plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        # plt.legend(title=f"MPJPE AUC: {auc:.2f}")
         plt.xlabel("N observations")
         plt.ylabel("MPJPE (mm)")
         plt.savefig(f"test_error_mpjpe_only_{self._run_name}.png")

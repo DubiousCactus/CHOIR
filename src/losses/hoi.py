@@ -142,7 +142,7 @@ class CHOIRLoss(torch.nn.Module):
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
             # TODO: Refactor this shit
             if epoch > 0 and epoch % 10 == 0 and not self._decayed:
-                self._kl_w = min(1e-8, self._kl_w * self._kl_decay)
+                self._kl_w = min(1e-5, self._kl_w * self._kl_decay)
                 self._decayed = True
             elif epoch % 10 != 0:
                 self._decayed = False
