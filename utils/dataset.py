@@ -20,6 +20,8 @@ from pytorch3d.structures import Pointclouds
 from pytorch3d.transforms import Transform3d, random_rotation
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
+from utils import to_cuda
+
 
 def transform_verts(
     verts: torch.Tensor, rot6d: torch.Tensor, t: torch.Tensor
@@ -188,6 +190,7 @@ def compute_hand_contacts_bps(
     raise NotImplementedError
 
 
+@to_cuda
 def pack_and_pad_sample_label(
     theta,
     beta,

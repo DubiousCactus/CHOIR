@@ -16,7 +16,6 @@ import os.path as osp
 import pickle
 import random
 from contextlib import redirect_stdout
-from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 
 import blosc
@@ -162,16 +161,13 @@ class GRABDataset(BaseDataset):
             )
         else:
             h_mesh = os.path.join(self._root_path, seq[grasping_hand]["vtemp"])
-            h_vtemp = np.array(
-                o3dio.read_triangle_mesh(h_mesh).vertices
+            h_vtemp = torch.from_numpy(
+                np.array(o3dio.read_triangle_mesh(h_mesh).vertices)
             )  # Or with Trimesh
             smplx_params = {
                 k: torch.from_numpy(v).type(torch.float32)
                 for k, v in seq[grasping_hand]["params"].items()
             }
-            smplx_params["hand_pose"]
-            smplx_params["transl"]
-            smplx_params["global_orient"]
             params.update(
                 {
                     "theta": smplx_params["hand_pose"],
@@ -191,19 +187,18 @@ class GRABDataset(BaseDataset):
         trans_noise: float = 0.0,
         rot_noise: float = 0.0,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+        noisy_params = {k: v.clone() for k, v in params.items()}
         if self._use_affine_mano:
-            theta = params["theta"].clone()
-            theta[..., :3] += rot_noise
-            theta[..., 3:] += pose_noise
-            trans = params["trans"].clone()
-            trans += trans_noise
+            noisy_params["theta"][..., :3] += rot_noise
+            noisy_params["theta"][..., 3:] += pose_noise
+            noisy_params["trans"] += trans_noise
             verts, joints = self._affine_mano(
-                theta,
-                params["beta"],
-                params["rot"],
-                trans,
+                noisy_params["theta"],
+                noisy_params["beta"],
+                noisy_params["rot"],
+                noisy_params["trans"],
             )
-            faces = self._affine_mano.faces
+            faces = self._affine_mano.faces.cpu().numpy()
         else:
             with torch.no_grad(), redirect_stdout(None):
                 h_m = to_cuda_(
@@ -211,22 +206,23 @@ class GRABDataset(BaseDataset):
                         model_path=self._smplx_path,
                         model_type="mano",
                         is_rhand=grasping_hand == "rhand",
-                        v_template=params["vtemp"],
-                        num_pca_comps=params["theta"].shape[1],
+                        v_template=noisy_params["vtemp"],
+                        num_pca_comps=noisy_params["theta"].shape[1],
                         flat_hand_mean=True,
-                        batch_size=params["theta"].shape[0],
+                        batch_size=noisy_params["theta"].shape[0],
                     )
                 )
-                theta = params["theta"].clone()
-                theta += pose_noise
-                rot = params["rot"].clone()
-                rot += rot_noise
-                trans = params["transl"].clone()
-                trans += trans_noise
-                mano_result = h_m(hand_pose=theta, global_orient=rot, transl=trans)
+                noisy_params["theta"] += pose_noise
+                noisy_params["rot"] += rot_noise
+                noisy_params["trans"] += trans_noise
+                mano_result = h_m(
+                    hand_pose=noisy_params["theta"],
+                    global_orient=noisy_params["rot"],
+                    transl=noisy_params["trans"],
+                )
                 faces = h_m.faces
             verts, joints = mano_result.vertices, mano_result.joints
-        return verts, joints, faces, params
+        return verts, joints, faces, noisy_params
 
     def _load(
         self,
@@ -321,7 +317,7 @@ class GRABDataset(BaseDataset):
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
                 gt_params = self._load_sequence_params(seq, p_num, grasping_hand)
-                gt_verts, gt_joints, gt_faces, gt_params = self._get_verts_and_joints(
+                gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
                     gt_params, grasping_hand
                 )
                 # Now I must center the grasp on the object s.t. the object is at the origin
@@ -397,28 +393,24 @@ class GRABDataset(BaseDataset):
                     if i % 6 != 0 or dist > 0.5:
                         continue
 
-                    h_params = {
-                        k: torch.from_numpy(v[None, i]).type(torch.float32)
-                        for k, v in deepcopy(seq[grasping_hand]["params"]).items()
-                    }
-
                     trans_noise = (
-                        torch.randn(3, device=h_params["transl"].device)
+                        torch.randn(3, device=gt_params["trans"].device)
                         * self._perturbations[self._perturbation_level]["trans"]
                     )
                     pose_noise = torch.cat(
                         [
-                            torch.randn(24, device=h_params["hand_pose"].device)
+                            torch.randn(24, device=gt_params["theta"].device)
                             * self._perturbations[self._perturbation_level]["pca"],
                         ]
                     )
                     global_orient_noise = (
-                        torch.randn(3, device=h_params["global_orient"].device)
+                        torch.randn(3, device=gt_params["rot"].device)
                         * self._perturbations[self._perturbation_level]["rot"]
                     )
 
                     gt_params_frame = {
-                        k: v[i].unsqueeze(0) for k, v in gt_params.items()
+                        k: v[i].unsqueeze(0) if k != "vtemp" else v
+                        for k, v in gt_params.items()
                     }
                     verts, joints, faces, params = self._get_verts_and_joints(
                         gt_params_frame,
@@ -496,12 +488,8 @@ class GRABDataset(BaseDataset):
                         # gt_rescaled_ref_pts.squeeze(0),
                         # self._affine_mano,
                         # )
-                        gt_MANO_mesh = Trimesh(
-                            gt_verts[i].cpu().numpy(), gt_faces.cpu().numpy()
-                        )
-                        pred_MANO_mesh = Trimesh(
-                            verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                        )
+                        gt_MANO_mesh = Trimesh(gt_verts[i].cpu().numpy(), gt_faces)
+                        pred_MANO_mesh = Trimesh(verts.squeeze(0).cpu().numpy(), faces)
                         visualize_MANO(
                             pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )

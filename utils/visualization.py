@@ -352,10 +352,10 @@ def visualize_CHOIR_prediction(
             is_rhand=is_rhand,
             use_smplx=use_smplx,
             max_iterations=8000,
-            lr=5e-2,
+            lr=1e-1,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
-            beta_w=1e-7,
+            beta_w=1e-8,
         )
     # ====== Metrics and qualitative comparison ======
     # === Anchor error ===
@@ -370,7 +370,7 @@ def visualize_CHOIR_prediction(
         # Reorder the joints to match the SMPL-X order
         # (https://github.com/lixiny/manotorch/blob/5738d327a343e7533ad60da64d1629cedb5ae9e7/manotorch/manolayer.py#L240):
         joints_pred = snap_to_original_mano(joints_pred)
-        joints_pred = drop_fingertip_joints(joints_pred)
+        joints_pred = drop_fingertip_joints(joints_pred, definition="mano")
     elif gt_joints.shape[1] == 21 and joints_pred.shape[1] == 16:
         # MANO ground-truth but SMPL-X prediction.
         gt_joints = snap_to_original_mano(gt_joints)
