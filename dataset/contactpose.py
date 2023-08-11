@@ -15,7 +15,6 @@ import pickle
 import random
 import sys
 from contextlib import redirect_stdout
-from copy import deepcopy
 from typing import List, Tuple
 
 import blosc
@@ -371,7 +370,7 @@ class ContactPoseDataset(BaseDataset):
                     visualize = self._debug and (random.Random().random() < 0.05)
                     has_visualized = False
                     # ================== Original Hand-Object Pair ==================
-                    mano_params = deepcopy(grasp_data["grasp"][0])
+                    mano_params = grasp_data["grasp"][0].copy()
                     gt_hTm = (
                         torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
                     )
@@ -435,10 +434,10 @@ class ContactPoseDataset(BaseDataset):
                             continue
 
                         theta, beta, rot_6d, trans = (
-                            deepcopy(gt_theta),
-                            deepcopy(gt_beta),
-                            deepcopy(gt_rot_6d),
-                            deepcopy(gt_trans),
+                            gt_theta.clone(),
+                            gt_beta.clone(),
+                            gt_rot_6d.clone(),
+                            gt_trans.clone(),
                         )
                         trans_noise = (
                             torch.randn(3, device=trans.device)
@@ -475,6 +474,10 @@ class ContactPoseDataset(BaseDataset):
                             exponential_map_w=self._exponential_map_w,
                         )
                         sample, label = pack_and_pad_sample_label(
+                            theta,
+                            beta,
+                            rot_6d,
+                            trans,
                             choir,
                             rescaled_ref_pts,
                             scalar,

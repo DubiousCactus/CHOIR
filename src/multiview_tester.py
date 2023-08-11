@@ -13,11 +13,7 @@ from typing import Dict, List, Tuple, Union
 
 import blosc
 import matplotlib.pyplot as plt
-import numpy as np
-import open3d.io as o3dio
 import torch
-import trimesh
-import trimesh.voxel.creation as voxel_create
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -68,230 +64,268 @@ class MultiViewTester(MultiViewTrainer):
         samples: Dict,
         labels: Dict,
         mesh_pths: List[str],
+        n_observations: int,
+        batch_idx: int,
         use_prior: bool = True,
         use_input: bool = False,
     ) -> Tuple:
         input_scalar = samples["scalar"]
-        if len(input_scalar.shape) == 2 and not use_input:
+        if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        elif len(input_scalar.shape) == 2 and use_input:
-            input_scalar = input_scalar.view(-1)
-        if use_input:
-            B, N, P, D = samples["choir"].shape
-            y_hat = {
-                "choir": samples["choir"].view(B * N, P, D),
-            }
+        if use_prior:
+            y_hat = self._model(samples["choir"], use_mean=True)
         else:
-            if use_prior:
-                y_hat = self._model(samples["choir"], use_mean=True)
-            else:
-                y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
+            y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
             "rot_6d": labels["rot"],
             "trans": labels["trans"],
         }
-        if use_input:
-            # Use all views for each batch element
-            mano_params_gt = {
-                k: v.view(B * N, *v.shape[2:]) for k, v in mano_params_gt.items()
-            }
-        else:
-            # Only use the first view for each batch element
-            mano_params_gt = {k: v[:, 0] for k, v in mano_params_gt.items()}
+        # Only use the first view for each batch element
+        mano_params_gt = {k: v[:, 0] for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
-        with torch.set_grad_enabled(True):
-            (
-                pose,
-                shape,
-                rot_6d,
-                trans,
-                anchors_pred,
-                verts_pred,
-                joints_pred,
-            ) = optimize_pose_pca_from_choir(
-                y_hat["choir"],
-                bps=self._bps,
-                scalar=input_scalar,
-                max_iterations=8000,
-                loss_thresh=1e-10,
-                lr=2e-2,
-                is_rhand=False,  # TODO
-                use_smplx=False,  # TODO
-                remap_bps_distances=self._remap_bps_distances,
-                exponential_map_w=self._exponential_map_w,
+        if use_input:
+            multiple_obs = len(samples["theta"].shape) > 2
+            input_params = {
+                k: (v[:, 0] if multiple_obs else v)
+                for k, v in samples.items()
+                if k in ["theta", "beta", "rot", "trans"]
+            }
+            verts_pred, joints_pred = self._affine_mano(*input_params.values())
+            anchors_pred = self._affine_mano.get_anchors(verts_pred)
+        else:
+            with torch.set_grad_enabled(True):
+                (
+                    pose,
+                    shape,
+                    rot_6d,
+                    trans,
+                    anchors_pred,
+                    verts_pred,
+                    joints_pred,
+                ) = optimize_pose_pca_from_choir(
+                    y_hat["choir"],
+                    bps=self._bps,
+                    scalar=input_scalar,
+                    max_iterations=350,
+                    loss_thresh=1e-7,
+                    lr=8e-2,
+                    is_rhand=False,  # TODO
+                    use_smplx=False,  # TODO
+                    remap_bps_distances=self._remap_bps_distances,
+                    exponential_map_w=self._exponential_map_w,
+                    initial_params={
+                        k: v
+                        for k, v in samples.items()
+                        if k in ["theta", "beta", "rot", "trans"]
+                    },
+                    beta_w=1e-4,
+                    theta_w=1e-8,
+                    choir_w=1000,
+                )
+            # if use_prior:
+            # image_dir = os.path.join(HydraConfig.get().runtime.output_dir, "tto_images",
+            # f"N={n_observations}")
+            # if not os.path.exists(image_dir):
+            # os.makedirs(image_dir)
+            # viewed_meshes = []
+            # for i, mesh_pth in enumerate(mesh_pths):
+            # mesh_name = os.path.basename(mesh_pth)
+            # if mesh_name not in viewed_meshes:
+            # pred_hand_mesh = trimesh.Trimesh(vertices=verts_pred[i].detach().cpu().numpy(),
+            # faces=self._affine_mano.closed_faces.detach().cpu().numpy())
+            # gt_hand_mesh = trimesh.Trimesh(vertices=gt_verts[i].detach().cpu().numpy(),
+            # faces=self._affine_mano.closed_faces.detach().cpu().numpy())
+            # obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+            # if self._data_loader.dataset.center_on_object_com:
+            # obj_mesh.translate(-obj_mesh.get_center())
+            # visualize_MANO(pred_hand_mesh, obj_mesh, gt_hand=gt_hand_mesh,
+            # save_as=os.path.join(image_dir,
+            # f"{mesh_name}_tto_{batch_idx}.html"))
+            # viewed_meshes.append(mesh_name)
+        with torch.no_grad():  # TODO: Why is there memory leaking everywhere????
+            # === Anchor error ===
+            anchor_error = (
+                torch.norm(anchors_pred - gt_anchors.cuda(), dim=2)
+                .mean(dim=1)
+                .mean(dim=0)
+                * self._data_loader.dataset.base_unit
             )
-            # verts_pred, joints_pred = self._affine_mano(pose, shape, rot_6d, trans)
-        # === Anchor error ===
-        anchor_error = (
-            torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0)
-            * self._data_loader.dataset.base_unit
-        )
-        # === MPJPE ===
-        pjpe = torch.linalg.vector_norm(
-            gt_joints - joints_pred, ord=2, dim=-1
-        )  # Per-joint position error (B, 21)
-        mpjpe = torch.mean(pjpe, dim=-1)  # Mean per-joint position error (B, 1)
-        mpjpe = torch.mean(
-            mpjpe, dim=0
-        )  # Mean per-joint position error avgd across batch (1)
-        mpjpe *= self._data_loader.dataset.base_unit
-        root_aligned_pjpe = torch.linalg.vector_norm(
-            (gt_joints - gt_joints[:, 0:1, :]) - (joints_pred - joints_pred[:, 0:1, :]),
-            ord=2,
-            dim=-1,
-        )  # Per-joint position error (B, 21)
-        root_aligned_mpjpe = torch.mean(
-            root_aligned_pjpe, dim=-1
-        )  # Mean per-joint position error (B, 1)
-        root_aligned_mpjpe = torch.mean(
-            root_aligned_mpjpe, dim=0
-        )  # Mean per-joint position error avgd across batch (1)
-        root_aligned_mpjpe *= self._data_loader.dataset.base_unit
-        # ====== MPVPE ======
-        # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
-        # hand meshes.
-        pvpe = torch.linalg.vector_norm(
-            gt_verts - verts_pred, ord=2, dim=-1
-        )  # Per-vertex position error (B, 778, 3)
-        mpvpe = torch.mean(pvpe, dim=-1)  # Mean per-vertex position error (B, 1)
-        mpvpe = torch.mean(
-            mpvpe, dim=0
-        )  # Mean per-vertex position error avgd across batch (1)
-        mpvpe *= self._data_loader.dataset.base_unit
-        # ====== Intersection volume ======
-        # Compute the intersection volume between the predicted hand meshes and the object meshes.
-        # TODO: Implement it with another method cause it crashes (see
-        # https://github.com/isl-org/Open3D/issues/5911)
-        # intersection_volumes = []
-        # mano_faces = self._affine_mano.faces.cpu().numpy()
-        # for i, path in enumerate(mesh_pths):
-        # obj_mesh = o3dtg.TriangleMesh.from_legacy(o3dio.read_triangle_mesh(path))
-        # hand_mesh = o3dtg.TriangleMesh.from_legacy(
-        # o3dg.TriangleMesh(
-        # o3du.Vector3dVector(verts_pred[i].cpu().numpy()),
-        # o3du.Vector3iVector(mano_faces),
-        # )
-        # )
-        # intersection = obj_mesh.boolean_intersection(hand_mesh)
-        # intersection_volumes.append(intersection.to_legacy().get_volume())
-        # intersection_volume = torch.tensor(intersection_volumes).mean()
-        # intersection_volume *= (
-        # self._data_loader.dataset.base_unit / 10
-        # )  # m^3 -> mm^3 -> cm^3
-        # We'll do the same with trimesh.boolean.intersection():
-        intersection_volumes = []
-        mano_faces = self._affine_mano.closed_faces.cpu().numpy()
-        print("[*] Computing intersection volumes...")
-        # for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
-        # obj_mesh = o3dio.read_triangle_mesh(path)
-        # if self._data_loader.dataset.center_on_object_com:
-        # obj_mesh.translate(-obj_mesh.get_center())
-        # obj_mesh = trimesh.Trimesh(
-        # vertices=obj_mesh.vertices, faces=obj_mesh.triangles
-        # )
-        # hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
-        # # TODO: Recenter the obj_mesh and potentially rescale it. Visualize to check.
-        # # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
-        # intersection = obj_mesh.intersection(hand_mesh)
-        # if intersection.volume > 0:
-        # print(self._data_loader.dataset.base_unit)
-        # print(f"{intersection.volume * (self._data_loader.dataset.base_unit/10):.2f} cm^3")
-        # print(f"Is water tight? {intersection.is_watertight}")
-        # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
-        # visualize_MANO(hand_mesh, obj_mesh=intersection)
-        # intersection_volumes.append(intersection.volume)
-        # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
-        # both meshes:
-        pitch_mm = 2
-        pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
-        # TODO: The radius only needs to be slightly larger than the object bounding box.
-        radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-        # TODO: This PoC works, but I need to make sure that the object mesh is always in its
-        # canonical position in the test set! This might be the case for ContactPose, but probably
-        # not for GRAB.
-        # TODO: Multithread this?
-        obj_voxels = {}
-        # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
-        for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
-            break
-            if path not in obj_voxels:
-                obj_mesh = o3dio.read_triangle_mesh(path)
-                if self._data_loader.dataset.center_on_object_com:
-                    obj_mesh.translate(-obj_mesh.get_center())
-                obj_mesh = trimesh.Trimesh(
-                    vertices=obj_mesh.vertices, faces=obj_mesh.triangles
-                )
-                obj_voxel = (
-                    voxel_create.local_voxelize(
-                        obj_mesh, np.array([0, 0, 0]), pitch, radius
-                    )
-                    .fill()
-                    .matrix
-                )
-                obj_voxels[path] = obj_voxel
-            else:
-                obj_voxel = obj_voxels[path]
-            hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
-            hand_voxel = (
-                voxel_create.local_voxelize(
-                    hand_mesh, np.array([0, 0, 0]), pitch, radius
-                )
-                .fill()
-                .matrix
-            )
-            # both_voxels = trimesh.voxel.VoxelGrid(
-            # trimesh.voxel.encoding.DenseEncoding(
-            # obj_voxel | hand_voxel
-            # ),
+            # === MPJPE ===
+            pjpe = torch.linalg.vector_norm(
+                gt_joints - joints_pred, ord=2, dim=-1
+            )  # Per-joint position error (B, 21)
+            mpjpe = torch.mean(pjpe, dim=-1)  # Mean per-joint position error (B, 1)
+            mpjpe = torch.mean(
+                mpjpe, dim=0
+            )  # Mean per-joint position error avgd across batch (1)
+            mpjpe *= self._data_loader.dataset.base_unit
+            root_aligned_pjpe = torch.linalg.vector_norm(
+                (gt_joints - gt_joints[:, 0:1, :])
+                - (joints_pred - joints_pred[:, 0:1, :]),
+                ord=2,
+                dim=-1,
+            )  # Per-joint position error (B, 21)
+            root_aligned_mpjpe = torch.mean(
+                root_aligned_pjpe, dim=-1
+            )  # Mean per-joint position error (B, 1)
+            root_aligned_mpjpe = torch.mean(
+                root_aligned_mpjpe, dim=0
+            )  # Mean per-joint position error avgd across batch (1)
+            root_aligned_mpjpe *= self._data_loader.dataset.base_unit
+            # ====== MPVPE ======
+            # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
+            # hand meshes.
+            pvpe = torch.linalg.vector_norm(
+                gt_verts - verts_pred, ord=2, dim=-1
+            )  # Per-vertex position error (B, 778, 3)
+            mpvpe = torch.mean(pvpe, dim=-1)  # Mean per-vertex position error (B, 1)
+            mpvpe = torch.mean(
+                mpvpe, dim=0
+            )  # Mean per-vertex position error avgd across batch (1)
+            mpvpe *= self._data_loader.dataset.base_unit
+            # ====== Intersection volume ======
+            # Compute the intersection volume between the predicted hand meshes and the object meshes.
+            # TODO: Implement it with another method cause it crashes (see
+            # https://github.com/isl-org/Open3D/issues/5911)
+            # intersection_volumes = []
+            # mano_faces = self._affine_mano.faces.cpu().numpy()
+            # for i, path in enumerate(mesh_pths):
+            # obj_mesh = o3dtg.TriangleMesh.from_legacy(o3dio.read_triangle_mesh(path))
+            # hand_mesh = o3dtg.TriangleMesh.from_legacy(
+            # o3dg.TriangleMesh(
+            # o3du.Vector3dVector(verts_pred[i].cpu().numpy()),
+            # o3du.Vector3iVector(mano_faces),
             # )
-            # both_voxels.show()
-            obj_volume = (
-                np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
-            )  # m^3 -> cm^3
-            hand_volume = (
-                np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
-            )  # m^3 -> cm^3
-            typical_hand_volume = (
-                379.7  # cm^3 https://doi.org/10.1177/154193128603000417
-            )
-            # Make sure we're within 35% of the typical hand volume:
-            # assert (
+            # )
+            # intersection = obj_mesh.boolean_intersection(hand_mesh)
+            # intersection_volumes.append(intersection.to_legacy().get_volume())
+            # intersection_volume = torch.tensor(intersection_volumes).mean()
+            # intersection_volume *= (
+            # self._data_loader.dataset.base_unit / 10
+            # )  # m^3 -> mm^3 -> cm^3
+            # We'll do the same with trimesh.boolean.intersection():
+            # intersection_volumes = []
+            # mano_faces = self._affine_mano.closed_faces.cpu().numpy()
+            # print("[*] Computing intersection volumes...")
+            # for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
+            # obj_mesh = o3dio.read_triangle_mesh(path)
+            # if self._data_loader.dataset.center_on_object_com:
+            # obj_mesh.translate(-obj_mesh.get_center())
+            # obj_mesh = trimesh.Trimesh(
+            # vertices=obj_mesh.vertices, faces=obj_mesh.triangles
+            # )
+            # hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
+            # # TODO: Recenter the obj_mesh and potentially rescale it. Visualize to check.
+            # # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
+            # intersection = obj_mesh.intersection(hand_mesh)
+            # if intersection.volume > 0:
+            # print(self._data_loader.dataset.base_unit)
+            # print(f"{intersection.volume * (self._data_loader.dataset.base_unit/10):.2f} cm^3")
+            # print(f"Is water tight? {intersection.is_watertight}")
+            # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
+            # visualize_MANO(hand_mesh, obj_mesh=intersection)
+            # intersection_volumes.append(intersection.volume)
+            # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
+            # both meshes:
+            pitch_mm = 2
+            pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
+            # TODO: The radius only needs to be slightly larger than the object bounding box.
+            radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
+            # TODO: This PoC works, but I need to make sure that the object mesh is always in its
+            # canonical position in the test set! This might be the case for ContactPose, but probably
+            # not for GRAB.
+            # TODO: Multithread this?
+            obj_voxels = {}
+            # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
+            # for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
+            # break
+            # if path not in obj_voxels:
+            # obj_mesh = o3dio.read_triangle_mesh(path)
+            # if self._data_loader.dataset.center_on_object_com:
+            # obj_mesh.translate(-obj_mesh.get_center())
+            # obj_mesh = trimesh.Trimesh(
+            # vertices=obj_mesh.vertices, faces=obj_mesh.triangles
+            # )
+            # obj_voxel = (
+            # voxel_create.local_voxelize(
+            # obj_mesh, np.array([0, 0, 0]), pitch, radius
+            # )
+            # .fill()
+            # .matrix
+            # )
+            # obj_voxels[path] = obj_voxel
+            # else:
+            # obj_voxel = obj_voxels[path]
+            # hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
+            # hand_voxel = (
+            # voxel_create.local_voxelize(
+            # hand_mesh, np.array([0, 0, 0]), pitch, radius
+            # )
+            # .fill()
+            # .matrix
+            # )
+            # # both_voxels = trimesh.voxel.VoxelGrid(
+            # # trimesh.voxel.encoding.DenseEncoding(
+            # # obj_voxel | hand_voxel
+            # # ),
+            # # )
+            # # both_voxels.show()
+            # obj_volume = (
+            # np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
+            # )  # m^3 -> cm^3
+            # hand_volume = (
+            # np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
+            # )  # m^3 -> cm^3
+            # typical_hand_volume = (
+            # 379.7  # cm^3 https://doi.org/10.1177/154193128603000417
+            # )
+            # # Make sure we're within 35% of the typical hand volume:
+            # # assert (
+            # # hand_volume > typical_hand_volume * 0.65
+            # # and hand_volume < typical_hand_volume * 1.35
+            # # ), f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
+            # if (
             # hand_volume > typical_hand_volume * 0.65
             # and hand_volume < typical_hand_volume * 1.35
-            # ), f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
-            if (
-                hand_volume > typical_hand_volume * 0.65
-                and hand_volume < typical_hand_volume * 1.35
-            ):
-                print(
-                    f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
-                )
+            # ):
+            # print(
+            # f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
+            # )
 
-            intersection_volume = (
-                np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
-            )
-            print(
-                f"Volume of hand: {hand_volume:.2f} cm^3, volume of obj: {obj_volume:.2f} cm^3, intersection volume: {intersection_volume:.2f} cm^3"
-            )
-            intersection_volumes.append(intersection_volume)
-            if i == 10:
-                break
+            # intersection_volume = (
+            # np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
+            # )
+            # print(
+            # f"Volume of hand: {hand_volume:.2f} cm^3, volume of obj: {obj_volume:.2f} cm^3, intersection volume: {intersection_volume:.2f} cm^3"
+            # )
+            # intersection_volumes.append(intersection_volume)
+            # if i == 10:
+            # break
 
-        intersection_volume = torch.tensor(intersection_volumes).float().mean()
-        return anchor_error, mpjpe, root_aligned_mpjpe, mpvpe, intersection_volume
+        # # intersection_volume = torch.tensor(intersection_volumes).float().mean()
+        intersection_volume = torch.tensor(0.0)
+        return (
+            anchor_error.detach(),
+            mpjpe.detach(),
+            root_aligned_mpjpe.detach(),
+            mpvpe.detach(),
+            intersection_volume.detach(),
+        )
 
     @to_cuda
     def _test_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        n_observations: int,
+        batch_idx: int,
     ) -> Dict[str, torch.Tensor]:
         """Evaluation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
@@ -302,27 +336,31 @@ class MultiViewTester(MultiViewTrainer):
         """
         x, y, mesh_pths = batch  # type: ignore
         samples, labels = get_dict_from_sample_and_label_tensors(x, y)
-        (
-            anchor_error_x,
-            mpjpe_x,
-            root_aligned_mpjpe_x,
-            mpvpe_x,
-            intesection_volume_x,
-        ) = self._test_batch(samples, labels, mesh_pths, use_input=True)
+        # (
+        # anchor_error_x,
+        # mpjpe_x,
+        # root_aligned_mpjpe_x,
+        # mpvpe_x,
+        # intesection_volume_x,
+        # ) = self._test_batch(samples, labels, mesh_pths, n_observations, batch_idx, use_input=True)
         (
             anchor_error_p,
             mpjpe_p,
             root_aligned_mpjpe_p,
             mpvpe_p,
             intersection_volume_p,
-        ) = self._test_batch(samples, labels, mesh_pths, use_prior=True)
+        ) = self._test_batch(
+            samples, labels, mesh_pths, n_observations, batch_idx, use_prior=True
+        )
         (
             anchor_error,
             mpjpe,
             root_aligned_mpjpe,
             mpvpe,
             intersection_volume,
-        ) = self._test_batch(samples, labels, mesh_pths, use_prior=False)
+        ) = self._test_batch(
+            samples, labels, mesh_pths, n_observations, batch_idx, use_prior=False
+        )
         return {
             "[PRIOR] Anchor error (mm)": anchor_error_p,
             "[PRIOR] MPJPE (mm)": mpjpe_p,
@@ -334,11 +372,11 @@ class MultiViewTester(MultiViewTrainer):
             "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
             "[POSTERIOR] MPVPE (mm)": mpvpe,
             "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
-            "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
-            "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
-            "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
-            "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
-            "[NOISY INPUT] Intersection volume (cm3)": intesection_volume_x,
+            # "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
+            # "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
+            # "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
+            # "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
+            # "[NOISY INPUT] Intersection volume (cm3)": intesection_volume_x,
         }
 
     def test_n_observations(
@@ -353,9 +391,10 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            batch_metrics = self._test_iteration(batch)
+            batch_metrics = self._test_iteration(batch, n_observations, i)
             for k, v in batch_metrics.items():
-                metrics[k].update(v.item())
+                metrics[k].update(v.detach().item())
+            del batch_metrics
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)
@@ -398,7 +437,7 @@ class MultiViewTester(MultiViewTrainer):
             # self.test_n_observations(5, visualize_every=visualize_every)
 
         with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
-            compressed_pkl = blosc.compress_pickle(pickle.dumps(test_errors))
+            compressed_pkl = blosc.compress(pickle.dumps(test_errors))
             f.write(compressed_pkl)
 
         # Plot a curve of the test errors and compute Area Under Curve (AUC). Add marker for the
@@ -432,6 +471,7 @@ class MultiViewTester(MultiViewTrainer):
         plt.title(f"Test MPJPE and Root-aligned MPJPE for N observations")
         # Add the AUC to the legend:
         # plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        plt.legend(title=f"Legend")
         plt.xlabel("N observations")
         plt.ylabel("(Root-aligned) MPJPE (mm)")
         plt.savefig(f"test_error_{self._run_name}.png")
@@ -460,6 +500,7 @@ class MultiViewTester(MultiViewTrainer):
         plt.title(f"Test MPJPE for N observations")
         # Add the AUC to the legend:
         # plt.legend(title=f"MPJPE AUC: {auc:.2f}")
+        plt.legend(title=f"Legend")
         plt.xlabel("N observations")
         plt.ylabel("MPJPE (mm)")
         plt.savefig(f"test_error_mpjpe_only_{self._run_name}.png")

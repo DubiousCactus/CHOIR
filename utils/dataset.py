@@ -189,6 +189,10 @@ def compute_hand_contacts_bps(
 
 
 def pack_and_pad_sample_label(
+    theta,
+    beta,
+    rot_6d,
+    trans,
     choir,
     rescaled_ref_pts,
     scalar,
@@ -204,6 +208,12 @@ def pack_and_pad_sample_label(
     gt_trans,
     bps_dim,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Why do I do this? I was convinced that it would be faster to collate the samples and labels
+    into a batch when using multiple workers because of huge slowdowns I experienced when I was
+    using Dicts. Now I'm not sure it was the real culprit but this helps a bit. Judge me, I don't
+    care.
+    """
     if "2.0" in torch.__version__:
         # ============ With Pytorch 2.0 Nested Tensor ============
         sample = torch.nested.to_padded_tensor(
@@ -215,6 +225,10 @@ def pack_and_pad_sample_label(
                     torch.ones((1, 1)).cuda()
                     if hand_idx == "right"
                     else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                    theta,  # (1, 18)
+                    beta,  # (1, 10)
+                    rot_6d,  # (1, 6)
+                    trans,  # (1, 3)
                 ]
             ),
             0.0,
@@ -238,27 +252,79 @@ def pack_and_pad_sample_label(
         ).cpu()
         # ========================================================
     else:
-        # ============== Without Pytorch 2.0 Nested Tensor ==============
+        # ============== Without Pytorch 2.0 Nested Tensor (annoying) ==============
+        max_sample_dim = max(
+            [
+                s.shape[-1]
+                for s in set().union(
+                    theta,
+                    beta,
+                    rot_6d,
+                    trans,
+                    hand_idx,
+                    scalar,
+                    rescaled_ref_pts,
+                    choir,
+                )
+            ]
+        )
+        max_label_dim = max(
+            [
+                s.shape[-1]
+                for s in set().union(
+                    gt_choir,
+                    gt_rescaled_ref_pts,
+                    gt_scalar,
+                    gt_joints,
+                    gt_anchors,
+                    gt_theta,
+                    gt_beta,
+                    gt_rot_6d,
+                    gt_trans,
+                )
+            ]
+        )
         sample = torch.stack(
             [
-                torch.nn.functional.pad(choir.squeeze(0), (0, 1), value=0.0),
-                rescaled_ref_pts.squeeze(0),
-                torch.nn.functional.pad(scalar.unsqueeze(0), (0, 2), value=0.0).repeat(
-                    (bps_dim, 1)
+                torch.nn.functional.pad(
+                    choir.squeeze(0), (0, max_sample_dim - choir.shape[-1]), value=0.0
                 ),
+                torch.nn.functional.pad(
+                    rescaled_ref_pts.squeeze(0),
+                    (0, max_sample_dim - rescaled_ref_pts.shape[-1]),
+                    value=0.0,
+                ),
+                torch.nn.functional.pad(
+                    scalar.unsqueeze(0),
+                    (0, max_sample_dim - scalar.shape[-1]),
+                    value=0.0,
+                ).repeat((bps_dim, 1)),
                 torch.nn.functional.pad(
                     (
                         torch.ones((1, 1)).cuda()
                         if hand_idx == "right"
                         else torch.zeros((1, 1)).cuda()
                     ),
-                    (0, 2),
+                    (0, max_sample_dim - 1),
                     value=0.0,
+                ).repeat((bps_dim, 1)),
+                torch.nn.functional.pad(
+                    theta, (0, max_sample_dim - theta.shape[-1]), value=0.0
+                ).repeat((bps_dim, 1)),
+                torch.nn.functional.pad(
+                    beta, (0, max_sample_dim - beta.shape[-1]), value=0.0
+                ).repeat((bps_dim, 1)),
+                torch.nn.functional.pad(
+                    rot_6d, (0, max_sample_dim - rot_6d.shape[-1]), value=0.0
+                ).repeat((bps_dim, 1)),
+                torch.nn.functional.pad(
+                    trans, (0, max_sample_dim - trans.shape[-1]), value=0.0
                 ).repeat((bps_dim, 1)),
             ],
             dim=0,
         ).cpu()
 
+        # TODO: Finish implementing automatic padding (god do I hate this task).
         padded_joints = torch.zeros((bps_dim, 18), device=gt_joints.device)
         padded_joints[: gt_joints.squeeze(0).shape[0], :3] = gt_joints.squeeze(0)
         padded_anchors = torch.zeros((bps_dim, 18), device=gt_anchors.device)
@@ -336,3 +402,52 @@ def augment_hand_object_pose(
     r_hTm = R4.to(hTm.device) @ hTm
     hTm = r_hTm
     return obj_mesh, hTm
+
+
+def drop_fingertip_joints(joints: torch.Tensor, definition="snap") -> torch.Tensor:
+    """
+    Drop the fingertip joints from the input joint tensor.
+    """
+    if definition == "snap":
+        if len(joints.shape) == 3:
+            return joints[:, [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19]]
+        elif len(joints.shape) == 2:
+            return joints[[0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19]]
+        else:
+            raise ValueError(f"Unknown joint shape {joints.shape}")
+    elif definition == "mano":
+        if len(joints.shape) == 3:
+            return joints[:, :16]
+        elif len(joints.shape) == 2:
+            return joints[:16]
+        else:
+            raise ValueError(f"Unknown joint shape {joints.shape}")
+
+
+def snap_to_original_mano(snap_joints: torch.Tensor) -> torch.Tensor:
+    """
+    I'm using manotorch which returns joints in the SNAP definition:
+    https://github.com/lixiny/manotorch/blob/5738d327a343e7533ad60da64d1629cedb5ae9e7/manotorch/manolayer.py#L240:
+        # ** original MANO joint order (right hand)
+        #                16-15-14-13-\
+        #                             \
+        #          17 --3 --2 --1------0
+        #        18 --6 --5 --4-------/
+        #        19 -12 -11 --10-----/
+        #          20 --9 --8 --7---/
+
+        # Reorder joints to match SNAP definition
+        joints = joints[:, [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20]]
+    So if I have joints coming out of SMPL-X MANO, I need to reorder the manotorch joints to match.
+    """
+    if len(snap_joints.shape) == 3:
+        return snap_joints[
+            :,
+            [0, 5, 6, 7, 9, 10, 11, 17, 18, 19, 13, 14, 15, 1, 2, 3, 4, 8, 12, 16, 20],
+        ]
+    elif len(snap_joints.shape) == 2:
+        return snap_joints[
+            [0, 5, 6, 7, 9, 10, 11, 17, 18, 19, 13, 14, 15, 1, 2, 3, 4, 8, 12, 16, 20]
+        ]
+    else:
+        raise ValueError(f"Unknown shape {snap_joints.shape}")

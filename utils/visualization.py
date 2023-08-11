@@ -20,6 +20,7 @@ from trimesh import Trimesh
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
 from utils import to_cuda
+from utils.dataset import drop_fingertip_joints, snap_to_original_mano
 from utils.training import (
     get_dict_from_sample_and_label_tensors,
     optimize_pose_pca_from_choir,
@@ -351,9 +352,10 @@ def visualize_CHOIR_prediction(
             is_rhand=is_rhand,
             use_smplx=use_smplx,
             max_iterations=8000,
-            lr=0.01,
+            lr=5e-2,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
+            beta_w=1e-7,
         )
     # ====== Metrics and qualitative comparison ======
     # === Anchor error ===
@@ -362,18 +364,17 @@ def visualize_CHOIR_prediction(
     )
     # === MPJPE ===
     if gt_joints.shape[1] == 16 and joints_pred.shape[1] == 21:
+        # SMPL-X ground-truth but MANO prediction.
         # This was obtained with SMPL-X which doesn't include fingertips, so we'll drop them for
         # the prediction if we used MANO.
-        joints_pred = torch.cat(
-            [
-                joints_pred[:, :4],
-                joints_pred[:, 5:8],
-                joints_pred[:, 9:12],
-                joints_pred[:, 13:16],
-                joints_pred[:, 17:20],
-            ],
-            dim=1,
-        )
+        # Reorder the joints to match the SMPL-X order
+        # (https://github.com/lixiny/manotorch/blob/5738d327a343e7533ad60da64d1629cedb5ae9e7/manotorch/manolayer.py#L240):
+        joints_pred = snap_to_original_mano(joints_pred)
+        joints_pred = drop_fingertip_joints(joints_pred)
+    elif gt_joints.shape[1] == 21 and joints_pred.shape[1] == 16:
+        # MANO ground-truth but SMPL-X prediction.
+        gt_joints = snap_to_original_mano(gt_joints)
+        gt_joints = drop_fingertip_joints(gt_joints, definition="mano")
 
     pjpe = torch.linalg.vector_norm(
         gt_joints - joints_pred, ord=2, dim=-1
@@ -647,6 +648,7 @@ def visualize_MANO(
     obj_mesh: Optional[open3d.geometry.TriangleMesh] = None,
     obj_ptcld: Optional[torch.Tensor] = None,
     gt_hand: Optional[Any] = None,
+    save_as: Optional[str] = None,
 ):
     pl = pv.Plotter(off_screen=False)
     hand_mesh = pv.wrap(pred_hand)
@@ -691,6 +693,12 @@ def visualize_MANO(
     pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
     pl.add_camera_orientation_widget()
-    pl.add_axes_at_origin()
     pl.add_legend(loc="upper left", size=(0.1, 0.1))
-    pl.show(interactive=True)
+    if save_as is not None:
+        # pl.show()
+        # pl.screenshot(save_as)
+        # pl.save_graphic(save_as)
+        pl.export_html(save_as)
+    else:
+        pl.add_axes_at_origin()
+        pl.show(interactive=True)

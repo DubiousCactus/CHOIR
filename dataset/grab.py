@@ -17,27 +17,27 @@ import pickle
 import random
 from contextlib import redirect_stdout
 from copy import deepcopy
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import blosc
 import numpy as np
 import smplx
 import torch
 from open3d import io as o3dio
-from pytorch3d.transforms import Transform3d, axis_angle_to_matrix
+from pytorch3d.transforms import (
+    Transform3d,
+    axis_angle_to_matrix,
+    matrix_to_rotation_6d,
+)
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from model.affine_mano import AffineMANO
-from utils import colorize, to_cuda_
+from utils import colorize, to_cuda, to_cuda_
 from utils.dataset import compute_choir, get_scalar, pack_and_pad_sample_label
-from utils.visualization import (
-    visualize_CHOIR,
-    visualize_CHOIR_prediction,
-    visualize_MANO,
-)
+from utils.visualization import visualize_CHOIR_prediction, visualize_MANO
 
 from .base import BaseDataset
 
@@ -66,6 +66,7 @@ class GRABDataset(BaseDataset):
         rescale: str = "none",
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
+        use_affine_mano: bool = False,
     ) -> None:
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
@@ -78,6 +79,21 @@ class GRABDataset(BaseDataset):
         ]
         self._root_path = root_path
         self._smplx_path = smplx_path
+        self._use_affine_mano = use_affine_mano
+        base_betas_path = osp.join(self._root_path, "tools", "subject_meshes")
+        self._beta_paths = {
+            **{
+                f: osp.join(base_betas_path, "male", f)
+                for f in os.listdir(osp.join(base_betas_path, "male"))
+                if f.endswith("hand_betas.npy")
+            },
+            **{
+                f: osp.join(base_betas_path, "female", f)
+                for f in os.listdir(osp.join(base_betas_path, "female"))
+                if f.endswith("hand_betas.npy")
+            },
+        }
+        self._affine_mano: AffineMANO = to_cuda_(AffineMANO(ncomps=24, flat_hand_mean=True))  # type: ignore
         super().__init__(
             dataset_name="GRAB",
             bps_dim=bps_dim,
@@ -102,6 +118,116 @@ class GRABDataset(BaseDataset):
             debug=debug,
         )
 
+    @to_cuda
+    def _load_sequence_params(
+        self, seq, p_num: str, grasping_hand: str
+    ) -> Dict[str, torch.Tensor]:
+        params = {
+            "theta": torch.zeros(
+                (seq["n_frames"], 24 + (3 if self._use_affine_mano else 0))
+            ),
+            "beta": torch.zeros((seq["n_frames"], 10)),
+            "rot": torch.zeros((seq["n_frames"], 3)),
+            "trans": torch.zeros((seq["n_frames"], 3)),
+        }
+        if self._use_affine_mano:
+            betas = (
+                torch.from_numpy(
+                    np.load(self._beta_paths[f"{p_num}_{grasping_hand}_betas.npy"])
+                )
+                .unsqueeze(0)
+                .repeat(seq["n_frames"], 1)
+                .float()
+                .cuda()
+            )
+            thetas = torch.from_numpy(seq[grasping_hand]["params"]["hand_pose"]).cuda()
+            rot_ax_ang = torch.from_numpy(
+                seq[grasping_hand]["params"]["global_orient"]
+            ).cuda()
+            # rot_6d = matrix_to_rotation_6d(axis_angle_to_matrix(rot_ax_ang))
+            # We'll use a dummy rotation because all the rotation we need is in the wrist, which
+            # this MANO package process differently (as part of theta/hand_pose) than SMPL-X mano
+            # (seprate from theta, as a global_orient vector).
+            rot_6d = matrix_to_rotation_6d(
+                torch.eye(3).unsqueeze(0).repeat(seq["n_frames"], 1, 1)
+            ).cuda()
+            trans = torch.from_numpy(seq[grasping_hand]["params"]["transl"]).cuda()
+            params.update(
+                {
+                    "theta": torch.cat([rot_ax_ang, thetas], dim=1),
+                    "beta": betas,
+                    "rot": rot_6d,
+                    "trans": trans,
+                }
+            )
+        else:
+            h_mesh = os.path.join(self._root_path, seq[grasping_hand]["vtemp"])
+            h_vtemp = np.array(
+                o3dio.read_triangle_mesh(h_mesh).vertices
+            )  # Or with Trimesh
+            smplx_params = {
+                k: torch.from_numpy(v).type(torch.float32)
+                for k, v in seq[grasping_hand]["params"].items()
+            }
+            smplx_params["hand_pose"]
+            smplx_params["transl"]
+            smplx_params["global_orient"]
+            params.update(
+                {
+                    "theta": smplx_params["hand_pose"],
+                    "rot": smplx_params["global_orient"],
+                    "trans": smplx_params["transl"],
+                    "vtemp": h_vtemp,
+                }
+            )
+        return params
+
+    @to_cuda
+    def _get_verts_and_joints(
+        self,
+        params: Dict[str, torch.Tensor],
+        grasping_hand: str,
+        pose_noise: float = 0.0,
+        trans_noise: float = 0.0,
+        rot_noise: float = 0.0,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+        if self._use_affine_mano:
+            theta = params["theta"].clone()
+            theta[..., :3] += rot_noise
+            theta[..., 3:] += pose_noise
+            trans = params["trans"].clone()
+            trans += trans_noise
+            verts, joints = self._affine_mano(
+                theta,
+                params["beta"],
+                params["rot"],
+                trans,
+            )
+            faces = self._affine_mano.faces
+        else:
+            with torch.no_grad(), redirect_stdout(None):
+                h_m = to_cuda_(
+                    smplx.create(
+                        model_path=self._smplx_path,
+                        model_type="mano",
+                        is_rhand=grasping_hand == "rhand",
+                        v_template=params["vtemp"],
+                        num_pca_comps=params["theta"].shape[1],
+                        flat_hand_mean=True,
+                        batch_size=params["theta"].shape[0],
+                    )
+                )
+                theta = params["theta"].clone()
+                theta += pose_noise
+                rot = params["rot"].clone()
+                rot += rot_noise
+                trans = params["transl"].clone()
+                trans += trans_noise
+                mano_result = h_m(hand_pose=theta, global_orient=rot, transl=trans)
+                faces = h_m.faces
+            verts, joints = mano_result.vertices, mano_result.joints
+        return verts, joints, faces, params
+
     def _load(
         self,
         split: str,
@@ -122,11 +248,12 @@ class GRABDataset(BaseDataset):
             + f"{self._rescale}_rescaled_"
             + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
             + (f"{self._exponential_map_w}_" if self._remap_bps_distances else "")
+            + f"{'affine_mano' if self._use_affine_mano else 'smplx'}_"
             + f"{split}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
-        affine_mano: AffineMANO = to_cuda_(AffineMANO(ncomps=21, flat_hand_mean=True))  # type: ignore
+
         choir_paths = []
         print("[*] Computing CHOIR fields...")
         dataset_mpjpe = MeanMetric()
@@ -190,32 +317,13 @@ class GRABDataset(BaseDataset):
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
                 )
-                visualize = self._debug and (random.Random().random() < 0.05)
+                visualize = self._debug and (random.Random().random() < 0.3)
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
-                # TODO: Load betas from file and try using AffineMANO
-                h_mesh = os.path.join(self._root_path, seq[grasping_hand]["vtemp"])
-                h_vtemp = np.array(
-                    o3dio.read_triangle_mesh(h_mesh).vertices
-                )  # Or with Trimesh
-                gt_params = {
-                    k: torch.from_numpy(v).type(torch.float32)
-                    for k, v in seq[grasping_hand]["params"].items()
-                }
-                with torch.no_grad(), redirect_stdout(None):
-                    h_m = to_cuda_(
-                        smplx.create(
-                            model_path=self._smplx_path,
-                            model_type="mano",
-                            is_rhand=grasping_hand == "rhand",
-                            v_template=h_vtemp,
-                            num_pca_comps=seq["n_comps"],
-                            flat_hand_mean=True,
-                            batch_size=seq["n_frames"],
-                        )
-                    )
-                    mano_result = h_m(**to_cuda_(gt_params))
-                gt_verts, gt_joints = mano_result.vertices, mano_result.joints
+                gt_params = self._load_sequence_params(seq, p_num, grasping_hand)
+                gt_verts, gt_joints, gt_faces, gt_params = self._get_verts_and_joints(
+                    gt_params, grasping_hand
+                )
                 # Now I must center the grasp on the object s.t. the object is at the origin
                 # and in canonical pose. This is done by applying the inverse of the object's
                 # global orientation and translation to the hand's global orientation and
@@ -233,7 +341,8 @@ class GRABDataset(BaseDataset):
                 gt_verts = obj_transform.transform_points(gt_verts)
                 gt_joints = obj_transform.transform_points(gt_joints)
                 # =================== Apply augmentation =========================
-                # TODO: Get gt_hTm first (if I manage to use AffineMANO)
+                # TODO: Get gt_hTm first (if I manage to use AffineMANO) or implement another
+                # augmentation function for SMPLX-MANO
                 # if self._augment and k > 0:
                 # obj_mesh, gt_hTm = augment_hand_object_pose(
                 # obj_mesh, gt_hTm, around_z=False
@@ -248,7 +357,7 @@ class GRABDataset(BaseDataset):
                     gt_verts -= obj_center.to(gt_verts.device)
                     gt_joints -= obj_center.to(gt_joints.device)
                 # ================================================================
-                gt_anchors = affine_mano.get_anchors(gt_verts)
+                gt_anchors = self._affine_mano.get_anchors(gt_verts)
                 # ================== Rescaled Hand-Object Pair ==================
                 gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
 
@@ -307,25 +416,19 @@ class GRABDataset(BaseDataset):
                         torch.randn(3, device=h_params["global_orient"].device)
                         * self._perturbations[self._perturbation_level]["rot"]
                     )
-                    h_params["hand_pose"] += pose_noise
-                    h_params["transl"] += trans_noise
-                    h_params["global_orient"] += global_orient_noise
 
-                    with torch.no_grad(), redirect_stdout(None):
-                        h_m = to_cuda_(
-                            smplx.create(
-                                model_path=self._smplx_path,
-                                model_type="mano",
-                                is_rhand=grasping_hand == "rhand",
-                                v_template=h_vtemp,
-                                num_pca_comps=seq["n_comps"],
-                                flat_hand_mean=True,
-                                batch_size=1,
-                            )
-                        )
-                        mano_result = h_m(**to_cuda_(h_params))
-                    verts, joints = mano_result.vertices, mano_result.joints
-                    anchors = affine_mano.get_anchors(verts)
+                    gt_params_frame = {
+                        k: v[i].unsqueeze(0) for k, v in gt_params.items()
+                    }
+                    verts, joints, faces, params = self._get_verts_and_joints(
+                        gt_params_frame,
+                        grasping_hand,
+                        pose_noise=pose_noise,
+                        trans_noise=trans_noise,
+                        rot_noise=global_orient_noise,
+                    )
+
+                    anchors = self._affine_mano.get_anchors(verts)
                     # Again, bring back to object's coordinate system:
                     verts = obj_transform[i].transform_points(verts)
                     joints = obj_transform[i].transform_points(joints)
@@ -346,22 +449,27 @@ class GRABDataset(BaseDataset):
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
+                    # TODO: Test pack_and_pad_sample_label work with different sizes of theta/beta! (pytorch < 2.0)
                     sample, label = pack_and_pad_sample_label(
+                        params["theta"],
+                        params["beta"],
+                        params["rot"],
+                        params["trans"],
                         choir,
                         rescaled_ref_pts,
                         scalar,
                         torch.ones((1, 1)).cuda()
                         if grasping_hand == "rhand"
                         else torch.zeros((1, 1)).cuda(),  # (1, 1)
-                        gt_choir,
+                        gt_choir[i],
                         gt_rescaled_ref_pts,
                         gt_scalar,
-                        gt_joints,
-                        gt_anchors,
-                        torch.zeros((1, 21)).cuda(),  # (1, 18)
-                        torch.zeros((1, 10)).cuda(),  # (1, 10)
-                        torch.zeros((1, 6)).cuda(),  # (1, 6)
-                        torch.zeros((1, 3)).cuda(),  # (1, 3)
+                        gt_joints[i],
+                        gt_anchors[i],
+                        gt_params["theta"],
+                        gt_params["beta"],
+                        gt_params["rot"],
+                        gt_params["trans"],
                         self._bps_dim,
                     )
                     # =================================================================
@@ -377,20 +485,23 @@ class GRABDataset(BaseDataset):
                         and random.Random().random() < 0.01
                     ):
                         print("[*] Plotting CHOIR... (please be patient)")
-                        visualize_CHOIR(
-                            gt_choir[i],
-                            self._bps,
-                            gt_scalar,
-                            gt_verts[i],
-                            gt_anchors[i],
-                            obj_mesh,
-                            obj_ptcld,
-                            gt_rescaled_ref_pts.squeeze(0),
-                            affine_mano,
+                        # visualize_CHOIR(
+                        # gt_choir[i],
+                        # self._bps,
+                        # gt_scalar,
+                        # gt_verts[i],
+                        # gt_anchors[i],
+                        # obj_mesh,
+                        # obj_ptcld,
+                        # gt_rescaled_ref_pts.squeeze(0),
+                        # self._affine_mano,
+                        # )
+                        gt_MANO_mesh = Trimesh(
+                            gt_verts[i].cpu().numpy(), gt_faces.cpu().numpy()
                         )
-                        faces = h_m.faces
-                        gt_MANO_mesh = Trimesh(gt_verts[i].cpu().numpy(), faces)
-                        pred_MANO_mesh = Trimesh(verts.squeeze(0).cpu().numpy(), faces)
+                        pred_MANO_mesh = Trimesh(
+                            verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                        )
                         visualize_MANO(
                             pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )
@@ -406,7 +517,7 @@ class GRABDataset(BaseDataset):
                             gt_joints[i].unsqueeze(0),
                             gt_anchors[i].unsqueeze(0),
                             is_rhand=(grasping_hand == "rhand"),
-                            use_smplx=True,
+                            use_smplx=False,
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )

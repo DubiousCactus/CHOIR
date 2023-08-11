@@ -99,6 +99,7 @@ dataset_store(
         builds_bases=(GraspingDatasetConf,),
         root_path="/home/cactus/Code/GRAB",
         smplx_path=project_conf.SMPLX_MODEL_PATH,
+        use_affine_mano=False,
     ),
     name="grab",
 )
