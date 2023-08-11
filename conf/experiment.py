@@ -100,6 +100,7 @@ dataset_store(
         root_path="/home/cactus/Code/GRAB",
         smplx_path=project_conf.SMPLX_MODEL_PATH,
         use_affine_mano=False,
+        use_official_splits=True,
     ),
     name="grab",
 )

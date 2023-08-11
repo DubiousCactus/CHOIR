@@ -66,6 +66,7 @@ class GRABDataset(BaseDataset):
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
         use_affine_mano: bool = False,
+        use_official_splits: bool = True,
     ) -> None:
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
@@ -93,6 +94,7 @@ class GRABDataset(BaseDataset):
             },
         }
         self._affine_mano: AffineMANO = to_cuda_(AffineMANO(ncomps=24, flat_hand_mean=True))  # type: ignore
+        self._use_official_splits = use_official_splits
         super().__init__(
             dataset_name="GRAB",
             bps_dim=bps_dim,
@@ -313,10 +315,18 @@ class GRABDataset(BaseDataset):
                         obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
                 )
-                visualize = self._debug and (random.Random().random() < 0.3)
+                visualize = self._debug and (random.Random().random() < 0.5)
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
                 gt_params = self._load_sequence_params(seq, p_num, grasping_hand)
+                # ============ Shift the pair to the object's center ============
+                if self._center_on_object_com:
+                    # TODO: if self._center_on_object_com and not (self._augment and k > 0):
+                    obj_center = torch.from_numpy(obj_mesh.get_center())
+                    obj_mesh.translate(-obj_center)
+                    obj_ptcld -= obj_center.to(obj_ptcld.device)
+                    gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
+                # ================================================================
                 gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
                     gt_params, grasping_hand
                 )
@@ -344,15 +354,6 @@ class GRABDataset(BaseDataset):
                 # obj_mesh, gt_hTm, around_z=False
                 # )
                 # =================================================================
-                # ============ Shift the pair to the object's center ============
-                if self._center_on_object_com:
-                    # TODO: if self._center_on_object_com and not (self._augment and k > 0):
-                    obj_center = torch.from_numpy(obj_mesh.get_center())
-                    obj_mesh.translate(-obj_center)
-                    obj_ptcld -= obj_center.to(obj_ptcld.device)
-                    gt_verts -= obj_center.to(gt_verts.device)
-                    gt_joints -= obj_center.to(gt_joints.device)
-                # ================================================================
                 gt_anchors = self._affine_mano.get_anchors(gt_verts)
                 # ================== Rescaled Hand-Object Pair ==================
                 gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
@@ -388,9 +389,9 @@ class GRABDataset(BaseDataset):
                         continue
                     # Distance hand-object, with object at origin:
                     dist = torch.norm(torch.mean(gt_verts[i], dim=0))
-                    # We'll use 20FPS so we'll skip every 6 frames
-                    # Filter the sequence frames to keep only those where the hand is within 50cm of the object
-                    if i % 6 != 0 or dist > 0.5:
+                    # We'll use 30FPS so we'll skip every 4 frames
+                    # Filter the sequence frames to keep only those where the hand is within 30cm of the object
+                    if i % 4 != 0 or dist > 0.3:
                         continue
 
                     trans_noise = (
@@ -533,43 +534,69 @@ class GRABDataset(BaseDataset):
         for _, _, files in os.walk(self._root_path):
             object_names += [f.split("_")[0] for f in files if f.endswith(".npz")]
         object_names = sorted(list(set(object_names)))
-        random.Random(seed).shuffle(object_names)
-        assert (self._validation_objects + self._test_objects) < len(object_names), (
-            f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
-            + f" must be less than n_objects ({len(object_names)})"
-        )
-        assert (
-            self._validation_objects >= 1
-        ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
-        assert (
-            self._test_objects >= 1
-        ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
-        if split == "train":
-            object_names = object_names[
-                : -(self._validation_objects + self._test_objects)
-            ]
-        elif split == "val":
-            object_names = object_names[
-                -(self._validation_objects + self._test_objects) : -self._test_objects
-            ]
-        elif split == "test":
-            object_names = object_names[-self._test_objects :]
 
-        """ Alternatively, we may use the official splits:
-        {
-            'test': ['mug', 'wineglass', 'camera', 'binoculars', 'fryingpan', 'toothpaste'],
-            'val': ['apple', 'toothbrush', 'elephant', 'hand'],
-            'train': [] # All others
-        }
-        """
+        if self._use_official_splits:
+            # Official splits from the TOCH paper:
+            official_splits = {
+                "test": [
+                    "mug",
+                    "wineglass",
+                    "camera",
+                    "binoculars",
+                    "fryingpan",
+                    "toothpaste",
+                ],
+                "val": ["apple", "toothbrush", "elephant", "hand"],
+                "train": [],  # All others
+            }
+            if split == "train":
+                object_names = [
+                    o
+                    for o in object_names
+                    if o not in official_splits["val"] + official_splits["test"]
+                ]
+            elif split == "val":
+                object_names = official_splits["val"]
+            elif split == "test":
+                object_names = official_splits["test"]
+        else:
+            random.Random(seed).shuffle(object_names)
+            assert (self._validation_objects + self._test_objects) < len(
+                object_names
+            ), (
+                f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
+                + f" must be less than n_objects ({len(object_names)})"
+            )
+            assert (
+                self._validation_objects >= 1
+            ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
+            assert (
+                self._test_objects >= 1
+            ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
+            if split == "train":
+                object_names = object_names[
+                    : -(self._validation_objects + self._test_objects)
+                ]
+            elif split == "val":
+                object_names = object_names[
+                    -(
+                        self._validation_objects + self._test_objects
+                    ) : -self._test_objects
+                ]
+            elif split == "test":
+                object_names = object_names[-self._test_objects :]
 
         # 2. Load the object paths and grasp sequences paths
         print(f"[*] Loading GRAB{' (tiny)' if tiny else ''}...")
         dataset_path = osp.join(
             self._cache_dir,
             f"dataset_{split}_{n_participants}-participants"
-            + f"_{self._validation_objects}-val-held-out"
-            + f"_{self._test_objects}-test-held-out"
+            + (
+                "_official-splits"
+                if self._use_official_splits
+                else f"_{self._validation_objects}-val-held-out"
+                + f"_{self._test_objects}-test-held-out"
+            )
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
@@ -605,12 +632,17 @@ class GRABDataset(BaseDataset):
                             # https://github.com/otaheri/GRAB/blob/4dab3211fae4fc5b8eb6ab86246ccc3a42d8f611/tools/utils.py#L166
                             # TODO: What happens in handover sequences? Let's ignore them for now.
                             # In the future we'll have to carefully sample time windows! (or not?)
-                            is_right_hand = (seq["contact"]["object"] >= 41).any()
+                            is_right_hand = (
+                                seq["contact"]["object"]
+                                >= 41 | seq["contact"]["object"]
+                                == 22
+                            ).any()
                             is_left_hand = (
                                 seq["contact"]["object"][
                                     (seq["contact"]["object"] >= 26)
                                 ]
-                                < 41
+                                < 41 | seq["contact"]["object"]
+                                == 22
                             ).any()
                             is_handover = is_right_hand and is_left_hand
                             if (
