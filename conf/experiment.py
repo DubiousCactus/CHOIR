@@ -101,6 +101,8 @@ dataset_store(
         smplx_path=project_conf.SMPLX_MODEL_PATH,
         use_affine_mano=False,
         use_official_splits=True,
+        perturbation_level=1,
+        static_grasps_only=False,
     ),
     name="grab",
 )
@@ -122,6 +124,7 @@ class DataloaderConf:
     shuffle: bool = True
     num_workers: int = 2
     pin_memory: bool = True
+    n_batches: Optional[int] = None
 
 
 " ================== Model ================== "
@@ -217,6 +220,7 @@ class CHOIRLossConf:
     mano_anchors_w: float = 1.0
     kl_w: float = 1e-4
     multi_view: bool = False
+    temporal: bool = False
     predict_residuals: bool = False
     use_kl_scheduler: bool = False
 
@@ -425,4 +429,32 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="multiview_contactopt_replica_aug",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "aggregate_cpvae"},
+            {"override /trainer": "multiview"},
+            {"override /tester": "multiview"},
+            {"override /dataset": "grab"},
+        ],
+        dataset=dict(
+            perturbation_level=1,
+            max_views_per_grasp=5,
+            use_affine_mano=True,
+            static_grasps_only=False,
+        ),
+        training_loss=dict(multi_view=True, temporal=True),
+        data_loader=dict(batch_size=32),  # , n_batches=100),
+        model=dict(
+            latent_dim=128,
+            encoder_layer_dims=(1024, 1024, 1024, 1024),
+            decoder_layer_dims=(1024, 1024, 1024),
+        ),
+        bases=(Experiment,),
+    ),
+    name="multiview_grab",
 )

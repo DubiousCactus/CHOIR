@@ -31,6 +31,7 @@ def optimize_pose_pca_from_choir(
     remap_bps_distances: bool,
     is_rhand: bool,
     use_smplx: bool,
+    dataset: str,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-11,
     lr: float = 5e-2,
@@ -45,7 +46,6 @@ def optimize_pose_pca_from_choir(
     before the exponential map, if they are used. So we must first apply the inverse exponential
     map, and then the inverse of the scalar.
     """
-    ncomps = 24 if use_smplx else 15  # 24 for GRAB, 15 for ContactPose
     assert len(choir.shape) == 3
     B = choir.shape[0]
     affine_mano, smplx_model = None, None
@@ -55,11 +55,22 @@ def optimize_pose_pca_from_choir(
                 model_path=project_conf.SMPLX_MODEL_PATH,
                 model_type="mano",
                 is_rhand=is_rhand,
-                num_pca_comps=ncomps,
+                num_pca_comps=24,
                 flat_hand_mean=False,
                 batch_size=B,
             ).cuda()
-    affine_mano = to_cuda_(AffineMANO(ncomps))
+    if dataset.lower() == "contactpose":
+        affine_mano = to_cuda_(
+            AffineMANO(15, flat_hand_mean=False, for_contactpose=True)
+        )
+        ncomps = 15
+    elif dataset.lower() == "grab":
+        affine_mano = to_cuda_(
+            AffineMANO(24, flat_hand_mean=True, for_contactpose=False)
+        )
+        ncomps = 24
+    else:
+        raise ValueError(f"Unknown dataset '{dataset}'.")
     if initial_params is None:
         theta = torch.rand((B, ncomps + (3 if not use_smplx else 0))) * 0.01
         beta = torch.rand((B, 10)) * 0.01
@@ -85,6 +96,9 @@ def optimize_pose_pca_from_choir(
                 rot = rot.mean(dim=1)
             if len(trans.shape) > 2:
                 trans = trans.mean(dim=1)
+        assert (
+            theta.shape[0] == B
+        ), "compute_pca_from_choir(): batch size mismatch between initial parameters and CHOIR field."
     rot = rot.cuda().requires_grad_(True)
     trans = trans.cuda().requires_grad_(True)
     theta = theta.cuda().requires_grad_(True)
@@ -179,8 +193,8 @@ def get_dict_from_sample_and_label_tensors(
     - CHOIR: (B, T, P, 2)
     - Ref. pts: (B, T, P, 3)
     - Scalar: (B, T, 1, 1)
-    - Theta: (B, T, 1, 18)
-    - Beta: (B, T, 1, 10)
+    - Theta: (B, T, 1, theta_dim)
+    - Beta: (B, T, 1, beta_dim)
     - Rot: (B, T, 1, 6)
     - Trans: (B, T, 1, 3)
     ======= Labels ========
@@ -189,8 +203,8 @@ def get_dict_from_sample_and_label_tensors(
     - Scalar: (B, T, 1, 1)
     - Joints: (B, T, 21, 3)
     - Anchors: (B, T, 32, 3)
-    - Theta: (B, T, 1, 18)
-    - Beta: (B, T, 1, 10)
+    - Theta: (B, T, 1, theta_dim)
+    - Beta: (B, T, 1, beta_dim)
     - Rot: (B, T, 1, 6)
     - Trans: (B, T, 1, 3)
     =======================
@@ -200,13 +214,13 @@ def get_dict_from_sample_and_label_tensors(
     """
     noisy_choir, rescaled_ref_pts, scalar, is_rhand, theta, beta, rot_6d, trans = (
         sample[:, :, 0, :, :2],
-        sample[:, :, 1],
+        sample[:, :, 1, :, :3],
         sample[:, :, 2, 0, 0].squeeze(),
         sample[:, :, 3, 0, 0].squeeze().bool(),
-        sample[:, :, 4, 0, :theta_dim].squeeze(),
-        sample[:, :, 5, 0, :beta_dim].squeeze(),
-        sample[:, :, 6, 0, :6].squeeze(),
-        sample[:, :, 7, 0, :3].squeeze(),
+        sample[:, :, 4, 0, :theta_dim],
+        sample[:, :, 5, 0, :beta_dim],
+        sample[:, :, 6, 0, :6],
+        sample[:, :, 7, 0, :3],
     )
     (
         gt_choir,
@@ -224,8 +238,8 @@ def get_dict_from_sample_and_label_tensors(
         label[:, :, 2, 0, 0].squeeze(),
         label[:, :, 3, :21, :3],
         label[:, :, 4, :32, :3],
-        label[:, :, 5, 0, :18],
-        label[:, :, 6, 0, :10],
+        label[:, :, 5, 0, :theta_dim],
+        label[:, :, 6, 0, :beta_dim],
         label[:, :, 7, 0, :6],
         label[:, :, 8, 0, :3],
     )

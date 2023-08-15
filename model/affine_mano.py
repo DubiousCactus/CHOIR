@@ -19,7 +19,12 @@ from utils.dataset import transform_verts
 
 
 class AffineMANO(torch.nn.Module):
-    def __init__(self, ncomps: int = 15, flat_hand_mean: bool = False):
+    def __init__(
+        self,
+        ncomps: int = 15,
+        flat_hand_mean: bool = False,
+        for_contactpose: bool = False,
+    ):
         super().__init__()
         # MANO is shipped with 15 components but you can use less.
         self.mano_layer = ManoLayer(
@@ -29,13 +34,16 @@ class AffineMANO(torch.nn.Module):
             ncomps=ncomps,
         )
         self.anchor_layer = AnchorLayer(anchor_root="vendor/manotorch/assets/anchor")
+        self._for_contactpose = for_contactpose
 
     def forward(self, pose, shape, rot_6d, trans) -> Tuple[torch.Tensor, torch.Tensor]:
         mano_output: MANOOutput = self.mano_layer(pose, shape)
         verts = mano_output.verts
         joints = mano_output.joints
-        return transform_verts(verts, rot_6d, trans), transform_verts(
-            joints, rot_6d, trans
+        return transform_verts(
+            verts, rot_6d, trans, apply_inverse_rot=self._for_contactpose
+        ), transform_verts(
+            joints, rot_6d, trans, apply_inverse_rot=self._for_contactpose
         )
 
     @property

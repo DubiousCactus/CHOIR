@@ -7,3 +7,6 @@ runs/
 tags
 tags.*
 *.png
+*.html
+*.tgz
+*.pickle

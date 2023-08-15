@@ -26,6 +26,7 @@ from utils.training import (
     get_dict_from_sample_and_label_tensors,
     optimize_pose_pca_from_choir,
 )
+from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
 class MultiViewTester(MultiViewTrainer):
@@ -52,12 +53,41 @@ class MultiViewTester(MultiViewTrainer):
         self._data_loader = data_loader
         self._running = True
         self._pbar = tqdm(total=1, desc="Testing")
-        self._affine_mano = to_cuda_(AffineMANO())
+        self._affine_mano = to_cuda_(
+            AffineMANO(
+                ncomps=self._data_loader.theta_dim - 3,
+                flat_hand_mean=(self._data_loader.name == "grab"),
+                for_contactpose=(self._data_loader.name == "contactpose"),
+            )
+        )
         self._bps_dim = data_loader.dataset.bps_dim
         self._bps = to_cuda_(data_loader.dataset.bps)
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         signal.signal(signal.SIGINT, self._terminator)
+
+    @to_cuda
+    def _visualize(
+        self,
+        batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
+    ) -> None:
+        """Visualize the model predictions.
+        Args:
+            batch: The batch to process.
+            epoch: The current epoch.
+        """
+        visualize_model_predictions_with_multiple_views(
+            self._model,
+            batch,
+            epoch,
+            bps_dim=self._bps_dim,
+            bps=self._bps,
+            remap_bps_distances=self._remap_bps_distances,
+            exponential_map_w=self._exponential_map_w,
+            dataset=self._data_loader.name,
+            theta_dim=self._data_loader.theta_dim,
+        )  # User implementation goes here (utils/visualization.py)
 
     def _test_batch(
         self,
@@ -101,12 +131,13 @@ class MultiViewTester(MultiViewTrainer):
             verts_pred, joints_pred = self._affine_mano(*input_params.values())
             anchors_pred = self._affine_mano.get_anchors(verts_pred)
         else:
+            use_smplx = False  # TODO: I don't use it for now
             with torch.set_grad_enabled(True):
                 (
-                    pose,
-                    shape,
-                    rot_6d,
-                    trans,
+                    _,
+                    _,
+                    _,
+                    _,
                     anchors_pred,
                     verts_pred,
                     joints_pred,
@@ -117,14 +148,16 @@ class MultiViewTester(MultiViewTrainer):
                     max_iterations=350,
                     loss_thresh=1e-7,
                     lr=8e-2,
-                    is_rhand=False,  # TODO
-                    use_smplx=False,  # TODO
+                    is_rhand=samples["is_rhand"],
+                    use_smplx=use_smplx,
+                    dataset=self._data_loader.name,
                     remap_bps_distances=self._remap_bps_distances,
                     exponential_map_w=self._exponential_map_w,
                     initial_params={
                         k: v
                         for k, v in samples.items()
-                        if k in ["theta", "beta", "rot", "trans"]
+                        if k
+                        in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
                     },
                     beta_w=1e-4,
                     theta_w=1e-8,
@@ -150,7 +183,7 @@ class MultiViewTester(MultiViewTrainer):
             # save_as=os.path.join(image_dir,
             # f"{mesh_name}_tto_{batch_idx}.html"))
             # viewed_meshes.append(mesh_name)
-        with torch.no_grad():  # TODO: Why is there memory leaking everywhere????
+        with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
                 torch.norm(anchors_pred - gt_anchors.cuda(), dim=2)
@@ -335,7 +368,7 @@ class MultiViewTester(MultiViewTrainer):
             torch.Tensor: The loss for the batch.
         """
         x, y, mesh_pths = batch  # type: ignore
-        samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+        samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=27)
         # (
         # anchor_error_x,
         # mpjpe_x,

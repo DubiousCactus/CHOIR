@@ -61,7 +61,7 @@ class BaseDataset(TaskSet, abc.ABC):
         super().__init__(
             min_pts=1,
             max_ctx_pts=max_views_per_grasp,
-            max_tgt_pts=noisy_samples_per_grasp
+            max_tgt_pts=max_views_per_grasp
             + 1,  # This is actually irrelevant in our case! Just needs to be higher than max_ctx_pts
             total_tgt_pts=noisy_samples_per_grasp,
             eval=False,
@@ -79,6 +79,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._n_augs = n_augs
         self._bps_dim = bps_dim
         self._noisy_samples_per_grasp = noisy_samples_per_grasp
+        self._dataset_name = dataset_name
         # self._perturbations = [] # TODO: Implement
         self._cache_dir = osp.join(
             get_original_cwd(), "data", f"{dataset_name}_preprocessed"
@@ -114,9 +115,19 @@ class BaseDataset(TaskSet, abc.ABC):
             grasps,
             dataset_name,
         ) = self._load_objects_and_grasps(tiny, split, seed=seed)
+        assert len(objects_w_contacts) == len(grasps)
+        assert len(grasps) > 0
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+
+    @property
+    def theta_dim(self):
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str:
+        return self._dataset_name.lower()
 
     @property
     def base_unit(self) -> float:

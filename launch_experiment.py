@@ -80,11 +80,20 @@ def launch_experiment(
     print(
         f"Number of trainable parameters: {sum(p.numel() for p in model_inst.parameters() if p.requires_grad)}"
     )
-    train_dataset, val_dataset, test_dataset = (
-        dataset(split="train"),
-        dataset(split="val"),
-        dataset(split="test", augment=False),
-    )
+    train_dataset, val_dataset, test_dataset = None, None, None
+    if run.training_mode:
+        train_dataset, val_dataset = (
+            dataset(split="train", seed=run.seed),
+            dataset(split="val", seed=run.seed),
+        )
+        bps = train_dataset.bps
+        remap_bps_distances = train_dataset.bps
+        exponential_map_w = train_dataset.bps
+    else:
+        test_dataset = dataset(split="test", augment=False, seed=run.seed)
+        bps = test_dataset.bps
+        remap_bps_distances = test_dataset.bps
+        exponential_map_w = test_dataset.bps
     opt_inst = optimizer(model_inst.parameters())
     scheduler_inst = scheduler(
         opt_inst
@@ -93,9 +102,9 @@ def launch_experiment(
         scheduler_inst.T_max = run.epochs
 
     training_loss_inst = training_loss(
-        bps=train_dataset.bps,
-        remap_bps_distances=train_dataset.remap_bps_distances,
-        exponential_map_w=train_dataset.exponential_map_w,
+        bps=bps,
+        remap_bps_distances=remap_bps_distances,
+        exponential_map_w=exponential_map_w,
     )
 
     "============ CUDA ============"
@@ -119,13 +128,21 @@ def launch_experiment(
         g = torch.Generator()
         g.manual_seed(run.seed)
 
-    train_loader_inst = data_loader(train_dataset, generator=g)
-    val_loader_inst = data_loader(
-        val_dataset, generator=g, shuffle=False, drop_last=False
-    )
-    test_loader_inst = data_loader(
-        test_dataset, generator=g, shuffle=False, drop_last=False
-    )
+    train_loader_inst, val_loader_inst, test_loader_inst = None, None, None
+    if run.training_mode:
+        train_loader_inst = data_loader(train_dataset, generator=g)
+        val_loader_inst = data_loader(
+            val_dataset, generator=g, shuffle=False, drop_last=False, n_batches=None
+        )
+    else:
+        test_loader_inst = data_loader(
+            test_dataset,
+            generator=g,
+            shuffle=False,
+            drop_last=False,
+            n_batches=None,
+            num_workers=1,
+        )
 
     " ============ Training ============ "
     model_ckpt_path = None

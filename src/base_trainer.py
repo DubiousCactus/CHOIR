@@ -240,7 +240,8 @@ class BaseTrainer:
                     visualize
                     and has_visualized < self._viz_n_samples
                     and (
-                        random.Random().random() < 0.5 or i == len(self._val_loader) - 1
+                        random.Random().random() < 0.15
+                        or i == len(self._val_loader) - 1
                     )
                 ):
                     self._visualize(batch, epoch)

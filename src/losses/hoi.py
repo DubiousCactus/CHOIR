@@ -55,6 +55,7 @@ class CHOIRLoss(torch.nn.Module):
         mano_anchors_w: float,
         kl_w: float,
         multi_view: bool,
+        temporal: bool,
         remap_bps_distances: bool,
         exponential_map_w: float,
         predict_residuals: bool,
@@ -85,6 +86,7 @@ class CHOIRLoss(torch.nn.Module):
         self.predict_residuals = predict_residuals
         self._kl_decay = 1.0 if not use_kl_scheduler else 1.2
         self._decayed = False
+        self._temporal = temporal
 
     def forward(
         self,
@@ -116,12 +118,12 @@ class CHOIRLoss(torch.nn.Module):
             labels["rot"],
             labels["trans"],
         )
-        if self._multi_view:
+        if self._multi_view and not self._temporal:
             for n in range(choir_gt.shape[1] - 1):
                 assert torch.allclose(choir_gt[:, n], choir_gt[:, n + 1])
             # Since all noisy views are of the same grasp, we can just take the first view's ground
             # truth (all views have the same ground truth).
-            choir_gt = choir_gt[:, 0] if not self.predict_residuals else choir_gt
+            choir_gt = choir_gt[:, 0]
             if len(scalar_gt.shape) == 2:
                 scalar_gt = scalar_gt[
                     :, 0
@@ -131,6 +133,18 @@ class CHOIRLoss(torch.nn.Module):
             rot_gt = rot_gt[:, 0]
             trans_gt = trans_gt[:, 0]
             anchors_gt = anchors_gt[:, 0]
+
+        elif self._temporal:
+            # TODO: Do this properly. For now we'll take the average of all views as the ground
+            # truth.
+            choir_gt = choir_gt.mean(dim=1)
+            if len(scalar_gt.shape) == 2:
+                scalar_gt = scalar_gt.mean(dim=1)
+            pose_gt = pose_gt.mean(dim=1)
+            beta_gt = beta_gt.mean(dim=1)
+            rot_gt = rot_gt.mean(dim=1)
+            trans_gt = trans_gt.mean(dim=1)
+            anchors_gt = anchors_gt.mean(dim=1)
 
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
 
@@ -268,6 +282,9 @@ class CHOIRFittingLoss(torch.nn.Module):
             assert bps.shape[1] == choir.shape[1]
         else:
             raise ValueError("CHOIRFittingLoss(): BPS must be (B, P, 3) or (P, 3)")
+        assert (
+            bps.shape[0] == anchors.shape[0]
+        ), "optimize_pose_pca_from_choir(): BPS and anchors must have the same batch size"
         anchor_distances = torch.cdist(bps, anchors, p=2)
         anchor_ids = (
             torch.arange(

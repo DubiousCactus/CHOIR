@@ -113,6 +113,10 @@ class ContactPoseDataset(BaseDataset):
             debug=debug,
         )
 
+    @property
+    def theta_dim(self):
+        return 15
+
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[dict, list, list, str]:
@@ -320,7 +324,7 @@ class ContactPoseDataset(BaseDataset):
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
-        affine_mano: AffineMANO = to_cuda_(AffineMANO())  # type: ignore
+        affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
 
         n_augs = self._n_augs if self._augment else 1
 

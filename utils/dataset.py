@@ -24,16 +24,24 @@ from utils import to_cuda
 
 
 def transform_verts(
-    verts: torch.Tensor, rot6d: torch.Tensor, t: torch.Tensor
+    verts: torch.Tensor, rot6d: torch.Tensor, t: torch.Tensor, apply_inverse_rot: bool
 ) -> torch.Tensor:
     R = rotation_6d_to_matrix(rot6d)
-    # NOTE: This is the inverse of the transform we want to apply to the MANO model. It works
-    # for the code given in ContactPose because they're applying the inverse transform to the
-    # points with np.dot(transform, points.T).
-    inv_r = Transform3d().rotate(R).inverse().to(verts.device)
-    transform = (
-        Transform3d(device=verts.device).compose(inv_r).translate(t).to(verts.device)
-    )
+    if apply_inverse_rot:
+        # NOTE: This is the inverse of the transform we want to apply to the MANO model. It works
+        # for the code given in ContactPose because they're applying the inverse transform to the
+        # points with np.dot(transform, points.T).
+        inv_r = Transform3d().rotate(R).inverse().to(verts.device)
+        transform = (
+            Transform3d(device=verts.device)
+            .compose(inv_r)
+            .translate(t)
+            .to(verts.device)
+        )
+    else:
+        transform = (
+            Transform3d(device=verts.device).rotate(R).translate(t).to(verts.device)
+        )
     return transform.transform_points(verts)
 
 

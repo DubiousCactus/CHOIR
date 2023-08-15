@@ -9,11 +9,13 @@
 Visualization utilities.
 """
 
-from typing import Any, List, Optional, Tuple, Union
+import os
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import open3d
 import pyvista as pv
+import scenepic as sp
 import torch
 from trimesh import Trimesh
 
@@ -76,9 +78,9 @@ def add_choir_to_plot(
         plot.add_mesh(
             pv.Cube(
                 center=anchors[i].cpu().numpy(),
-                x_length=1e-2,
-                y_length=1e-2,
-                z_length=1e-2,
+                x_length=3e-3,
+                y_length=3e-3,
+                z_length=3e-3,
             ),
             color="yellow",
             name=f"anchor{i}",
@@ -92,12 +94,14 @@ def visualize_model_predictions_with_multiple_views(
     bps: torch.Tensor,
     bps_dim: int,
     remap_bps_distances: bool,
+    dataset: str,
+    theta_dim: str,
     exponential_map_w: Optional[float] = None,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
-    x, y = batch  # type: ignore
-    samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+    x, y, mesh_pths = batch  # type: ignore
+    samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=theta_dim)
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
         input_scalar = samples["scalar"][0].view(-1, *samples["scalar"].shape[2:])
@@ -115,7 +119,16 @@ def visualize_model_predictions_with_multiple_views(
         gt_ref_pts = labels["rescaled_ref_pts"][0, 0].unsqueeze(0)
         # =============================================================
 
-        affine_mano = AffineMANO().cuda()
+        if dataset.lower() == "grab":
+            affine_mano = AffineMANO(
+                ncomps=24, flat_hand_mean=True, for_contactpose=False
+            ).cuda()
+        elif dataset.lower() == "contactpose":
+            affine_mano = AffineMANO(
+                ncomps=15, flat_hand_mean=False, for_contactpose=True
+            ).cuda()
+        else:
+            raise NotImplementedError(f"Unknown dataset: {dataset}")
         faces = affine_mano.faces
         F = faces.cpu().numpy()
         # ===================================================================================
@@ -125,20 +138,46 @@ def visualize_model_predictions_with_multiple_views(
         )
         sample_choirs = samples["choir"][0].view(-1, *samples["choir"].shape[2:])
         print(f"[*] Visualizing {input_choirs.shape[0]} noisy CHOIR fields.")
+        # for k, v in samples.items():
+        # print(f"-> {k}: {v.shape}")
+        use_smplx = False  # TODO: for now I'm not interested in using it
         with torch.set_grad_enabled(True):
-            pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+            (
+                _,
+                _,
+                _,
+                _,
+                anchors_pred,
+                verts_pred,
+                joints_pred,
+            ) = optimize_pose_pca_from_choir(
                 sample_choirs,
                 bps=bps,
                 scalar=input_scalar,
                 is_rhand=samples["is_rhand"][0],
-                max_iterations=5000,
+                # max_iterations=5000,
+                max_iterations=800,
+                loss_thresh=1e-7,
+                lr=1e-2,
+                use_smplx=use_smplx,
+                dataset=dataset,
                 remap_bps_distances=remap_bps_distances,
                 exponential_map_w=exponential_map_w,
+                initial_params={
+                    k: v[0]
+                    for k, v in samples.items()
+                    if k
+                    in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                },
+                beta_w=1e-4,
+                theta_w=1e-8,
+                choir_w=1000,
+                # max_iterations=8000,
+                # lr=1e-1,
             )
-        verts, _ = affine_mano(pose, shape, rot_6d, trans)
         for i in range(input_choirs.shape[0]):
             pl.subplot(0, i)
-            V = verts[i].cpu().numpy()
+            V = verts_pred[i].cpu().numpy()
             tmesh = Trimesh(V, F)
             hand_mesh = pv.wrap(tmesh)
             add_choir_to_plot(
@@ -153,7 +192,7 @@ def visualize_model_predictions_with_multiple_views(
         # ===================================================================================
 
         # ================== Optimize MANO on model prediction =========================
-        y_hat = model(samples["choir"])
+        y_hat = model(samples["choir"], use_mean=True)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -162,8 +201,8 @@ def visualize_model_predictions_with_multiple_views(
         }
         mano_params_gt = {k: v[0, 0].unsqueeze(0) for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-        gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
-        gt_anchors = affine_mano.get_anchors(gt_verts)
+        verts_gt, joints_gt = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        anchors_gt = affine_mano.get_anchors(verts_gt)
         with torch.set_grad_enabled(True):
             # Use first batch element and views as batch dimension.
             choir_pred = y_hat["choir"][0].unsqueeze(0)
@@ -171,20 +210,42 @@ def visualize_model_predictions_with_multiple_views(
                 "Mean scalar: ",
                 torch.mean(input_scalar).unsqueeze(0).to(input_scalar.device),
             )
-            pose, shape, rot_6d, trans, anchors_pred = optimize_pose_pca_from_choir(
+            (
+                _,
+                _,
+                _,
+                _,
+                anchors_pred,
+                verts_pred,
+                joints_pred,
+            ) = optimize_pose_pca_from_choir(
                 choir_pred,
                 bps=bps,
                 scalar=torch.mean(input_scalar)
                 .unsqueeze(0)
                 .to(input_scalar.device),  # TODO: What should I do here?
                 is_rhand=samples["is_rhand"][0],
-                max_iterations=5000,
+                max_iterations=400,
+                loss_thresh=1e-7,
+                lr=8e-2,
+                # max_iterations=8000,
+                # lr=1e-1,
+                use_smplx=use_smplx,
+                dataset=dataset,
                 remap_bps_distances=remap_bps_distances,
                 exponential_map_w=exponential_map_w,
+                initial_params={
+                    k: v[0].unsqueeze(0)
+                    for k, v in samples.items()
+                    if k
+                    in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                },
+                beta_w=1e-4,
+                theta_w=1e-8,
+                choir_w=1000,
             )
-            verts_pred, joints_pred = affine_mano(pose, shape, rot_6d, trans)
         # ============ Display the ground truth CHOIR field with the GT MANO ================
-        V_gt = gt_verts[0].cpu().numpy()
+        V_gt = verts_gt[0].cpu().numpy()
         tmesh_gt = Trimesh(V_gt, F)
         gt_hand_mesh = pv.wrap(tmesh_gt)
         pl.subplot(0, input_choirs.shape[0])
@@ -193,7 +254,7 @@ def visualize_model_predictions_with_multiple_views(
             bps / gt_scalar,
             choir_gt / gt_scalar,
             gt_ref_pts / gt_scalar,
-            gt_anchors,
+            anchors_gt,
             gt_hand_mesh,
             hand_only=True,
             hand_color="red",
@@ -208,16 +269,16 @@ def visualize_model_predictions_with_multiple_views(
         # ====== Metrics and qualitative comparison ======
         # === Anchor error ===
         print(
-            f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+            f"Anchor error (mm): {torch.norm(anchors_pred - anchors_gt.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
         )
         # === MPJPE ===
         pjpe = torch.linalg.vector_norm(
-            gt_joints - joints_pred, ord=2, dim=-1
+            joints_gt - joints_pred, ord=2, dim=-1
         )  # Per-joint position error (B, N, 21)
         mpjpe = torch.mean(pjpe, dim=-1).item()  # Mean per-joint position error (B, N)
         print(f"MPJPE (mm): {mpjpe * 1000:.2f}")
         root_aligned_pjpe = torch.linalg.vector_norm(
-            (gt_joints - gt_joints[:, 0, :]) - (joints_pred - joints_pred[:, 0, :]),
+            (joints_gt - joints_gt[:, 0, :]) - (joints_pred - joints_pred[:, 0, :]),
             ord=2,
             dim=-1,
         )  # Per-joint position error (B, N, 21)
@@ -229,7 +290,7 @@ def visualize_model_predictions_with_multiple_views(
         # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
         # hand meshes.
         pvpe = torch.linalg.vector_norm(
-            gt_verts - verts_pred, ord=2, dim=-1
+            verts_gt - verts_pred, ord=2, dim=-1
         )  # Per-vertex position error (B, N, 778)
         mpvpe = torch.mean(pvpe, dim=-1).item()  # Mean per-vertex position error (B, N)
         print(f"MPVPE (mm): {mpvpe * 1000:.2f}")
@@ -249,6 +310,7 @@ def visualize_model_predictions(
     step: int,
     bps: torch.Tensor,
     bps_dim: int,
+    dataset: str,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
@@ -287,6 +349,7 @@ def visualize_model_predictions(
             gt_rescaled_ref_pts,
             mano_params_gt,
             bps_dim=bps_dim,
+            dataset=dataset,
         )
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
@@ -310,6 +373,7 @@ def visualize_CHOIR_prediction(
     gt_anchors: torch.Tensor,
     is_rhand: bool,
     use_smplx: bool,
+    dataset: str,
     remap_bps_distances: bool,
     exponential_map_w: Optional[float] = None,
 ):
@@ -351,6 +415,7 @@ def visualize_CHOIR_prediction(
             scalar=input_scalar,
             is_rhand=is_rhand,
             use_smplx=use_smplx,
+            dataset=dataset,
             max_iterations=8000,
             lr=1e-1,
             remap_bps_distances=remap_bps_distances,
@@ -702,3 +767,51 @@ def visualize_MANO(
     else:
         pl.add_axes_at_origin()
         pl.show(interactive=True)
+
+
+class ScenePicAnim:
+    def __init__(
+        self,
+        width=1600,
+        height=1600,
+    ):
+        super().__init__()
+        self.scene = sp.Scene()
+        self.main = self.scene.create_canvas_3d(width=width, height=height)
+        self.colors = sp.Colors
+
+    def meshes_to_sp(self, meshes: Dict[str, Trimesh]):
+        sp_meshes = []
+        for mesh_name, mesh in meshes.items():
+            params = {
+                "vertices": mesh.vertices.astype(np.float32),
+                "normals": mesh.vertex_normals.astype(np.float32),
+                "triangles": mesh.faces.astype(np.int32),
+                "colors": mesh.visual.vertex_colors.astype(np.float32)[..., :3],
+            }
+            # params = {'vertices' : m.v.astype(np.float32), 'triangles' : m.f, 'colors' : m.vc.astype(np.float32)}
+            # sp_m = sp.Mesh()
+            sp_m = self.scene.create_mesh(layer_id=mesh_name)
+            sp_m.add_mesh_with_normals(**params)
+            if mesh_name == "ground_mesh":
+                sp_m.double_sided = True
+            sp_meshes.append(sp_m)
+        return sp_meshes
+
+    def add_frame(self, meshes: Dict[str, Trimesh]):
+        meshes_list = self.meshes_to_sp(meshes)
+        if not hasattr(self, "focus_point"):
+            self.focus_point = list(meshes.values())[0].centroid
+            # center = self.focus_point
+            # center[2] = 4
+            # rotation = sp.Transforms.rotation_about_z(0)
+            # self.camera = sp.Camera(center=center, rotation=rotation, fov_y_degrees=30.0)
+
+        main_frame = self.main.create_frame(focus_point=self.focus_point)
+        for i, m in enumerate(meshes_list):
+            # self.main.set_layer_settings({layer_names[i]:{}})
+            main_frame.add_mesh(m)
+
+    def save_animation(self, sp_anim_name):
+        self.scene.link_canvas_events(self.main)
+        self.scene.save_as_html(sp_anim_name, title=os.path.basename(sp_anim_name))
