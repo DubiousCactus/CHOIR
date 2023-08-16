@@ -37,6 +37,7 @@ class BaseDataset(TaskSet, abc.ABC):
         obj_ptcld_size: int,
         bps_dim: int,
         noisy_samples_per_grasp: int,
+        min_views_per_grasp: int,
         max_views_per_grasp: int,
         right_hand_only: bool,
         center_on_object_com: bool,
@@ -59,7 +60,7 @@ class BaseDataset(TaskSet, abc.ABC):
         )
         assert noisy_samples_per_grasp >= max_views_per_grasp
         super().__init__(
-            min_pts=1,
+            min_pts=min_views_per_grasp,
             max_ctx_pts=max_views_per_grasp,
             max_tgt_pts=max_views_per_grasp
             + 1,  # This is actually irrelevant in our case! Just needs to be higher than max_ctx_pts
@@ -221,6 +222,9 @@ class BaseDataset(TaskSet, abc.ABC):
         # TODO: We have an anchor sequence, let's sample a positive sequence and N negative
         # sequences for the mini batch. Can this be done with multiple workers?
         assert noisy_grasp_sequence is not None
+        # n_context = min(len(noisy_grasp_sequence), n_context) # Can't do that because other
+        # workers won't be aware of len(noisy_grasp_sequence) since each batch element is a
+        # different grasp sequence.
         assert n_context <= len(noisy_grasp_sequence)
         if self._split == "test":
             # If we're testing/evaluating the model, we want to go through the entire task for

@@ -59,6 +59,7 @@ class GRABDataset(BaseDataset):
         bps_dim: int = 1024,
         right_hand_only: bool = True,
         center_on_object_com: bool = True,
+        min_views_per_grasp: int = 2,
         max_views_per_grasp: int = 5,  # Corresponds to window frames here
         tiny: bool = False,
         augment: bool = False,
@@ -109,6 +110,7 @@ class GRABDataset(BaseDataset):
             right_hand_only=right_hand_only,
             obj_ptcld_size=obj_ptcld_size,
             perturbation_level=perturbation_level,
+            min_views_per_grasp=min_views_per_grasp,
             max_views_per_grasp=max_views_per_grasp,
             # noisy_samples_per_grasp is just indicative for __len__() but it doesn't matter much
             # since we'll sample frame windows on the fly.
@@ -218,7 +220,7 @@ class GRABDataset(BaseDataset):
         trans_noise: float = 0.0,
         rot_noise: float = 0.0,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
-        noisy_params = {k: v.clone() for k, v in params.items()}
+        noisy_params = {k: deepcopy(v) for k, v in params.items()}
         if self._use_affine_mano:
             noisy_params["theta"][..., :3] += rot_noise
             noisy_params["theta"][..., 3:] += pose_noise
@@ -436,6 +438,11 @@ class GRABDataset(BaseDataset):
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
                 gt_params = self._load_sequence_params(seq, p_num, grasping_hand)
+                # Now I must center the grasp on the object s.t. the object is at the origin
+                # and in canonical pose. This is done by applying the inverse of the object's
+                # global orientation and translation to the hand's global orientation and
+                # translation. We can use pytorch3d's transform_points for this.
+                gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
                 # ============ Shift the pair to the object's center ============
                 if self._center_on_object_com:
                     # TODO: if self._center_on_object_com and not (self._augment and k > 0):
@@ -444,18 +451,9 @@ class GRABDataset(BaseDataset):
                     obj_ptcld -= obj_center.to(obj_ptcld.device)
                     gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
                 # ================================================================
-                # Now I must center the grasp on the object s.t. the object is at the origin
-                # and in canonical pose. This is done by applying the inverse of the object's
-                # global orientation and translation to the hand's global orientation and
-                # translation. We can use pytorch3d's transform_points for this.
-                gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
-                (
-                    gt_verts,
-                    gt_joints,
-                    gt_faces,
-                    _,
-                ) = self._get_verts_and_joints(gt_params, grasping_hand)
-
+                gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
+                    gt_params, grasping_hand
+                )
                 n_augs = self._n_augs if self._augment else 1
                 if n_augs > 1:
                     raise NotImplementedError("Augmentation not implemented yet.")

@@ -58,11 +58,10 @@ class CHOIRLoss(torch.nn.Module):
         temporal: bool,
         remap_bps_distances: bool,
         exponential_map_w: float,
-        predict_residuals: bool,
         use_kl_scheduler: bool,
     ) -> None:
         super().__init__()
-        self._mse = torch.nn.MSELoss()
+        self._mse = torch.nn.MSELoss(reduction="mean")
         self._cosine_embedding = torch.nn.CosineEmbeddingLoss()
         self._cross_entropy = torch.nn.CrossEntropyLoss()
         self._predict_anchor_orientation = predict_anchor_orientation
@@ -83,7 +82,6 @@ class CHOIRLoss(torch.nn.Module):
         self.register_buffer("bps", bps)
         self._remap_bps_distances = remap_bps_distances
         self._exponential_map_w = exponential_map_w
-        self.predict_residuals = predict_residuals
         self._kl_decay = 1.0 if not use_kl_scheduler else 1.2
         self._decayed = False
         self._temporal = temporal
@@ -135,16 +133,15 @@ class CHOIRLoss(torch.nn.Module):
             anchors_gt = anchors_gt[:, 0]
 
         elif self._temporal:
-            # TODO: Do this properly. For now we'll take the average of all views as the ground
-            # truth.
-            choir_gt = choir_gt.mean(dim=1)
+            # Let's try to just predict the last frame's CHOIR field:
+            choir_gt = choir_gt[:, -1]
             if len(scalar_gt.shape) == 2:
-                scalar_gt = scalar_gt.mean(dim=1)
-            pose_gt = pose_gt.mean(dim=1)
-            beta_gt = beta_gt.mean(dim=1)
-            rot_gt = rot_gt.mean(dim=1)
-            trans_gt = trans_gt.mean(dim=1)
-            anchors_gt = anchors_gt.mean(dim=1)
+                scalar_gt = scalar_gt[:, -1]
+            pose_gt = pose_gt[:, -1]
+            beta_gt = beta_gt[:, -1]
+            rot_gt = rot_gt[:, -1]
+            trans_gt = trans_gt[:, -1]
+            anchors_gt = anchors_gt[:, -1]
 
         choir_pred, orientations_pred = y_hat["choir"], y_hat["orientations"]
 

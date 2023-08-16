@@ -60,8 +60,9 @@ class MultiViewTrainer(BaseTrainer):
             bps=self._bps,
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
-            dataset=self._train_loader.name,
-            theta_dim=self._train_loader.theta_dim,
+            dataset=self._train_loader.dataset.name,
+            theta_dim=self._train_loader.dataset.theta_dim,
+            temporal=self._model.predict_deltas,
         )  # User implementation goes here (utils/visualization.py)
 
     @to_cuda

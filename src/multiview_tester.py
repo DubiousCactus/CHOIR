@@ -55,9 +55,9 @@ class MultiViewTester(MultiViewTrainer):
         self._pbar = tqdm(total=1, desc="Testing")
         self._affine_mano = to_cuda_(
             AffineMANO(
-                ncomps=self._data_loader.theta_dim - 3,
-                flat_hand_mean=(self._data_loader.name == "grab"),
-                for_contactpose=(self._data_loader.name == "contactpose"),
+                ncomps=self._data_loader.dataset.theta_dim - 3,
+                flat_hand_mean=(self._data_loader.dataset.name == "grab"),
+                for_contactpose=(self._data_loader.dataset.name == "contactpose"),
             )
         )
         self._bps_dim = data_loader.dataset.bps_dim
@@ -85,8 +85,8 @@ class MultiViewTester(MultiViewTrainer):
             bps=self._bps,
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
-            dataset=self._data_loader.name,
-            theta_dim=self._data_loader.theta_dim,
+            dataset=self._data_loader.dataset.name,
+            theta_dim=self._data_loader.dataset.theta_dim,
         )  # User implementation goes here (utils/visualization.py)
 
     def _test_batch(

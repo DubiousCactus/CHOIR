@@ -71,6 +71,7 @@ class GraspingDatasetConf:
     validation_objects: int = 3
     test_objects: int = 2
     perturbation_level: int = 0
+    min_views_per_grasp: int = 1
     max_views_per_grasp: int = 5
     right_hand_only: bool = True
     center_on_object_com: bool = True
@@ -122,7 +123,7 @@ class DataloaderConf:
     batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
-    num_workers: int = 2
+    num_workers: int = 1
     pin_memory: bool = True
     n_batches: Optional[int] = None
 
@@ -167,7 +168,8 @@ model_store(
         residual_connections=False,
         encoder_dropout=False,
         decoder_dropout=False,
-        predict_residuals=MISSING,
+        predict_deltas=False,
+        frame_to_predict=MISSING,
     ),
     name="aggregate_cpvae",
 )
@@ -221,7 +223,6 @@ class CHOIRLossConf:
     kl_w: float = 1e-4
     multi_view: bool = False
     temporal: bool = False
-    predict_residuals: bool = False
     use_kl_scheduler: bool = False
 
 
@@ -443,7 +444,8 @@ experiment_store(
         ],
         dataset=dict(
             perturbation_level=1,
-            max_views_per_grasp=5,
+            min_views_per_grasp=2,
+            max_views_per_grasp=10,
             use_affine_mano=True,
             static_grasps_only=False,
         ),
@@ -452,7 +454,7 @@ experiment_store(
         model=dict(
             latent_dim=128,
             encoder_layer_dims=(1024, 1024, 1024, 1024),
-            decoder_layer_dims=(1024, 1024, 1024),
+            decoder_layer_dims=(2048, 2048, 2048),
         ),
         bases=(Experiment,),
     ),

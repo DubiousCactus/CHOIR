@@ -32,7 +32,8 @@ class Aggregate_VED(torch.nn.Module):
         residual_connections: bool,
         encoder_dropout: bool,
         decoder_dropout: bool,
-        predict_residuals: bool,
+        predict_deltas: bool,
+        frame_to_predict: str = "average",
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -43,12 +44,17 @@ class Aggregate_VED(torch.nn.Module):
         self.skip_connections = skip_connections
         self.encoder_dropout = encoder_dropout
         self.decoder_dropout = decoder_dropout
-        self.predict_residuals = predict_residuals
+        self.predict_deltas = predict_deltas
         self.residual_connections = residual_connections
+        assert frame_to_predict in [
+            "average",
+            "last",
+        ], "Invalid frame to predict. Must be 'average' or 'last'"
+        self.frame_to_predict = frame_to_predict
 
         assert not (
-            predict_residuals and decoder_use_obj
-        ), "Cannot predict residuals and use object points as input to the decoder"
+            predict_deltas and decoder_use_obj
+        ), "Cannot both predict deltas and use object points as input to the decoder"
 
         encoder_all_same_dim = all(
             [
@@ -63,8 +69,10 @@ class Aggregate_VED(torch.nn.Module):
             ]
         )
 
-        if (decoder_use_obj or predict_residuals) and not decoder_all_same_dim:
-            decoder_layer_dims = [bps_dim] * (len(decoder_layer_dims))
+        if (decoder_use_obj or predict_deltas) and not decoder_all_same_dim:
+            decoder_layer_dims = [bps_dim * (2 if predict_deltas else 1)] * (
+                len(decoder_layer_dims)
+            )
         # ======================= Encoder =======================
         # encoder_proj: List[torch.nn.Module] = [torch.nn.Linear(1024, 1024)]
         posterior_encoder: List[torch.nn.Module] = [
@@ -112,7 +120,11 @@ class Aggregate_VED(torch.nn.Module):
             torch.nn.Linear(
                 latent_dim
                 + (bps_dim if decoder_use_obj else 0)
-                + (bps_dim * 2 if predict_residuals else 0),
+                + (
+                    bps_dim * 2
+                    if predict_deltas or self.frame_to_predict == "last"
+                    else 0
+                ),
                 decoder_layer_dims[0],
             ),
         ]
@@ -225,11 +237,13 @@ class Aggregate_VED(torch.nn.Module):
             posterior = torch.distributions.Normal(q_mu, q_var)
             z = q_mu if use_mean else posterior.rsample()
 
+        # When predicting the average frame for contact pose, we just take any frame since they're
+        # all the same.
+        last_frame = _x[:, -1]
         if self.decoder_use_obj:
-            dec_input = torch.cat([z, _x[:, 0, :, 0]], dim=-1)
-        elif self.predict_residuals:
-            z = z.unsqueeze(1).repeat(1, T, 1)
-            dec_input = torch.cat([z, _x.flatten(start_dim=2)], dim=-1)
+            dec_input = torch.cat([z, last_frame[..., 0]], dim=-1)
+        elif self.predict_deltas or self.frame_to_predict == "last":
+            dec_input = torch.cat([z, last_frame.flatten(start_dim=1)], dim=-1)
         else:
             dec_input = z
 
@@ -244,12 +258,16 @@ class Aggregate_VED(torch.nn.Module):
         ):
             x = layer(x)
             if self.use_batch_norm:
-                if self.predict_residuals:
-                    x = bn(x.view(B * T, -1)).view(B, T, -1)
-                else:
-                    x = bn(x)
+                x = bn(x)
             if (
-                self.skip_connections and i > 0
+                # Skip connections mess everything up once we add a dependency on the field in the
+                # decoder, so we only use them for the 2nd layer (the first being fed [z, field])
+                self.skip_connections
+                and (
+                    i > 0
+                    if not (self.predict_deltas or self.frame_to_predict == "last")
+                    else i in [2, 3]
+                )
             ):  # Skip the first layer since Z is already the input
                 x += z_layer(z)
             if self.decoder_dropout:
@@ -258,16 +276,15 @@ class Aggregate_VED(torch.nn.Module):
         if self.decoder_dropout:
             x = F.dropout(x, p=0.1, training=self.training)
         sqrt_distances = self.decoder[-1](x)
-        if self.remapped_bps_distances:
+        if self.predict_deltas:
+            anchor_deltas = torch.tanh(sqrt_distances)
+        elif self.remapped_bps_distances:
             # No need to square the distances since we're using sigmoid
             anchor_dist = torch.sigmoid(sqrt_distances)
         else:
             anchor_dist = sqrt_distances**2
 
-        if self.predict_residuals:
-            anchor_dist = anchor_dist.view(B, T, P, 1)  # N, T, P, 1
-        else:
-            anchor_dist = anchor_dist.view(B, P, 1)  # N, 1
+        anchor_dist = anchor_dist.view(B, P, 1)  # N, 1
 
         mano = None
         if self.mano_params_decoder is not None and self.mano_pose_decoder is not None:
@@ -276,23 +293,32 @@ class Aggregate_VED(torch.nn.Module):
             mano_pose = self.mano_pose_decoder(mano_embedding)
             mano = torch.cat([mano_params, mano_pose], dim=-1)
 
-        if self.predict_residuals:
+        if self.predict_deltas:
+            if self.remapped_bps_distances:
+                anchor_dist = torch.clamp(
+                    last_frame[..., -1].unsqueeze(-1) + anchor_deltas, min=1e-12, max=1
+                )
+                # anchor_dist = torch.relu(last_frame[..., -1].unsqueeze(-1) + anchor_deltas) + 1e-9
+                # anchor_dist = _x[:, -1, :, 1].unsqueeze(-1) + anchor_deltas
+            else:
+                anchor_dist = torch.relu(
+                    last_frame[..., -1].unsqueeze(-1) + anchor_deltas
+                )
             choir = torch.cat(
                 [
-                    _x.view(B, T, P, self.choir_dim)[..., 0].unsqueeze(-1),
-                    _x.view(B, T, P, self.choir_dim)[..., 1].unsqueeze(-1)
-                    - anchor_dist,  # We're predicting the "residuals" from the anchor distance
+                    last_frame[..., 0].unsqueeze(-1),
+                    anchor_dist,
                 ],
                 dim=-1,
             )
         else:
             choir = torch.cat(
                 [
-                    _x.view(B, T, P, self.choir_dim)[
-                        :, 0, :, 0
-                    ]  # Use the first view since the object BPS isn't noisy
-                    .unsqueeze(-1)
-                    .requires_grad_(False),
+                    last_frame[
+                        ..., 0
+                    ].unsqueeze(  # Use any view since the object BPS isn't noisy
+                        -1
+                    ),
                     anchor_dist,
                 ],
                 dim=-1,

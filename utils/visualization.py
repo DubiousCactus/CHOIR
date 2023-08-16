@@ -97,6 +97,7 @@ def visualize_model_predictions_with_multiple_views(
     dataset: str,
     theta_dim: str,
     exponential_map_w: Optional[float] = None,
+    temporal: bool = False,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
@@ -138,8 +139,8 @@ def visualize_model_predictions_with_multiple_views(
         )
         sample_choirs = samples["choir"][0].view(-1, *samples["choir"].shape[2:])
         print(f"[*] Visualizing {input_choirs.shape[0]} noisy CHOIR fields.")
-        # for k, v in samples.items():
-        # print(f"-> {k}: {v.shape}")
+        for k, v in samples.items():
+            print(f"-> {k}: {v.shape}")
         use_smplx = False  # TODO: for now I'm not interested in using it
         with torch.set_grad_enabled(True):
             (
@@ -169,7 +170,7 @@ def visualize_model_predictions_with_multiple_views(
                     if k
                     in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
                 },
-                beta_w=1e-4,
+                beta_w=1e-5,
                 theta_w=1e-8,
                 choir_w=1000,
                 # max_iterations=8000,

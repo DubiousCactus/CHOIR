@@ -73,7 +73,8 @@ def launch_experiment(
         predict_anchor_orientation=just(training_loss).predict_anchor_orientation
         or just(training_loss).predict_anchor_position,
         predict_mano=just(training_loss).predict_mano,
-        predict_residuals=just(training_loss).predict_residuals,
+        # predict_deltas=just(training_loss).temporal,
+        frame_to_predict="last" if just(training_loss).temporal else "average",
     )  # Use just() to get the config out of the Zen-Partial
     print(model_inst)
     print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
