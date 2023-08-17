@@ -18,7 +18,7 @@ import itertools
 import os
 import os.path as osp
 import pickle
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import blosc
 import torch
@@ -36,7 +36,6 @@ class BaseDataset(TaskSet, abc.ABC):
         perturbation_level: int,
         obj_ptcld_size: int,
         bps_dim: int,
-        noisy_samples_per_grasp: int,
         min_views_per_grasp: int,
         max_views_per_grasp: int,
         right_hand_only: bool,
@@ -50,21 +49,29 @@ class BaseDataset(TaskSet, abc.ABC):
         remap_bps_distances: bool,
         exponential_map_w: float,
         dataset_name: str,
+        noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
+        # For GRAB, noisy_samples_per_grasp is actually the number of frames in the sequence. At
+        # training time it doesn't matter because we sample a random subset of these frames. But at
+        # test time we need to go through the entire sequence. By setting noisy_samples_per_grasp
+        # to None, we'll figure out the number of frames in the sequence and use that as the number
+        # of noisy samples per grasp.
+        seq_len = (
+            noisy_samples_per_grasp if noisy_samples_per_grasp is not None else 100
+        )
+
         # This feels super hacky because I hadn't designed metabatch to be used this way. It was
         # only meant to be used with the traditional context + target paradigm. This will work but
         # requires min_pts=1 and max_ctx_pts=1, as well as using n_target. Don't change any of
         # these defaults or it will break for this case.
-        noisy_samples_per_grasp = (
-            1 if perturbation_level == 0 else noisy_samples_per_grasp
-        )
-        assert noisy_samples_per_grasp >= max_views_per_grasp
+        seq_len = 1 if seq_len == 0 else seq_len
+        assert seq_len >= max_views_per_grasp
         super().__init__(
             min_pts=min_views_per_grasp,
             max_ctx_pts=max_views_per_grasp,
             max_tgt_pts=max_views_per_grasp
             + 1,  # This is actually irrelevant in our case! Just needs to be higher than max_ctx_pts
-            total_tgt_pts=noisy_samples_per_grasp,
+            total_tgt_pts=seq_len,
             eval=False,
             predict_full_target=False,
             predict_full_target_during_eval=False,
@@ -79,7 +86,8 @@ class BaseDataset(TaskSet, abc.ABC):
         self._augment = augment and split == "train"
         self._n_augs = n_augs
         self._bps_dim = bps_dim
-        self._noisy_samples_per_grasp = noisy_samples_per_grasp
+        self._seq_len = noisy_samples_per_grasp
+        self._seq_lengths = []  # For variable length sequences (GRAB)
         self._dataset_name = dataset_name
         # self._perturbations = [] # TODO: Implement
         self._cache_dir = osp.join(
@@ -162,10 +170,16 @@ class BaseDataset(TaskSet, abc.ABC):
         # This SO thread explains the problem and the (super simple) solution:
         # https://stackoverflow.com/questions/27974126/get-all-n-choose-k-combinations-of-length-n
         self._observations_number = n
-        self._combinations = list(
-            itertools.combinations(range(self._noisy_samples_per_grasp), n)
-        )
-        self._n_combinations = len(self._combinations)
+        if self._seq_len is not None:
+            self._combinations = list(itertools.combinations(range(self._seq_len), n))
+            self._n_combinations = len(self._combinations)
+        else:
+            # We need to do things differently for GRAB, where we have sequences of variable
+            # length. In each sequence, we want to sample N observations but still predict for
+            # each frame in the sequence. The N observations include that frame, so for the first
+            # frame we need to samples N times frame 0, and N-1 times frame 1, etc.
+            self._n_combinations = None
+            self._seq_lengths = [len(seq) for seq in self._sample_paths]
 
     def _mine_neg_pos_pairs(self):
         """
@@ -192,7 +206,14 @@ class BaseDataset(TaskSet, abc.ABC):
             assert (
                 self._observations_number is not None
             ), "You must set the number of observations for the test split."
-            return len(self._sample_paths) * self._n_combinations
+            if self._seq_len is not None:
+                return len(self._sample_paths) * self._n_combinations
+            else:
+                # We need to do things differently for GRAB, where we have sequences of variable
+                # length. In each sequence, we want to sample N observations but still predict for
+                # each frame in the sequence. The N observations include that frame, so for the first
+                # frame we need to samples N times frame 0, and N-1 times frame 1, etc.
+                return sum([len(seq) for seq in self._sample_paths])
         else:
             return len(self._sample_paths)
 
@@ -210,30 +231,56 @@ class BaseDataset(TaskSet, abc.ABC):
     def __gettask__(
         self, idx: int, n_context: int, n_target: int
     ) -> Tuple[List[Tuple], List[Tuple]]:
-        if self._split == "test":
+        if self._split == "test" and self._seq_len is not None:
             assert (
                 self._observations_number is not None
             ), "You must set the number of observations for the test split."
             sequence_idx = idx // self._n_combinations
             sample_idx = idx % self._n_combinations
+        elif self._split == "test" and self._seq_len is None:
+            assert (
+                self._observations_number is not None
+            ), "You must set the number of observations for the test split."
+            # This is for GRAB when we need to do this differently for each sequence because they
+            # are of variable length.
+            acc = 0
+            for i, seq_len in enumerate(self._seq_lengths):
+                if idx < (seq_len + acc):
+                    sequence_idx = i
+                    break
+                acc += seq_len
+            sample_idx = idx - acc
+
         noisy_grasp_sequence = self._sample_paths[
             idx if not self._split == "test" else sequence_idx
         ]
-        # TODO: We have an anchor sequence, let's sample a positive sequence and N negative
-        # sequences for the mini batch. Can this be done with multiple workers?
         assert noisy_grasp_sequence is not None
         # n_context = min(len(noisy_grasp_sequence), n_context) # Can't do that because other
         # workers won't be aware of len(noisy_grasp_sequence) since each batch element is a
         # different grasp sequence.
         assert n_context <= len(noisy_grasp_sequence)
         if self._split == "test":
-            # If we're testing/evaluating the model, we want to go through the entire task for
-            # ContactPoseDataset and all unique combinations noisy grasp samples for a given number of
-            # observations.
-            samples_paths = [
-                noisy_grasp_sequence[i] for i in self._combinations[sample_idx]
-            ]
-        else:
+            if self._combinations is not None:  # ContactPose
+                # If we're testing/evaluating the model, we want to go through the entire task for
+                # ContactPoseDataset and all unique combinations noisy grasp samples for a given number of
+                # observations.
+                samples_paths = [
+                    noisy_grasp_sequence[i] for i in self._combinations[sample_idx]
+                ]
+            else:
+                # GRAB (variable sequence length, going frame by frame with previous
+                # self._observations_number frames in the context window
+                samples_paths = []
+                # Sample self._observations_number frames which are preceiding the current frame
+                # (sample_idx) in the sequence sequence_idx.
+                for i in range(self._observations_number):
+                    samples_paths.append(
+                        noisy_grasp_sequence[
+                            max(0, sample_idx - self._observations_number + i + 1)
+                        ]
+                    )
+
+        else:  # Training / validation
             # Randomly sample n_context grasps from the grasp sequence (ignore n_target since we're not
             # doing meta-learning here). We want a random subset of cardinality n_context from the grasp
             # sequence, but they must follow each other in the sequence. So we randomly sample a starting
@@ -242,6 +289,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 low=0, high=len(noisy_grasp_sequence) - n_context + 1, size=(1,)
             ).item()
             samples_paths = noisy_grasp_sequence[start_idx : start_idx + n_context]
+
         samples, labels = [], []
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:

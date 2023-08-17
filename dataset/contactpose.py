@@ -360,7 +360,7 @@ class ContactPoseDataset(BaseDataset):
                     os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
                 if (
                     len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
-                    >= self._noisy_samples_per_grasp
+                    >= self._seq_len
                 ):
                     grasp_paths.append(
                         [
@@ -369,7 +369,7 @@ class ContactPoseDataset(BaseDataset):
                                 grasp_name,
                                 f"sample_{i:06d}.pkl",
                             )
-                            for i in range(self._noisy_samples_per_grasp)
+                            for i in range(self._seq_len)
                         ]
                     )
                 else:
@@ -431,7 +431,7 @@ class ContactPoseDataset(BaseDataset):
 
                     sample_paths = []
                     # ================= Perturbed Hand-Object pairs =================
-                    for j in range(self._noisy_samples_per_grasp):
+                    for j in range(self._seq_len):
                         sample_pth = osp.join(
                             samples_labels_pickle_pth, grasp_name, f"sample_{j:06d}.pkl"
                         )

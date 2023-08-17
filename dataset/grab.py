@@ -114,7 +114,7 @@ class GRABDataset(BaseDataset):
             max_views_per_grasp=max_views_per_grasp,
             # noisy_samples_per_grasp is just indicative for __len__() but it doesn't matter much
             # since we'll sample frame windows on the fly.
-            noisy_samples_per_grasp=100,
+            noisy_samples_per_grasp=None,
             rescale=rescale,
             center_on_object_com=center_on_object_com,
             remap_bps_distances=remap_bps_distances,

@@ -266,7 +266,7 @@ class Aggregate_VED(torch.nn.Module):
                 and (
                     i > 0
                     if not (self.predict_deltas or self.frame_to_predict == "last")
-                    else i in [2, 3]
+                    else i in [1, 2]
                 )
             ):  # Skip the first layer since Z is already the input
                 x += z_layer(z)

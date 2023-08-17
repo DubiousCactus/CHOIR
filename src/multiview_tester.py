@@ -145,12 +145,12 @@ class MultiViewTester(MultiViewTrainer):
                     y_hat["choir"],
                     bps=self._bps,
                     scalar=input_scalar,
-                    max_iterations=350,
+                    max_iterations=400,
                     loss_thresh=1e-7,
                     lr=8e-2,
                     is_rhand=samples["is_rhand"],
                     use_smplx=use_smplx,
-                    dataset=self._data_loader.name,
+                    dataset=self._data_loader.dataset.name,
                     remap_bps_distances=self._remap_bps_distances,
                     exponential_map_w=self._exponential_map_w,
                     initial_params={
@@ -455,19 +455,10 @@ class MultiViewTester(MultiViewTrainer):
         self._model.eval()
         test_errors = []
         with torch.no_grad():
-            test_errors.append(
-                self.test_n_observations(1, visualize_every=visualize_every)
-            )
-            test_errors.append(
-                self.test_n_observations(2, visualize_every=visualize_every)
-            )
-            test_errors.append(
-                self.test_n_observations(3, visualize_every=visualize_every)
-            )
-            test_errors.append(
-                self.test_n_observations(4, visualize_every=visualize_every)
-            )
-            # self.test_n_observations(5, visualize_every=visualize_every)
+            for i in range(1, 15):
+                test_errors.append(
+                    self.test_n_observations(i, visualize_every=visualize_every)
+                )
 
         with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
             compressed_pkl = blosc.compress(pickle.dumps(test_errors))

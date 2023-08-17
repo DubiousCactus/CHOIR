@@ -165,11 +165,13 @@ model_store(
         batch_norm=True,
         decoder_use_obj=False,
         skip_connections=True,
-        residual_connections=False,
+        residual_connections=True,
         encoder_dropout=False,
         decoder_dropout=False,
         predict_deltas=False,
         frame_to_predict=MISSING,
+        encoder_layer_dims=(1024, 1024, 1024, 1024),
+        decoder_layer_dims=(1024, 1024),
     ),
     name="aggregate_cpvae",
 )
@@ -421,8 +423,6 @@ experiment_store(
         data_loader=dict(batch_size=32),
         model=dict(
             latent_dim=128,
-            encoder_layer_dims=(1024, 1024, 1024, 1024),
-            decoder_layer_dims=(1024, 1024, 1024),
         ),
         # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
         # decoder_layer_dims=(128, 256, 512, 1024)),
