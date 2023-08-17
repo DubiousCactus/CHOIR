@@ -500,10 +500,11 @@ class GRABDataset(BaseDataset):
                             choir_sequence_paths.append(sample_pth)
                             continue
                         # Distance hand-object, with object at origin:
-                        # dist = torch.norm(torch.mean(gt_verts[i], dim=0))
-                        # Filter the sequence frames to keep only those where the hand is within 30cm of the object
-                        # if dist > 0.3:
-                        # continue
+                        dist = torch.norm(torch.mean(gt_verts[i], dim=0))
+                        # Filter the sequence frames to keep only those where the hand is within
+                        # 15cm of the object (as in the TOCH paper!)
+                        if dist > 0.15:
+                            continue
 
                         trans_noise = (
                             torch.randn(3, device=gt_params["trans"].device)
