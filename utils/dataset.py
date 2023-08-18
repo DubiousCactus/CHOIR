@@ -225,9 +225,114 @@ def pack_and_pad_sample_label(
     using Dicts. Now I'm not sure it was the real culprit but this helps a bit. Judge me, I don't
     care.
     """
+    # ========= Without Pytorch 2.0 Nested Tensor (annoying but I use old clusters) =========
+    max_sample_dim = max(
+        [
+            s.shape[-1]
+            for s in set().union(
+                theta,
+                beta,
+                rot_6d,
+                trans,
+                rescaled_ref_pts,
+                choir,
+            )
+        ]
+    )
+    max_label_dim = max(
+        [
+            s.shape[-1]
+            for s in set().union(
+                gt_choir,
+                gt_rescaled_ref_pts,
+                gt_joints,
+                gt_anchors,
+                gt_theta,
+                gt_beta,
+                gt_rot_6d,
+                gt_trans,
+            )
+        ]
+    )
+    sample = torch.stack(
+        [
+            torch.nn.functional.pad(
+                choir.squeeze(0), (0, max_sample_dim - choir.shape[-1]), value=0.0
+            ),
+            torch.nn.functional.pad(
+                rescaled_ref_pts.squeeze(0),
+                (0, max_sample_dim - rescaled_ref_pts.shape[-1]),
+                value=0.0,
+            ),
+            torch.nn.functional.pad(
+                scalar.unsqueeze(0),
+                (0, max_sample_dim - scalar.unsqueeze(0).shape[-1]),
+                value=0.0,
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                (
+                    torch.ones((1, 1)).cuda()
+                    if hand_idx == "right"
+                    else torch.zeros((1, 1)).cuda()
+                ),
+                (0, max_sample_dim - 1),
+                value=0.0,
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                theta, (0, max_sample_dim - theta.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                beta, (0, max_sample_dim - beta.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                rot_6d, (0, max_sample_dim - rot_6d.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                trans, (0, max_sample_dim - trans.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+        ],
+        dim=0,
+    ).cpu()
+
+    padded_joints = torch.zeros((bps_dim, max_label_dim), device=gt_joints.device)
+    padded_joints[: gt_joints.squeeze(0).shape[0], :3] = gt_joints.squeeze(0)
+    padded_anchors = torch.zeros((bps_dim, max_label_dim), device=gt_anchors.device)
+    padded_anchors[: gt_anchors.squeeze(0).shape[0], :3] = gt_anchors.squeeze(0)
+    label = torch.stack(
+        [
+            torch.nn.functional.pad(
+                gt_choir.squeeze(0),
+                (0, max_label_dim - gt_choir.shape[-1]),
+                value=0.0,
+            ),
+            torch.nn.functional.pad(
+                gt_rescaled_ref_pts.squeeze(0),
+                (0, max_label_dim - gt_rescaled_ref_pts.shape[-1]),
+                value=0.0,
+            ),
+            torch.nn.functional.pad(
+                gt_scalar.unsqueeze(0),
+                (0, max_label_dim - gt_scalar.unsqueeze(0).shape[-1]),
+                value=0.0,
+            ).repeat((bps_dim, 1)),
+            padded_joints,
+            padded_anchors,
+            gt_theta.repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                gt_beta, (0, max_label_dim - gt_beta.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                gt_rot_6d, (0, max_label_dim - gt_rot_6d.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+            torch.nn.functional.pad(
+                gt_trans, (0, max_label_dim - gt_trans.shape[-1]), value=0.0
+            ).repeat((bps_dim, 1)),
+        ],
+        dim=0,
+    ).cpu()
     if "2.0" in torch.__version__:
         # ============ With Pytorch 2.0 Nested Tensor ============
-        sample = torch.nested.to_padded_tensor(
+        gt_sample = torch.nested.to_padded_tensor(
             torch.nested.nested_tensor(
                 [
                     choir.squeeze(0),  # (N, 2)
@@ -245,7 +350,7 @@ def pack_and_pad_sample_label(
             0.0,
         ).cpu()
 
-        label = torch.nested.to_padded_tensor(
+        gt_label = torch.nested.to_padded_tensor(
             torch.nested.nested_tensor(
                 [
                     gt_choir.squeeze(0),  # (N, 2)
@@ -261,111 +366,27 @@ def pack_and_pad_sample_label(
             ),
             0.0,
         ).cpu()
-        # ========================================================
-    else:
-        # ============== Without Pytorch 2.0 Nested Tensor (annoying) ==============
-        max_sample_dim = max(
-            [
-                s.shape[-1]
-                for s in set().union(
-                    theta,
-                    beta,
-                    rot_6d,
-                    trans,
-                    hand_idx,
-                    scalar,
-                    rescaled_ref_pts,
-                    choir,
-                )
-            ]
-        )
-        max_label_dim = max(
-            [
-                s.shape[-1]
-                for s in set().union(
-                    gt_choir,
-                    gt_rescaled_ref_pts,
-                    gt_scalar,
-                    gt_joints,
-                    gt_anchors,
-                    gt_theta,
-                    gt_beta,
-                    gt_rot_6d,
-                    gt_trans,
-                )
-            ]
-        )
-        sample = torch.stack(
-            [
-                torch.nn.functional.pad(
-                    choir.squeeze(0), (0, max_sample_dim - choir.shape[-1]), value=0.0
-                ),
-                torch.nn.functional.pad(
-                    rescaled_ref_pts.squeeze(0),
-                    (0, max_sample_dim - rescaled_ref_pts.shape[-1]),
-                    value=0.0,
-                ),
-                torch.nn.functional.pad(
-                    scalar.unsqueeze(0),
-                    (0, max_sample_dim - scalar.shape[-1]),
-                    value=0.0,
-                ).repeat((bps_dim, 1)),
-                torch.nn.functional.pad(
-                    (
-                        torch.ones((1, 1)).cuda()
-                        if hand_idx == "right"
-                        else torch.zeros((1, 1)).cuda()
-                    ),
-                    (0, max_sample_dim - 1),
-                    value=0.0,
-                ).repeat((bps_dim, 1)),
-                torch.nn.functional.pad(
-                    theta, (0, max_sample_dim - theta.shape[-1]), value=0.0
-                ).repeat((bps_dim, 1)),
-                torch.nn.functional.pad(
-                    beta, (0, max_sample_dim - beta.shape[-1]), value=0.0
-                ).repeat((bps_dim, 1)),
-                torch.nn.functional.pad(
-                    rot_6d, (0, max_sample_dim - rot_6d.shape[-1]), value=0.0
-                ).repeat((bps_dim, 1)),
-                torch.nn.functional.pad(
-                    trans, (0, max_sample_dim - trans.shape[-1]), value=0.0
-                ).repeat((bps_dim, 1)),
-            ],
-            dim=0,
-        ).cpu()
+        # ============================================================
+        # ============== Test that manual padding works ==============
+        assert torch.allclose(gt_sample[0, :], sample[0, :]), "CHOIR mismatch."
+        assert torch.allclose(gt_sample[1, :], sample[1, :]), "Ref pts mismatch."
+        assert torch.allclose(gt_sample[2, 0], sample[2, 0]), "Scalar mismatch."
+        assert torch.allclose(gt_sample[3, 0], sample[3, 0]), "Hand idx mismatch."
+        assert torch.allclose(gt_sample[4, 0], sample[4, 0]), "Theta mismatch."
+        assert torch.allclose(gt_sample[5, 0], sample[5, 0]), "Beta mismatch."
+        assert torch.allclose(gt_sample[6, 0], sample[6, 0]), "Rot mismatch."
+        assert torch.allclose(gt_sample[7, 0], sample[7, 0]), "Trans mismatch."
 
-        # TODO: Finish implementing automatic padding (god do I hate this task).
-        padded_joints = torch.zeros((bps_dim, 18), device=gt_joints.device)
-        padded_joints[: gt_joints.squeeze(0).shape[0], :3] = gt_joints.squeeze(0)
-        padded_anchors = torch.zeros((bps_dim, 18), device=gt_anchors.device)
-        padded_anchors[: gt_anchors.squeeze(0).shape[0], :3] = gt_anchors.squeeze(0)
-        label = torch.stack(
-            [
-                torch.nn.functional.pad(gt_choir.squeeze(0), (0, 16), value=0.0),
-                torch.nn.functional.pad(
-                    gt_rescaled_ref_pts.squeeze(0),
-                    (0, 15),
-                    value=0.0,
-                ),
-                torch.nn.functional.pad(
-                    gt_scalar.unsqueeze(0), (0, 17), value=0.0
-                ).repeat((bps_dim, 1)),
-                padded_joints,
-                padded_anchors,
-                gt_theta.repeat((bps_dim, 1)),
-                torch.nn.functional.pad(gt_beta, (0, 8), value=0.0).repeat(
-                    (bps_dim, 1)
-                ),
-                torch.nn.functional.pad(gt_rot_6d, (0, 12), value=0.0).repeat(
-                    (bps_dim, 1)
-                ),
-                torch.nn.functional.pad(gt_trans, (0, 15), value=0.0).repeat(
-                    (bps_dim, 1)
-                ),
-            ],
-            dim=0,
-        ).cpu()
+        assert torch.allclose(gt_label[0, :], label[0, :]), "CHOIR mismatch."
+        assert torch.allclose(gt_label[1, :], label[1, :]), "Ref pts mismatch."
+        assert torch.allclose(gt_label[2, 0], label[2, 0]), "Scalar mismatch."
+        assert torch.allclose(gt_label[3, :21], label[3, :21]), "Joints mismatch."
+        assert torch.allclose(gt_label[4, :32], label[4, :32]), "Anchors mismatch."
+        assert torch.allclose(gt_label[5, 0], label[5, 0]), "Theta mismatch."
+        assert torch.allclose(gt_label[6, 0], label[6, 0]), "Beta mismatch."
+        assert torch.allclose(gt_label[7, 0], label[7, 0]), "Rot mismatch."
+        assert torch.allclose(gt_label[8, 0], label[8, 0]), "Trans mismatch."
+        # =============================================================
     return sample, label
 
 

@@ -20,3 +20,5 @@ trame
 trame-vtk
 git+https://github.com/otaheri/chamfer_distance
 git+https://github.com/otaheri/bps_torch
+metabatch
+scenepic

@@ -77,7 +77,7 @@ class Aggregate_VED(torch.nn.Module):
         # encoder_proj: List[torch.nn.Module] = [torch.nn.Linear(1024, 1024)]
         posterior_encoder: List[torch.nn.Module] = [
             torch.nn.Linear(
-                self.choir_dim * bps_dim + (self.choir_dim // 2 * bps_dim),
+                self.choir_dim * bps_dim,
                 encoder_layer_dims[0],
             ),
         ]
@@ -101,12 +101,12 @@ class Aggregate_VED(torch.nn.Module):
         # self.encoder_proj = torch.nn.Linear
         # For the prior encoder, skip the first linear layer because we only have one CHOIR input
         prior_encoder: List[torch.nn.Module] = [
-            torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[1]),
+            torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[0]),
         ]
         prior_bn: List[torch.nn.Module] = [
-            torch.nn.BatchNorm1d(encoder_layer_dims[1]),
+            torch.nn.BatchNorm1d(encoder_layer_dims[0]),
         ]
-        for i in range(1, len(encoder_layer_dims) - 1):
+        for i in range(0, len(encoder_layer_dims) - 1):
             prior_encoder.append(
                 torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1])
             )
@@ -216,7 +216,8 @@ class Aggregate_VED(torch.nn.Module):
             # so that we can learn the approximative Q with KL Divergence, which we then use as a
             # prior at test time when we don't have access to the targets.
             # x = torch.concat([_x.flatten(start_dim=2), y.flatten(start_dim=2)], dim=-1)
-            x = torch.cat([_x, y[..., -1].unsqueeze(-1)], dim=-1).flatten(start_dim=2)
+            # x = torch.cat([_x, y[..., -1].unsqueeze(-1)], dim=-1).flatten(start_dim=2)
+            x = y.flatten(start_dim=2)
             x_prev = x
             for i, (layer, bn) in enumerate(
                 zip(self.posterior_encoder, self.posterior_bn)
