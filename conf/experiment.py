@@ -172,6 +172,7 @@ model_store(
         frame_to_predict=MISSING,
         encoder_layer_dims=(1024, 1024, 1024, 1024),
         decoder_layer_dims=(1024, 1024),
+        aggregator="mean",
     ),
     name="aggregate_cpvae",
 )

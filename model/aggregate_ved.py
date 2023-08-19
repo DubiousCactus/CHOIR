@@ -14,6 +14,8 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
+from model.blocks import AttentionAggregator
+
 
 class Aggregate_VED(torch.nn.Module):
     def __init__(
@@ -34,6 +36,7 @@ class Aggregate_VED(torch.nn.Module):
         decoder_dropout: bool,
         predict_deltas: bool,
         frame_to_predict: str = "average",
+        aggregator: str = "mean",
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -51,6 +54,26 @@ class Aggregate_VED(torch.nn.Module):
             "last",
         ], "Invalid frame to predict. Must be 'average' or 'last'"
         self.frame_to_predict = frame_to_predict
+        assert aggregator in [
+            "mean",
+            "attention",
+        ], "Invalid aggregator. Must be 'mean' or 'attention'"
+        # Multi-head cross-attention aggregator
+        self.mhca_aggregator = (
+            AttentionAggregator(
+                "multi_head",
+                multi_head_use_bias=True,
+                n_heads=8,
+                k_dim_in=self.choir_dim * bps_dim,
+                k_dim_out=256,
+                q_dim_in=self.choir_dim * bps_dim,
+                q_dim_out=256,
+                v_dim_in=latent_dim * 2,
+                v_dim_out=latent_dim * 2,
+            )
+            if aggregator == "attention"
+            else None
+        )
 
         assert not (
             predict_deltas and decoder_use_obj
@@ -198,7 +221,18 @@ class Aggregate_VED(torch.nn.Module):
         if self.encoder_dropout:
             x = F.dropout(x, p=0.1, training=self.training)
         s = self.prior_encoder[-1](x)
-        s_c = torch.mean(s, dim=1)
+        if self.mhca_aggregator is not None:
+            # s_c = torch.mean(s, dim=1)
+            # Key: _x.flatten(start_dim=2) / The CHOIRs
+            # Value: s / The latent distributions
+            # Query: _x[:, -1].flatten(start_dim=1) / The last frame's CHOIR
+            s_c = self.mhca_aggregator(
+                _x[..., 1:].flatten(start_dim=2),
+                s,
+                _x[:, -1, 1:].flatten(start_dim=1).unsqueeze(1),
+            ).squeeze()
+        else:
+            s_c = torch.mean(s, dim=1)
         p_mu, p_log_var = torch.split(s_c, self.latent_dim, dim=-1)
         p_var = 0.1 + 0.9 * torch.sigmoid(p_log_var)
         prior, posterior = torch.distributions.Normal(p_mu, p_var), None
@@ -232,7 +266,18 @@ class Aggregate_VED(torch.nn.Module):
             # if self.use_dropout:
             # x = F.dropout(x, p=0.5, training=self.training)
             s = self.posterior_encoder[-1](x)
-            s_c = torch.mean(s, dim=1)
+            if self.mhca_aggregator is not None:
+                # s_c = torch.mean(s, dim=1)
+                # Key: _x.flatten(start_dim=2) / The CHOIRs
+                # Value: s / The latent distributions
+                # Query: _x[:, -1].flatten(start_dim=1) / The last frame's CHOIR
+                s_c = self.mhca_aggregator(
+                    y[..., 1:].flatten(start_dim=2),
+                    s,
+                    _x[:, -1, 1:].flatten(start_dim=1).unsqueeze(1),
+                ).squeeze()
+            else:
+                s_c = torch.mean(s, dim=1)
             q_mu, q_log_var = torch.split(s_c, self.latent_dim, dim=-1)
             q_var = 0.1 + 0.9 * torch.sigmoid(q_log_var)
             posterior = torch.distributions.Normal(q_mu, q_var)
