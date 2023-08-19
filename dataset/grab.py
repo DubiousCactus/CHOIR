@@ -352,7 +352,7 @@ class GRABDataset(BaseDataset):
         ):
             if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                 os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
-            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) > 0:
+            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) >= 10:
                 choir_paths.append(
                     [
                         os.path.join(samples_labels_pickle_pth, grasp_name, f)

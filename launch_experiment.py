@@ -147,31 +147,29 @@ def launch_experiment(
 
     " ============ Training ============ "
     model_ckpt_path = None
-
-    if run.load_from_run is not None and run.load_from_path is not None:
-        raise ValueError(
-            "Both training.load_from_path and training.load_from_run are set. Please choose only one."
-        )
-    elif run.load_from_run is not None:
-        run_models = sorted(
-            [
-                f
-                for f in os.listdir(to_absolute_path(f"runs/{run.load_from_run}/"))
-                if f.endswith(".ckpt")
-                and (not f.startswith("last") if not run.training_mode else True)
-            ]
-        )
-        if len(run_models) < 1:
-            raise ValueError(f"No model found in runs/{run.load_from_run}/")
-        model_ckpt_path = to_absolute_path(
-            os.path.join(
-                "runs",
-                run.load_from_run,
-                run_models[-1],
+    if run.load_from is not None:
+        if run.load_from.endswith(".ckpt"):
+            model_ckpt_path = to_absolute_path(run.load_from)
+            if not os.path.exists(model_ckpt_path):
+                raise ValueError(f"File {model_ckpt_path} does not exist!")
+        else:
+            run_models = sorted(
+                [
+                    f
+                    for f in os.listdir(to_absolute_path(f"runs/{run.load_from}/"))
+                    if f.endswith(".ckpt")
+                    and (not f.startswith("last") if not run.training_mode else True)
+                ]
             )
-        )
-    elif run.load_from_path is not None:
-        model_ckpt_path = to_absolute_path(run.load_from_path)
+            if len(run_models) < 1:
+                raise ValueError(f"No model found in runs/{run.load_from}/")
+            model_ckpt_path = to_absolute_path(
+                os.path.join(
+                    "runs",
+                    run.load_from,
+                    run_models[-1],
+                )
+            )
 
     if run.training_mode:
         trainer(

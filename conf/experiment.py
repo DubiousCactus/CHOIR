@@ -308,8 +308,7 @@ class RunConfig:
     viz_every: int = 0
     viz_train_every: int = 0
     viz_num_samples: int = 5
-    load_from_path: Optional[str] = None
-    load_from_run: Optional[str] = None
+    load_from: Optional[str] = None
     training_mode: bool = True
     fine_tune: bool = False
 

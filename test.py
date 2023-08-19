@@ -11,7 +11,7 @@ from hydra_zen import store, zen
 import conf.experiment  # Must import the config to add all components to the store!
 from conf import project as project_conf
 from launch_experiment import launch_experiment
-from utils import change_dir_if_loading_from_run, seed_everything
+from utils import seed_everything
 
 if __name__ == "__main__":
 
@@ -31,7 +31,7 @@ if __name__ == "__main__":
             )  # training is the config of the training group, part of the base config
             if project_conf.REPRODUCIBLE
             else lambda: None,
-            lambda cfg: change_dir_if_loading_from_run(cfg.run.load_from_run),
+            # lambda cfg: change_dir_if_loading_from_run(cfg.run.load_from),
             lambda cfg: set_test_mode(cfg),
         ],
     ).hydra_main(
