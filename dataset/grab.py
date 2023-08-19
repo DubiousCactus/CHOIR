@@ -623,7 +623,7 @@ class GRABDataset(BaseDataset):
                             # exponential_map_w=self._exponential_map_w,
                             # )
                             # has_visualized = True
-                    if len(choir_sequence_paths) > 0:
+                    if len(choir_sequence_paths) >= 10:
                         choir_paths.append(choir_sequence_paths)
         print(
             f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"

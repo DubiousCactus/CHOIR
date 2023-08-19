@@ -37,7 +37,7 @@ from utils.dataset import (
     get_scalar,
     pack_and_pad_sample_label,
 )
-from utils.visualization import visualize_CHOIR, visualize_MANO
+from utils.visualization import visualize_CHOIR_prediction, visualize_MANO
 
 
 class ContactPoseDataset(BaseDataset):
@@ -117,7 +117,7 @@ class ContactPoseDataset(BaseDataset):
 
     @property
     def theta_dim(self):
-        return 15
+        return 18
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
@@ -425,6 +425,7 @@ class ContactPoseDataset(BaseDataset):
                         to_cuda_(gt_anchors),
                         scalar=gt_scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                        anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
@@ -476,6 +477,7 @@ class ContactPoseDataset(BaseDataset):
                             to_cuda_(anchors),
                             scalar=scalar,
                             bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                            anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
@@ -511,17 +513,18 @@ class ContactPoseDataset(BaseDataset):
                             print(
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
-                            visualize_CHOIR(
-                                choir.squeeze(0),
-                                self._bps,
-                                scalar,
-                                verts.squeeze(0),
-                                anchors.squeeze(0),
-                                obj_mesh,
-                                obj_ptcld,
-                                gt_rescaled_ref_pts.squeeze(0),
-                                affine_mano,
-                            )
+                            # visualize_CHOIR(
+                            # choir.squeeze(0),
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # verts.squeeze(0),
+                            # anchors.squeeze(0),
+                            # obj_mesh,
+                            # obj_ptcld,
+                            # gt_rescaled_ref_pts.squeeze(0),
+                            # affine_mano,
+                            # )
                             faces = affine_mano.faces
                             gt_MANO_mesh = Trimesh(
                                 gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
@@ -532,22 +535,24 @@ class ContactPoseDataset(BaseDataset):
                             visualize_MANO(
                                 pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                             )
-                            # visualize_CHOIR_prediction(
-                            # gt_choir,
-                            # gt_choir,
-                            # self._bps,
-                            # scalar,
-                            # gt_scalar,
-                            # rescaled_ref_pts,
-                            # gt_rescaled_ref_pts,
-                            # gt_verts,
-                            # gt_joints,
-                            # gt_anchors,
-                            # is_rhand=(hand_idx == "right"),
-                            # use_smplx=False,
-                            # remap_bps_distances=self._remap_bps_distances,
-                            # exponential_map_w=self._exponential_map_w,
-                            # )
+                            visualize_CHOIR_prediction(
+                                gt_choir,
+                                gt_choir,
+                                self._bps,
+                                self._anchor_indices,
+                                scalar,
+                                gt_scalar,
+                                rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                is_rhand=(hand_idx == "right"),
+                                use_smplx=False,
+                                dataset="ContactPose",
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                            )
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()

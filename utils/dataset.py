@@ -85,16 +85,11 @@ def compute_choir(
     anchors: torch.Tensor,
     scalar: float,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     remap_bps_distances: bool,
     exponential_map_w: float,
 ) -> torch.Tensor:
     """
-    For each BPS point, get the reference object point and compute the distance to the
-    nearest MANO anchor. Append the anchor index to the BPS point value as well as the
-    distance to the anchor: [BPS dists, BPS deltas, distance, one_hot_anchor_id]
-    Note that we need the deltas to be able to fit MANO, since we'll need to reconstruct the
-    pointcloud to compute the anchor distances!
-
     Args:
         pointcloud: Shape (B, N, 3)
         anchors: Shape (B, N_ANCHORS, 3)
@@ -127,16 +122,17 @@ def compute_choir(
     assert (
         bps.shape[1] % 32 == 0
     ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32."
-    anchor_ids = (
-        torch.arange(
-            0,
-            rescaled_anchors.shape[1],
-            device=bps.device,
-        )
-        .repeat((bps.shape[1] // 32,))
-        .unsqueeze(0)
-        .repeat((B, 1))
-    )
+    # anchor_ids = (
+    # torch.arange(
+    # 0,
+    # rescaled_anchors.shape[1],
+    # device=bps.device,
+    # )
+    # .repeat((bps.shape[1] // 32,))
+    # .unsqueeze(0)
+    # .repeat((B, 1))
+    # )
+    anchor_ids = anchor_indices.unsqueeze(0).repeat((B, 1))
     distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
     choir = torch.cat(
         [

@@ -27,6 +27,7 @@ from utils import to_cuda, to_cuda_
 def optimize_pose_pca_from_choir(
     choir: torch.Tensor,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     scalar: torch.Tensor,
     remap_bps_distances: bool,
     is_rhand: bool,
@@ -145,7 +146,7 @@ def optimize_pose_pca_from_choir(
         else:
             verts, joints = affine_mano(theta, beta, rot, trans)
         anchors = affine_mano.get_anchors(verts)
-        loss = choir_w * choir_loss(anchors, choir, bps)
+        loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
         shape_regularizer = (
             beta_w * torch.norm(beta) ** 2
         )  # Encourage the shape parameters to remain close to 0

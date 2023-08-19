@@ -21,6 +21,7 @@ import pickle
 from typing import Any, List, Optional, Tuple
 
 import blosc
+import numpy as np
 import torch
 from bps_torch.tools import sample_sphere_uniform
 from hydra.utils import get_original_cwd
@@ -98,6 +99,9 @@ class BaseDataset(TaskSet, abc.ABC):
         bps_path = osp.join(
             get_original_cwd(), "data", f"bps_{self._bps_dim}_{rescale}-rescaled.pkl"
         )
+        anchor_indices_path = osp.join(
+            get_original_cwd(), "data", f"anchor_indices_{self._bps_dim}.pkl"
+        )
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
                 bps = pickle.load(f)
@@ -110,7 +114,18 @@ class BaseDataset(TaskSet, abc.ABC):
             ).cpu()
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)
+        if osp.isfile(anchor_indices_path):
+            with open(anchor_indices_path, "rb") as f:
+                anchor_indices = pickle.load(f)
+        else:
+            anchor_indices = (
+                torch.arange(0, 32).repeat((self._bps_dim // 32,)).cpu().numpy()
+            )
+            np.random.shuffle(anchor_indices)
+            with open(anchor_indices_path, "wb") as f:
+                pickle.dump(anchor_indices, f)
         self._bps = bps
+        self._anchor_indices = torch.from_numpy(anchor_indices).type(torch.int64)
         self._center_on_object_com = center_on_object_com
         self._rescale = rescale
         self._remap_bps_distances = remap_bps_distances
@@ -161,6 +176,10 @@ class BaseDataset(TaskSet, abc.ABC):
     @property
     def bps(self) -> torch.Tensor:
         return self._bps
+
+    @property
+    def anchor_indices(self) -> torch.Tensor:
+        return self._anchor_indices
 
     @property
     def center_on_object_com(self) -> bool:

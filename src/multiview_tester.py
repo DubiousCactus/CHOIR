@@ -62,6 +62,7 @@ class MultiViewTester(MultiViewTrainer):
         )
         self._bps_dim = data_loader.dataset.bps_dim
         self._bps = to_cuda_(data_loader.dataset.bps)
+        self._anchor_indices = to_cuda_(data_loader.dataset.anchor_indices)
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         signal.signal(signal.SIGINT, self._terminator)
@@ -83,6 +84,7 @@ class MultiViewTester(MultiViewTrainer):
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
+            anchor_indices=self._anchor_indices,
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
             dataset=self._data_loader.dataset.name,
@@ -144,6 +146,7 @@ class MultiViewTester(MultiViewTrainer):
                 ) = optimize_pose_pca_from_choir(
                     y_hat["choir"],
                     bps=self._bps,
+                    anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
                     max_iterations=400,
                     loss_thresh=1e-7,

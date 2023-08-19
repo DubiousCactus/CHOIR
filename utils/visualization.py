@@ -92,6 +92,7 @@ def visualize_model_predictions_with_multiple_views(
     batch: Union[Tuple, List, torch.Tensor],
     step: int,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     bps_dim: int,
     remap_bps_distances: bool,
     dataset: str,
@@ -154,6 +155,7 @@ def visualize_model_predictions_with_multiple_views(
             ) = optimize_pose_pca_from_choir(
                 sample_choirs,
                 bps=bps,
+                anchor_indices=anchor_indices,
                 scalar=input_scalar,
                 is_rhand=samples["is_rhand"][0],
                 # max_iterations=5000,
@@ -222,6 +224,7 @@ def visualize_model_predictions_with_multiple_views(
             ) = optimize_pose_pca_from_choir(
                 choir_pred,
                 bps=bps,
+                anchor_indices=anchor_indices,
                 scalar=torch.mean(input_scalar)
                 .unsqueeze(0)
                 .to(input_scalar.device),  # TODO: What should I do here?
@@ -310,6 +313,7 @@ def visualize_model_predictions(
     batch: Union[Tuple, List, torch.Tensor],
     step: int,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     bps_dim: int,
     dataset: str,
     **kwargs,
@@ -344,6 +348,7 @@ def visualize_model_predictions(
             # pcl_mean,
             # pcl_scalar,
             bps,
+            anchor_indices,
             input_scalar,
             scalar_gt,
             rescaled_ref_pts,
@@ -365,6 +370,7 @@ def visualize_CHOIR_prediction(
     choir_pred: torch.Tensor,
     choir_gt: torch.Tensor,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     input_scalar: float,
     gt_scalar: float,
     input_ref_pts: torch.Tensor,
@@ -413,6 +419,7 @@ def visualize_CHOIR_prediction(
         ) = optimize_pose_pca_from_choir(
             choir_pred,
             bps=bps,
+            anchor_indices=anchor_indices.int(),
             scalar=input_scalar,
             is_rhand=is_rhand,
             use_smplx=use_smplx,
@@ -505,6 +512,7 @@ def visualize_CHOIR_prediction(
 def visualize_CHOIR(
     choir: torch.Tensor,
     bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
     scalar: float,
     # dense_contacts: torch.Tensor,
     verts: torch.Tensor,
@@ -577,7 +585,8 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        index = i % n_anchors
+        # index = i % n_anchors
+        index = anchor_indices[i]
         anchor = rescaled_anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
@@ -648,7 +657,8 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        index = i % n_anchors
+        # index = i % n_anchors
+        index = anchor_indices[i]
         anchor = rescaled_anchors[index, :]
         # The color is proportional to the distance to the anchor. It is in hex format.
         # It is obtained from min-max normalization of the distance in the choir field,
@@ -671,7 +681,8 @@ def visualize_CHOIR(
     assert len(bps.shape) == len(reference_obj_points.shape)
     rescaled_anchors = anchors * scalar
     for i in range(bps.shape[0]):
-        index = i % n_anchors
+        # index = i % n_anchors
+        index = anchor_indices[i]
         anchor = rescaled_anchors[index, :]
         anchor_color = int(
             (choir[i, 1] - choir[:, 1].min())
