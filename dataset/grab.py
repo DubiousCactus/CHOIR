@@ -352,7 +352,7 @@ class GRABDataset(BaseDataset):
         ):
             if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                 os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
-            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) > 0:
+            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) >= 10:
                 choir_paths.append(
                     [
                         os.path.join(samples_labels_pickle_pth, grasp_name, f)
@@ -623,7 +623,7 @@ class GRABDataset(BaseDataset):
                             # exponential_map_w=self._exponential_map_w,
                             # )
                             # has_visualized = True
-                    if len(choir_sequence_paths) > 0:
+                    if len(choir_sequence_paths) >= 10:
                         choir_paths.append(choir_sequence_paths)
         print(
             f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
