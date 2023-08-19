@@ -481,6 +481,7 @@ class GRABDataset(BaseDataset):
                         to_cuda_(gt_anchors),
                         scalar=gt_scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                        anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
@@ -547,6 +548,7 @@ class GRABDataset(BaseDataset):
                             to_cuda_(anchors),
                             scalar=scalar,
                             bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                            anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
@@ -609,6 +611,7 @@ class GRABDataset(BaseDataset):
                             # gt_choir[i].unsqueeze(0),
                             # gt_choir[i].unsqueeze(0),
                             # self._bps,
+                            # self._anchor_indices,
                             # scalar,
                             # gt_scalar,
                             # rescaled_ref_pts,
