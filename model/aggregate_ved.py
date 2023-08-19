@@ -64,9 +64,10 @@ class Aggregate_VED(torch.nn.Module):
                 "multi_head",
                 multi_head_use_bias=True,
                 n_heads=8,
-                k_dim_in=self.choir_dim * bps_dim,
+                k_dim_in=(self.choir_dim - 1)
+                * bps_dim,  # -1 cause not including the object
                 k_dim_out=256,
-                q_dim_in=self.choir_dim * bps_dim,
+                q_dim_in=(self.choir_dim - 1) * bps_dim,
                 q_dim_out=256,
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
@@ -229,7 +230,7 @@ class Aggregate_VED(torch.nn.Module):
             s_c = self.mhca_aggregator(
                 _x[..., 1:].flatten(start_dim=2),
                 s,
-                _x[:, -1, 1:].flatten(start_dim=1).unsqueeze(1),
+                _x[:, -1, :, 1:].flatten(start_dim=1).unsqueeze(1),
             ).squeeze()
         else:
             s_c = torch.mean(s, dim=1)
@@ -274,7 +275,7 @@ class Aggregate_VED(torch.nn.Module):
                 s_c = self.mhca_aggregator(
                     y[..., 1:].flatten(start_dim=2),
                     s,
-                    _x[:, -1, 1:].flatten(start_dim=1).unsqueeze(1),
+                    _x[:, -1, :, 1:].flatten(start_dim=1).unsqueeze(1),
                 ).squeeze()
             else:
                 s_c = torch.mean(s, dim=1)
