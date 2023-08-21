@@ -292,7 +292,9 @@ class BaseDataset(TaskSet, abc.ABC):
                 # Sample self._observations_number frames which are preceiding the current frame
                 # (sample_idx) in the sequence sequence_idx.
                 samples_paths = [
-                    max(0, sample_idx - self._observations_number + i + 1)
+                    noisy_grasp_sequence[
+                        max(0, sample_idx - self._observations_number + i + 1)
+                    ]
                     for i in range(self._observations_number)
                 ]
         else:  # Training / validation
