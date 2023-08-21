@@ -8,7 +8,6 @@
 ContactPose dataset.
 """
 
-import hashlib
 import os
 import os.path as osp
 import pickle
@@ -315,9 +314,11 @@ class ContactPoseDataset(BaseDataset):
         samples_labels_pickle_pth = osp.join(
             self._cache_dir,
             "samples_and_labels",
-            f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
-            + f"perturbed-{self._perturbation_level}_"
-            + f"{self._bps_dim}-bps_"
+            # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
+            +f"perturbed-{self._perturbation_level}_"
+            + f"_{self._obj_ptcld_size}-obj-pts"
+            + f"{'right-hand' if self._right_hand_only else 'both-hands'}",
+            +f"{self._bps_dim}-bps_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{self._rescale}_rescaled_"
             + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
