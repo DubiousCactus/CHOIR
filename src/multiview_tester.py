@@ -150,7 +150,7 @@ class MultiViewTester(MultiViewTrainer):
                     scalar=input_scalar,
                     max_iterations=400,
                     loss_thresh=1e-7,
-                    lr=8e-2,
+                    lr=1e-1,
                     is_rhand=samples["is_rhand"],
                     use_smplx=use_smplx,
                     dataset=self._data_loader.dataset.name,
@@ -458,7 +458,7 @@ class MultiViewTester(MultiViewTrainer):
         self._model.eval()
         test_errors = []
         with torch.no_grad():
-            for i in range(1, 15):
+            for i in range(3, 15):
                 test_errors.append(
                     self.test_n_observations(i, visualize_every=visualize_every)
                 )

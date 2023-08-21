@@ -289,16 +289,12 @@ class BaseDataset(TaskSet, abc.ABC):
             else:
                 # GRAB (variable sequence length, going frame by frame with previous
                 # self._observations_number frames in the context window
-                samples_paths = []
                 # Sample self._observations_number frames which are preceiding the current frame
                 # (sample_idx) in the sequence sequence_idx.
-                for i in range(self._observations_number):
-                    samples_paths.append(
-                        noisy_grasp_sequence[
-                            max(0, sample_idx - self._observations_number + i + 1)
-                        ]
-                    )
-
+                samples_paths = [
+                    max(0, sample_idx - self._observations_number + i + 1)
+                    for i in range(self._observations_number)
+                ]
         else:  # Training / validation
             # Randomly sample n_context grasps from the grasp sequence (ignore n_target since we're not
             # doing meta-learning here). We want a random subset of cardinality n_context from the grasp

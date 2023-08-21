@@ -12,6 +12,7 @@ Hand-Object Interaction loss.
 from typing import Dict, Tuple
 
 import torch
+from torch.distributions import kl_divergence
 
 from model.affine_mano import AffineMANO
 
@@ -151,23 +152,22 @@ class CHOIRLoss(torch.nn.Module):
         }
         anchor_positions_pred = None
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
-            # TODO: Refactor this shit
-            if epoch > 0 and epoch % 10 == 0 and not self._decayed:
-                self._kl_w = min(1e-5, self._kl_w * self._kl_decay)
-                self._decayed = True
-            elif epoch % 10 != 0:
-                self._decayed = False
+            kl_w = min(1e-3, self._kl_w * self._kl_decay ** (epoch // 10))
             if y_hat["posterior"][0] is not None:
-                losses["kl_div"] = (
-                    # kl_divergence(y_hat["posterior"], y_hat["prior"]).mean() * kl_w
-                    kl_normal(
-                        y_hat["posterior"][0],
-                        y_hat["posterior"][1],
-                        y_hat["prior"][0],
-                        y_hat["prior"][1],
+                official = (
+                    kl_divergence(
+                        torch.distributions.Normal(
+                            y_hat["posterior"][0], y_hat["posterior"][1]
+                        ),
+                        torch.distributions.Normal(
+                            y_hat["prior"][0], y_hat["prior"][1]
+                        ),
                     ).mean()
-                    * self._kl_w
+                    * kl_w
                 )
+                # unofficial = kl_normal( y_hat["posterior"][0], y_hat["posterior"][1], y_hat["prior"][0], y_hat["prior"][1],).mean() * kl_w
+                # assert torch.allclose(official, unofficial)
+                losses["kl_div"] = official
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
             B, P, D = orientations_pred.shape
