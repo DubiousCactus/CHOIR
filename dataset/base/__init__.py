@@ -18,6 +18,7 @@ import itertools
 import os
 import os.path as osp
 import pickle
+import random
 from typing import Any, List, Optional, Tuple
 
 import blosc
@@ -126,7 +127,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 torch.arange(0, 32).repeat((self._bps_dim // 32,)).cpu().numpy()
             )
             if random_anchor_assignment:
-                np.Random(1995).random.shuffle(anchor_indices)
+                random.Random(1995).shuffle(anchor_indices)
             with open(anchor_indices_path, "wb") as f:
                 pickle.dump(anchor_indices, f)
         self._bps = bps

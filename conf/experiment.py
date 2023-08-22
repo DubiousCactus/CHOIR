@@ -81,7 +81,7 @@ class GraspingDatasetConf:
     rescale: str = "none"  # pair, fixed, none
     remap_bps_distances: bool = True
     exponential_map_w: float = 5.0
-    random_anchor_assignment = True
+    random_anchor_assignment: bool = True
 
 
 # Pre-set the group for store's dataset entries
