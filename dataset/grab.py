@@ -37,7 +37,12 @@ from trimesh import Trimesh
 from conf.project import ANSI_COLORS, Theme
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda, to_cuda_
-from utils.dataset import compute_choir, get_scalar, pack_and_pad_sample_label
+from utils.dataset import (
+    augment_hand_object_pose_grab,
+    compute_choir,
+    get_scalar,
+    pack_and_pad_sample_label,
+)
 from utils.visualization import ScenePicAnim, visualize_MANO
 
 from .base import BaseDataset
@@ -444,28 +449,26 @@ class GRABDataset(BaseDataset):
                 # translation. We can use pytorch3d's transform_points for this.
                 gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
                 # ============ Shift the pair to the object's center ============
-                if self._center_on_object_com:
-                    # TODO: if self._center_on_object_com and not (self._augment and k > 0):
+                # if self._center_on_object_com:
+                if self._center_on_object_com and not (self._augment and k > 0):
                     obj_center = torch.from_numpy(obj_mesh.get_center())
                     obj_mesh.translate(-obj_center)
                     obj_ptcld -= obj_center.to(obj_ptcld.device)
                     gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
                 # ================================================================
-                gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
-                    gt_params, grasping_hand
-                )
                 n_augs = self._n_augs if self._augment else 1
                 if n_augs > 1:
                     raise NotImplementedError("Augmentation not implemented yet.")
                 for k in range(n_augs + 1):
                     # =================== Apply augmentation =========================
-                    # TODO: Get gt_hTm first (if I manage to use AffineMANO) or implement another
-                    # augmentation function for SMPLX-MANO
-                    # if self._augment and k > 0:
-                    # obj_mesh, gt_hTm = augment_hand_object_pose(
-                    # obj_mesh, gt_hTm, around_z=False
-                    # )
+                    if self._augment and k > 0:
+                        obj_mesh, gt_params = augment_hand_object_pose_grab(
+                            obj_mesh, gt_params, self._use_affine_mano, around_z=False
+                        )
                     # =================================================================
+                    gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
+                        gt_params, grasping_hand
+                    )
                     gt_anchors = self._affine_mano.get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
                     gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)

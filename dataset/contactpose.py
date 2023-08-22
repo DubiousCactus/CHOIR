@@ -30,13 +30,12 @@ from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
-from utils.dataset import (
-    augment_hand_object_pose,
-    compute_choir,
-    get_scalar,
-    pack_and_pad_sample_label,
+from utils.dataset import augment_hand_object_pose, compute_choir, get_scalar
+from utils.visualization import (
+    visualize_CHOIR,
+    visualize_CHOIR_prediction,
+    visualize_MANO,
 )
-from utils.visualization import visualize_CHOIR_prediction, visualize_MANO
 
 
 class ContactPoseDataset(BaseDataset):
@@ -145,7 +144,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {} if not self._use_contactopt_splits else []
-        n_participants = 15 if tiny else 51
+        n_participants = 5 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
@@ -315,10 +314,10 @@ class ContactPoseDataset(BaseDataset):
             self._cache_dir,
             "samples_and_labels",
             # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
-            +f"perturbed-{self._perturbation_level}_"
+            f"perturbed-{self._perturbation_level}_"
             + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"{'right-hand' if self._right_hand_only else 'both-hands'}",
-            +f"{self._bps_dim}-bps_"
+            + f"{'right-hand' if self._right_hand_only else 'both-hands'}"
+            + f"{self._bps_dim}-bps_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{self._rescale}_rescaled_"
             + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
@@ -482,25 +481,25 @@ class ContactPoseDataset(BaseDataset):
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
-                        sample, label = pack_and_pad_sample_label(
-                            theta,
-                            beta,
-                            rot_6d,
-                            trans,
-                            choir,
-                            rescaled_ref_pts,
-                            scalar,
-                            hand_idx,
-                            gt_choir,
-                            gt_rescaled_ref_pts,
-                            gt_scalar,
-                            gt_joints,
-                            gt_anchors,
-                            gt_theta,
-                            gt_beta,
-                            gt_rot_6d,
-                            gt_trans,
-                            self._bps_dim,
+                        sample, label = (
+                            choir.squeeze().cpu().numpy(),
+                            rescaled_ref_pts.squeeze().cpu().numpy(),
+                            scalar.cpu().numpy(),
+                            np.ones((1)) if hand_idx == "right" else np.zeros((1)),
+                            theta.squeeze().cpu().numpy(),
+                            beta.squeeze().cpu().numpy(),
+                            rot_6d.squeeze().cpu().numpy(),
+                            trans.squeeze().cpu().numpy(),
+                        ), (
+                            gt_choir.squeeze().cpu().numpy(),
+                            gt_rescaled_ref_pts.squeeze().cpu().numpy(),
+                            gt_scalar.cpu().numpy(),
+                            gt_joints.squeeze().cpu().numpy(),
+                            gt_anchors.squeeze().cpu().numpy(),
+                            gt_theta.squeeze().cpu().numpy(),
+                            gt_beta.squeeze().cpu().numpy(),
+                            gt_rot_6d.squeeze().cpu().numpy(),
+                            gt_trans.squeeze().cpu().numpy(),
                         )
                         # =================================================================
 
@@ -514,18 +513,18 @@ class ContactPoseDataset(BaseDataset):
                             print(
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
-                            # visualize_CHOIR(
-                            # choir.squeeze(0),
-                            # self._bps,
-                            # self._anchor_indices,
-                            # scalar,
-                            # verts.squeeze(0),
-                            # anchors.squeeze(0),
-                            # obj_mesh,
-                            # obj_ptcld,
-                            # gt_rescaled_ref_pts.squeeze(0),
-                            # affine_mano,
-                            # )
+                            visualize_CHOIR(
+                                choir.squeeze(0),
+                                self._bps,
+                                self._anchor_indices,
+                                scalar,
+                                verts.squeeze(0),
+                                anchors.squeeze(0),
+                                obj_mesh,
+                                obj_ptcld,
+                                gt_rescaled_ref_pts.squeeze(0),
+                                affine_mano,
+                            )
                             faces = affine_mano.faces
                             gt_MANO_mesh = Trimesh(
                                 gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()

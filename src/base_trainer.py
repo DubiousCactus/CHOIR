@@ -17,13 +17,13 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 
-import wandb
 from conf import project as project_conf
 from utils import blink_pbar, to_cuda, to_cuda_, update_pbar_str
 from utils.helpers import BestNModelSaver
@@ -65,6 +65,7 @@ class BaseTrainer:
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
         self._bps = to_cuda_(train_loader.dataset.bps)
+        self._anchor_indices = to_cuda_(train_loader.dataset.anchor_indices)
         self._remap_bps_distances = train_loader.dataset.remap_bps_distances
         self._exponential_map_w = train_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0

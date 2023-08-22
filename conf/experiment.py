@@ -124,7 +124,7 @@ class DataloaderConf:
     drop_last: bool = True
     shuffle: bool = True
     num_workers: int = 1
-    pin_memory: bool = True
+    pin_memory: bool = False
     n_batches: Optional[int] = None
 
 

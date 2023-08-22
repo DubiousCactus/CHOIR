@@ -23,10 +23,7 @@ import conf.project as project_conf
 from model.affine_mano import AffineMANO
 from utils import to_cuda
 from utils.dataset import drop_fingertip_joints, snap_to_original_mano
-from utils.training import (
-    get_dict_from_sample_and_label_tensors,
-    optimize_pose_pca_from_choir,
-)
+from utils.training import optimize_pose_pca_from_choir
 
 
 def add_choir_to_plot(
@@ -102,8 +99,9 @@ def visualize_model_predictions_with_multiple_views(
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
-    x, y, mesh_pths = batch  # type: ignore
-    samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=theta_dim)
+    # x, y, mesh_pths = batch  # type: ignore
+    # samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=theta_dim)
+    samples, labels, _ = batch
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
         input_scalar = samples["scalar"][0].view(-1, *samples["scalar"].shape[2:])

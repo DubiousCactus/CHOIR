@@ -17,7 +17,12 @@ import open3d
 import torch
 from bps_torch.bps import bps_torch
 from pytorch3d.structures import Pointclouds
-from pytorch3d.transforms import Transform3d, random_rotation
+from pytorch3d.transforms import (
+    Transform3d,
+    axis_angle_to_matrix,
+    matrix_to_axis_angle,
+    random_rotation,
+)
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
 from utils import to_cuda
@@ -430,6 +435,42 @@ def augment_hand_object_pose(
     r_hTm = R4.to(hTm.device) @ hTm
     hTm = r_hTm
     return obj_mesh, hTm
+
+
+def augment_hand_object_pose_grab(
+    obj_mesh: open3d.geometry.TriangleMesh,
+    params: Dict[str, torch.Tensor],
+    use_affine_mano: bool,
+    around_z: bool = True,
+) -> None:
+    """
+    Augment the object mesh with a random rotation and translation.
+    """
+    # Randomly rotate the object and hand meshes around the z-axis only:
+    if around_z:
+        R = open3d.geometry.get_rotation_matrix_from_xyz(
+            np.array([0, 0, np.random.uniform(0, 2 * np.pi)])
+        )
+    else:
+        R = random_rotation().cpu().numpy()
+    # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
+    # are expressed w.r.t. the object center. Otherwise, weird things happen.
+    rotate_origin = obj_mesh.get_center()
+    obj_mesh.translate(-rotate_origin)
+    # Rotate the object and hand
+    obj_mesh.rotate(R, np.array([0, 0, 0]))
+    if use_affine_mano:
+        params["theta"][..., :3] = matrix_to_axis_angle(
+            torch.from_numpy(R).float() @ axis_angle_to_matrix(params["theta"][..., :3])
+        )
+    else:
+        params["rot"][..., :3] = matrix_to_axis_angle(
+            torch.from_numpy(R).float() @ axis_angle_to_matrix(params["theta"][..., :3])
+        )
+    params["trans"] -= (
+        torch.from_numpy(rotate_origin).to(params["trans"].device).float()
+    )
+    return obj_mesh, params
 
 
 def drop_fingertip_joints(joints: torch.Tensor, definition="snap") -> torch.Tensor:

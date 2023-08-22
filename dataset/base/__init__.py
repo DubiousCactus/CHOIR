@@ -307,11 +307,72 @@ class BaseDataset(TaskSet, abc.ABC):
             ).item()
             samples_paths = noisy_grasp_sequence[start_idx : start_idx + n_context]
 
-        samples, labels = [], []
+        (
+            choir,
+            rescaled_ref_pts,
+            scalar,
+            hand_idx,
+            theta,
+            beta,
+            rot_6d,
+            trans,
+            gt_choir,
+            gt_rescaled_ref_pts,
+            gt_scalar,
+            gt_joints,
+            gt_anchors,
+            gt_theta,
+            gt_beta,
+            gt_rot_6d,
+            gt_trans,
+            mesh_pths,
+        ) = ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
+
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
                 compressed_pkl = f.read()
                 sample, label, mesh_pth = pickle.loads(blosc.decompress(compressed_pkl))
-            samples.append(sample)
-            labels.append(label)
-        return torch.stack(samples), torch.stack(labels), mesh_pth
+            choir.append(sample[0])
+            rescaled_ref_pts.append(sample[1])
+            scalar.append(sample[2])
+            hand_idx.append(sample[3])
+            theta.append(sample[4])
+            beta.append(sample[5])
+            rot_6d.append(sample[6])
+            trans.append(sample[7])
+            gt_choir.append(label[0])
+            gt_rescaled_ref_pts.append(label[1])
+            gt_scalar.append(label[2])
+            gt_joints.append(label[3])
+            gt_anchors.append(label[4])
+            gt_theta.append(label[5])
+            gt_beta.append(label[6])
+            gt_rot_6d.append(label[7])
+            gt_trans.append(label[8])
+            mesh_pths.append(mesh_pth)
+        sample = {
+            "choir": torch.from_numpy(np.array([a for a in choir])),
+            "rescaled_ref_pts": torch.from_numpy(
+                np.array([a for a in rescaled_ref_pts])
+            ),
+            "scalar": torch.from_numpy(np.array([a.squeeze() for a in scalar])),
+            "is_rhand": torch.from_numpy(np.array([a for a in hand_idx])),
+            "theta": torch.from_numpy(np.array([a for a in theta])),
+            "beta": torch.from_numpy(np.array([a for a in beta])),
+            "rot": torch.from_numpy(np.array([a for a in rot_6d])),
+            "trans": torch.from_numpy(np.array([a for a in trans])),
+        }
+        label = {
+            "choir": torch.from_numpy(np.array([a for a in gt_choir])),
+            "rescaled_ref_pts": torch.from_numpy(
+                np.array([a for a in gt_rescaled_ref_pts])
+            ),
+            "scalar": torch.from_numpy(np.array([a.squeeze() for a in gt_scalar])),
+            "joints": torch.from_numpy(np.array([a for a in gt_joints])),
+            "anchors": torch.from_numpy(np.array([a for a in gt_anchors])),
+            "theta": torch.from_numpy(np.array([a for a in gt_theta])),
+            "beta": torch.from_numpy(np.array([a for a in gt_beta])),
+            "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
+            "trans": torch.from_numpy(np.array([a for a in gt_trans])),
+        }
+        return sample, label, mesh_pths

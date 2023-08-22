@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 
 from src.base_trainer import BaseTrainer
 from utils import to_cuda
-from utils.training import get_dict_from_sample_and_label_tensors
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
@@ -58,6 +57,7 @@ class MultiViewTrainer(BaseTrainer):
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
+            anchor_indices=self._anchor_indices,
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
             dataset=self._train_loader.dataset.name,
@@ -78,10 +78,11 @@ class MultiViewTrainer(BaseTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        x, y, _ = batch
-        samples, labels = get_dict_from_sample_and_label_tensors(
-            x, y, theta_dim=27
-        )  # TODO: theta_dim is : GRAB: 27 if affine_mano 24 if SMPLX, ContactPose: 18
+        # # x, y, _ = batch
+        samples, labels, _ = batch
+        # samples, labels = get_dict_from_sample_and_label_tensors(
+        # x, y, theta_dim=27
+        # )  # TODO: theta_dim is : GRAB: 27 if affine_mano 24 if SMPLX, ContactPose: 18
         # If we're fine tuning, we'll skip the labels and train the prior!
         y_hat = self._model(
             samples["choir"], labels["choir"] if not self._fine_tune else None
