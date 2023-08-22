@@ -10,7 +10,6 @@ GRAB dataset customized for the project.
 """
 
 
-import hashlib
 import os
 import os.path as osp
 import pickle
@@ -76,6 +75,7 @@ class GRABDataset(BaseDataset):
         exponential_map_w: float = 5.0,
         use_affine_mano: bool = False,
         use_official_splits: bool = True,
+        random_anchor_assignment: bool = False,
     ) -> None:
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
@@ -124,6 +124,7 @@ class GRABDataset(BaseDataset):
             center_on_object_com=center_on_object_com,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
+            random_anchor_assignment=random_anchor_assignment,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -335,8 +336,8 @@ class GRABDataset(BaseDataset):
         samples_labels_pickle_pth = osp.join(
             self._cache_dir,
             "samples_and_labels",
-            f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
-            + f"perturbed-{self._perturbation_level}_"
+            # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
+            +f"perturbed-{self._perturbation_level}_"
             + f"{self._bps_dim}-bps_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{self._rescale}_rescaled_"
@@ -344,7 +345,10 @@ class GRABDataset(BaseDataset):
             + (f"{self._exponential_map_w}_" if self._remap_bps_distances else "")
             + f"{'affine_mano' if self._use_affine_mano else 'smplx'}_"
             + f"{'static' if self._static_grasps_only else 'dynamic'}_"
-            + f"{split}",
+            + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
+            + f"_{self._obj_ptcld_size}-obj-pts"
+            + f"{'right-hand' if self._right_hand_only else 'both-hands'}"
+            + f"_{split}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)

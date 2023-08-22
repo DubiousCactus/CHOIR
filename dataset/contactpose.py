@@ -69,6 +69,7 @@ class ContactPoseDataset(BaseDataset):
         rescale: str = "none",
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
+        random_anchor_assignment: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -89,6 +90,8 @@ class ContactPoseDataset(BaseDataset):
                 noisy_samples_per_grasp = 16
             else:
                 noisy_samples_per_grasp = 4
+        if split != "train":
+            noisy_samples_per_grasp = 4
 
         super().__init__(
             dataset_name="ContactPose",
@@ -105,6 +108,7 @@ class ContactPoseDataset(BaseDataset):
             center_on_object_com=center_on_object_com,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
+            random_anchor_assignment=random_anchor_assignment,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -144,7 +148,7 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         cp_dataset = {} if not self._use_contactopt_splits else []
-        n_participants = 5 if tiny else 51
+        n_participants = 15 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
@@ -316,13 +320,14 @@ class ContactPoseDataset(BaseDataset):
             # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
             f"perturbed-{self._perturbation_level}_"
             + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"{'right-hand' if self._right_hand_only else 'both-hands'}"
-            + f"{self._bps_dim}-bps_"
-            + f"{'object-centered_' if self._center_on_object_com else ''}"
-            + f"{self._rescale}_rescaled_"
-            + f"{'exponential_mapped' if self._remap_bps_distances else ''}"
-            + (f"{self._exponential_map_w}_" if self._remap_bps_distances else "")
-            + f"{split}{'_augmented' if self._augment else ''}",
+            + f"_{'right-hand' if self._right_hand_only else 'both-hands'}"
+            + f"_{self._bps_dim}-bps"
+            + f"{'_object-centered' if self._center_on_object_com else ''}"
+            + f"_{self._rescale}-rescaled"
+            + f"{'_exponential_mapped' if self._remap_bps_distances else ''}"
+            + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
+            + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
+            + f"_{split}{'-augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)

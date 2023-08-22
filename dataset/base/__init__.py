@@ -49,6 +49,7 @@ class BaseDataset(TaskSet, abc.ABC):
         rescale: str,
         remap_bps_distances: bool,
         exponential_map_w: float,
+        random_anchor_assignment: bool,
         dataset_name: str,
         noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
@@ -88,6 +89,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._n_augs = n_augs
         self._bps_dim = bps_dim
         self._seq_len = noisy_samples_per_grasp
+        self._random_anchor_assignment = random_anchor_assignment
         self._seq_lengths = []  # For variable length sequences (GRAB)
         self._dataset_name = dataset_name
         # self._perturbations = [] # TODO: Implement
@@ -100,7 +102,9 @@ class BaseDataset(TaskSet, abc.ABC):
             get_original_cwd(), "data", f"bps_{self._bps_dim}_{rescale}-rescaled.pkl"
         )
         anchor_indices_path = osp.join(
-            get_original_cwd(), "data", f"anchor_indices_{self._bps_dim}.pkl"
+            get_original_cwd(),
+            "data",
+            f"anchor_indices_{self._bps_dim}_{'random' if random_anchor_assignment else 'ordered'}.pkl",
         )
         if osp.isfile(bps_path):
             with open(bps_path, "rb") as f:
@@ -121,7 +125,8 @@ class BaseDataset(TaskSet, abc.ABC):
             anchor_indices = (
                 torch.arange(0, 32).repeat((self._bps_dim // 32,)).cpu().numpy()
             )
-            np.random.shuffle(anchor_indices)
+            if random_anchor_assignment:
+                np.random.shuffle(anchor_indices)
             with open(anchor_indices_path, "wb") as f:
                 pickle.dump(anchor_indices, f)
         self._bps = bps

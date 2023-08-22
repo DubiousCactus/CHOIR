@@ -78,11 +78,7 @@ class MultiViewTrainer(BaseTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        # # x, y, _ = batch
         samples, labels, _ = batch
-        # samples, labels = get_dict_from_sample_and_label_tensors(
-        # x, y, theta_dim=27
-        # )  # TODO: theta_dim is : GRAB: 27 if affine_mano 24 if SMPLX, ContactPose: 18
         # If we're fine tuning, we'll skip the labels and train the prior!
         y_hat = self._model(
             samples["choir"], labels["choir"] if not self._fine_tune else None

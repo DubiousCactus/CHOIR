@@ -81,6 +81,7 @@ class GraspingDatasetConf:
     rescale: str = "none"  # pair, fixed, none
     remap_bps_distances: bool = True
     exponential_map_w: float = 5.0
+    random_anchor_assignment = True
 
 
 # Pre-set the group for store's dataset entries
@@ -89,7 +90,7 @@ dataset_store(
     pbuilds(
         ContactPoseDataset,
         builds_bases=(GraspingDatasetConf,),
-        noisy_samples_per_grasp=30,
+        noisy_samples_per_grasp=16,
         use_contactopt_splits=False,
     ),
     name="contactpose",

@@ -284,17 +284,6 @@ class CHOIRFittingLoss(torch.nn.Module):
             bps.shape[0] == anchors.shape[0]
         ), "optimize_pose_pca_from_choir(): BPS and anchors must have the same batch size"
         anchor_distances = torch.cdist(bps, anchors, p=2)
-        # anchor_ids = (
-        # torch.arange(
-        # 0,
-        # anchors.shape[1],
-        # device=choir.device,
-        # )
-        # .repeat((choir.shape[1] // 32,))
-        # .unsqueeze(0)
-        # .repeat((choir.shape[0], 1))
-        # .unsqueeze(-1)
-        # )
         anchor_ids = (
             anchor_indices.unsqueeze(0)
             .repeat((choir.shape[0], 1))

@@ -127,16 +127,6 @@ def compute_choir(
     assert (
         bps.shape[1] % 32 == 0
     ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32."
-    # anchor_ids = (
-    # torch.arange(
-    # 0,
-    # rescaled_anchors.shape[1],
-    # device=bps.device,
-    # )
-    # .repeat((bps.shape[1] // 32,))
-    # .unsqueeze(0)
-    # .repeat((B, 1))
-    # )
     anchor_ids = anchor_indices.unsqueeze(0).repeat((B, 1))
     distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
     choir = torch.cat(
