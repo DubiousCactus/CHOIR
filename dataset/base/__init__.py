@@ -126,7 +126,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 torch.arange(0, 32).repeat((self._bps_dim // 32,)).cpu().numpy()
             )
             if random_anchor_assignment:
-                np.random.shuffle(anchor_indices)
+                np.Random(seed).random.shuffle(anchor_indices)
             with open(anchor_indices_path, "wb") as f:
                 pickle.dump(anchor_indices, f)
         self._bps = bps
