@@ -22,10 +22,7 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import to_cuda, to_cuda_
-from utils.training import (
-    get_dict_from_sample_and_label_tensors,
-    optimize_pose_pca_from_choir,
-)
+from utils.training import optimize_pose_pca_from_choir
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
@@ -370,8 +367,7 @@ class MultiViewTester(MultiViewTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        x, y, mesh_pths = batch  # type: ignore
-        samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=27)
+        samples, labels, mesh_pths = batch  # type: ignore
         # (
         # anchor_error_x,
         # mpjpe_x,
