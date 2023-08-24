@@ -62,13 +62,13 @@ class Aggregate_VED(torch.nn.Module):
         self.mhca_aggregator = (
             AttentionAggregator(
                 "multi_head",
-                multi_head_use_bias=True,
+                multi_head_use_bias=False,
                 n_heads=8,
                 k_dim_in=(self.choir_dim - 1)
                 * bps_dim,  # -1 cause not including the object
-                k_dim_out=256,
+                k_dim_out=1024,
                 q_dim_in=(self.choir_dim - 1) * bps_dim,
-                q_dim_out=256,
+                q_dim_out=1024,
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )
@@ -144,11 +144,7 @@ class Aggregate_VED(torch.nn.Module):
             torch.nn.Linear(
                 latent_dim
                 + (bps_dim if decoder_use_obj else 0)
-                + (
-                    bps_dim * 2
-                    if predict_deltas or self.frame_to_predict == "last"
-                    else 0
-                ),
+                + (bps_dim * 2 if predict_deltas or frame_to_predict == "last" else 0),
                 decoder_layer_dims[0],
             ),
         ]
@@ -310,11 +306,7 @@ class Aggregate_VED(torch.nn.Module):
                 # Skip connections mess everything up once we add a dependency on the field in the
                 # decoder, so we only use them for the 2nd layer (the first being fed [z, field])
                 self.skip_connections
-                and (
-                    i > 0
-                    if not (self.predict_deltas or self.frame_to_predict == "last")
-                    else i in [1, 2]
-                )
+                and (i > 0 if not (self.predict_deltas) else i in [1, 2])
             ):  # Skip the first layer since Z is already the input
                 x += z_layer(z)
             if self.decoder_dropout:
