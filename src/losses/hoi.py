@@ -12,7 +12,6 @@ Hand-Object Interaction loss.
 from typing import Dict, Tuple
 
 import torch
-from torch.distributions import kl_divergence
 
 from model.affine_mano import AffineMANO
 
@@ -28,7 +27,6 @@ def kl_normal(qm, qv, pm, pv):
         qv: tensor: (batch, dim): q variance
         pm: tensor: (batch, dim): p mean
         pv: tensor: (batch, dim): p variance
-    ​
     Return:
         kl: tensor: (batch,): kl between each sample
     """
@@ -152,22 +150,41 @@ class CHOIRLoss(torch.nn.Module):
         }
         anchor_positions_pred = None
         if y_hat["posterior"] is not None and y_hat["prior"] is not None:
-            kl_w = min(1e-3, self._kl_w * self._kl_decay ** (epoch // 10))
+            kl_w = min(1e-5, self._kl_w * self._kl_decay ** (epoch // 10))
             if y_hat["posterior"][0] is not None:
-                official = (
-                    kl_divergence(
-                        torch.distributions.Normal(
-                            y_hat["posterior"][0], y_hat["posterior"][1]
-                        ),
-                        torch.distributions.Normal(
-                            y_hat["prior"][0], y_hat["prior"][1]
-                        ),
+                losses["kl_div"] = (
+                    kl_normal(
+                        y_hat["posterior"][0],
+                        y_hat["posterior"][1],
+                        y_hat["prior"][0],
+                        y_hat["prior"][1],
                     ).mean()
                     * kl_w
                 )
-                # unofficial = kl_normal( y_hat["posterior"][0], y_hat["posterior"][1], y_hat["prior"][0], y_hat["prior"][1],).mean() * kl_w
-                # assert torch.allclose(official, unofficial)
-                losses["kl_div"] = official
+                # Strangely, I get much faster/better convergence with kl_normal() than with
+                # Pytorch's kl_divergence() function, EVEN THOUGH the following assertion passes
+                # (there is a negligible difference though, within atol or rtol). Why is that???
+                # Like for real, the loss curves look SO DIFFERENT. They seem to converge to a
+                # close point but kl_normal() might give me better results in the end (I need
+                # thorough testing).
+                # Investigate *after* the deadline ;)
+                # Well for one the implementation *actually* differs from the official one. But
+                # then who made a mistake? And maybe there's no mistake but maybe it's from p to q
+                # and not q to p that we measure the KLdiv... Although in HUMOR paper it's clearly
+                # q to p (posterior to prior).
+                # official = (
+                # kl_divergence(
+                # torch.distributions.Normal(
+                # y_hat["posterior"][0], y_hat["posterior"][1]
+                # ),
+                # torch.distributions.Normal(
+                # y_hat["prior"][0], y_hat["prior"][1]
+                # ),
+                # ).mean()
+                # * kl_w
+                # )
+                # # unofficial = kl_normal( y_hat["posterior"][0], y_hat["posterior"][1], y_hat["prior"][0], y_hat["prior"][1],).mean() * kl_w
+                # # assert torch.allclose(official, unofficial)
         if self._predict_anchor_orientation or self._predict_anchor_position:
             raise NotImplementedError
             B, P, D = orientations_pred.shape
