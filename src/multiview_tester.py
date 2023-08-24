@@ -146,8 +146,8 @@ class MultiViewTester(MultiViewTrainer):
                     anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
                     max_iterations=2000,
-                    loss_thresh=1e-7,
-                    lr=5e-1,
+                    loss_thresh=1e-6,
+                    lr=8e-2,
                     is_rhand=samples["is_rhand"],
                     use_smplx=use_smplx,
                     dataset=self._data_loader.dataset.name,
@@ -160,7 +160,7 @@ class MultiViewTester(MultiViewTrainer):
                         in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
                     },
                     beta_w=1e-4,
-                    theta_w=1e-8,
+                    theta_w=1e-7,
                     choir_w=1000,
                 )
             # if use_prior:
