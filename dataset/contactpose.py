@@ -333,7 +333,7 @@ class ContactPoseDataset(BaseDataset):
             os.makedirs(samples_labels_pickle_pth)
         affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
 
-        n_augs = self._n_augs if self._augment else 1
+        n_augs = self._n_augs if self._augment else 0
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")

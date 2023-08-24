@@ -17,13 +17,11 @@ import open3d
 import torch
 from bps_torch.bps import bps_torch
 from pytorch3d.structures import Pointclouds
-from pytorch3d.transforms import (
-    Transform3d,
-    axis_angle_to_matrix,
-    matrix_to_axis_angle,
-    random_rotation,
+from pytorch3d.transforms import Transform3d, random_rotation
+from pytorch3d.transforms.rotation_conversions import (
+    matrix_to_rotation_6d,
+    rotation_6d_to_matrix,
 )
-from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 
 from utils import to_cuda
 
@@ -449,17 +447,27 @@ def augment_hand_object_pose_grab(
     obj_mesh.translate(-rotate_origin)
     # Rotate the object and hand
     obj_mesh.rotate(R, np.array([0, 0, 0]))
+    # I'm not sure why I need to invert the rotation here but it works. I could figure it out if I
+    # had extra time but I don't. It might just be because the "rot" parameters are already the
+    # inverse of the rotation applied to the object mesh when the hand is brought to the object
+    # frame...
+    rot_transform = Transform3d().rotate(torch.from_numpy(R).float()).inverse().cuda()
     if use_affine_mano:
-        params["theta"][..., :3] = matrix_to_axis_angle(
-            torch.from_numpy(R).float() @ axis_angle_to_matrix(params["theta"][..., :3])
+        transform = (
+            Transform3d()
+            .rotate(rotation_6d_to_matrix(params["rot"]))
+            .translate(params["trans"])
+            .cuda()
         )
+        full_transform = Transform3d().compose(transform, rot_transform).cuda()
+        params["trans"] = full_transform.get_matrix()[:, 3, :3]
+        params["rot"] = matrix_to_rotation_6d(full_transform.get_matrix()[:, :3, :3])
     else:
-        params["rot"][..., :3] = matrix_to_axis_angle(
-            torch.from_numpy(R).float() @ axis_angle_to_matrix(params["theta"][..., :3])
-        )
-    params["trans"] -= (
-        torch.from_numpy(rotate_origin).to(params["trans"].device).float()
-    )
+        # TODO: Fix this. I prefer to stick with AffineMANO for now since it's in line with
+        # ContactPose experiments and everything is simpler. Plus, TTO on a continuous 6D
+        # rotation might be easier than for axis-angle but maybe not. But if I add a MANO
+        # prediction objective to the model then yeah it'd be an advantage to use rot6D.
+        raise NotImplementedError("SMPL-X parameters augmentation not working")
     return obj_mesh, params
 
 

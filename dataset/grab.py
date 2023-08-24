@@ -36,12 +36,7 @@ from trimesh import Trimesh
 from conf.project import ANSI_COLORS, Theme
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda, to_cuda_
-from utils.dataset import (
-    augment_hand_object_pose_grab,
-    compute_choir,
-    get_scalar,
-    pack_and_pad_sample_label,
-)
+from utils.dataset import augment_hand_object_pose_grab, compute_choir, get_scalar
 from utils.visualization import ScenePicAnim, visualize_MANO
 
 from .base import BaseDataset
@@ -337,7 +332,7 @@ class GRABDataset(BaseDataset):
             self._cache_dir,
             "samples_and_labels",
             # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
-            +f"perturbed-{self._perturbation_level}_"
+            f"perturbed-{self._perturbation_level}_"
             + f"{self._bps_dim}-bps_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{self._rescale}_rescaled_"
@@ -356,6 +351,7 @@ class GRABDataset(BaseDataset):
         choir_paths = []
         print("[*] Computing CHOIR fields...")
         dataset_mpjpe = MeanMetric()
+        n_augs = self._n_augs if self._augment else 0
         for mesh_pth, (grasp_name, grasp_path, frame_mask) in tqdm(
             zip(objects, grasp_sequences), total=len(objects)
         ):
@@ -438,11 +434,6 @@ class GRABDataset(BaseDataset):
                     continue
 
                 obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                obj_ptcld = torch.from_numpy(
-                    np.asarray(
-                        obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
-                    )
-                )
                 visualize = self._debug and (random.Random().random() < 0.5)
                 has_visualized = False
                 # ================== Original Hand-Object Pair ==================
@@ -452,20 +443,20 @@ class GRABDataset(BaseDataset):
                 # global orientation and translation to the hand's global orientation and
                 # translation. We can use pytorch3d's transform_points for this.
                 gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
-                # ============ Shift the pair to the object's center ============
-                # if self._center_on_object_com:
-                if self._center_on_object_com and not (self._augment and k > 0):
-                    obj_center = torch.from_numpy(obj_mesh.get_center())
-                    obj_mesh.translate(-obj_center)
-                    obj_ptcld -= obj_center.to(obj_ptcld.device)
-                    gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
-                # ================================================================
-                n_augs = self._n_augs if self._augment else 1
-                if n_augs > 1:
-                    raise NotImplementedError("Augmentation not implemented yet.")
+
+                # TODO: Refactor this because it can be sped up by a lot. There is a lot of redundant
+                # computation (same for ContactPose) that's due to many incremental changes to this in
+                # haste and not enough time to refactor it properly :( Research code really sucks!
                 for k in range(n_augs + 1):
+                    # ============ Shift the pair to the object's center ============
+                    # if self._center_on_object_com:
+                    if self._center_on_object_com and not (self._augment and k > 0):
+                        obj_center = torch.from_numpy(obj_mesh.get_center())
+                        obj_mesh.translate(-obj_center)
+                        gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
+                    # ================================================================
                     # =================== Apply augmentation =========================
-                    if self._augment and k > 0:
+                    if k > 0:
                         obj_mesh, gt_params = augment_hand_object_pose_grab(
                             obj_mesh, gt_params, self._use_affine_mano, around_z=False
                         )
@@ -474,6 +465,11 @@ class GRABDataset(BaseDataset):
                         gt_params, grasping_hand
                     )
                     gt_anchors = self._affine_mano.get_anchors(gt_verts)
+                    obj_ptcld = torch.from_numpy(
+                        np.asarray(
+                            obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
+                        )
+                    )
                     # ================== Rescaled Hand-Object Pair ==================
                     gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
 
@@ -559,28 +555,47 @@ class GRABDataset(BaseDataset):
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                         )
-                        # TODO: Test pack_and_pad_sample_label work with different sizes of theta/beta! (pytorch < 2.0)
-                        sample, label = pack_and_pad_sample_label(
-                            params["theta"],
-                            params["beta"],
-                            params["rot"],
-                            params["trans"],
-                            choir,
-                            rescaled_ref_pts,
-                            scalar,
-                            torch.ones((1, 1)).cuda()
-                            if grasping_hand == "rhand"
-                            else torch.zeros((1, 1)).cuda(),  # (1, 1)
-                            gt_choir[i],
-                            gt_rescaled_ref_pts,
-                            gt_scalar,
-                            gt_joints[i],
-                            gt_anchors[i],
-                            gt_params_frame["theta"],
-                            gt_params_frame["beta"],
-                            gt_params_frame["rot"],
-                            gt_params_frame["trans"],
-                            self._bps_dim,
+                        # sample, label = pack_and_pad_sample_label(
+                        # params["theta"],
+                        # params["beta"],
+                        # params["rot"],
+                        # params["trans"],
+                        # choir,
+                        # rescaled_ref_pts,
+                        # scalar,
+                        # torch.ones((1, 1)).cuda()
+                        # if grasping_hand == "rhand"
+                        # else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                        # gt_choir[i],
+                        # gt_rescaled_ref_pts,
+                        # gt_scalar,
+                        # gt_joints[i],
+                        # gt_anchors[i],
+                        # gt_params_frame["theta"],
+                        # gt_params_frame["beta"],
+                        # gt_params_frame["rot"],
+                        # gt_params_frame["trans"],
+                        # self._bps_dim,
+                        # )
+                        sample, label = (
+                            choir.squeeze().cpu().numpy(),
+                            rescaled_ref_pts.squeeze().cpu().numpy(),
+                            scalar.cpu().numpy(),
+                            np.ones((1)) if grasping_hand == "rhand" else np.zeros((1)),
+                            params["theta"].squeeze().cpu().numpy(),
+                            params["beta"].squeeze().cpu().numpy(),
+                            params["rot"].squeeze().cpu().numpy(),
+                            params["trans"].squeeze().cpu().numpy(),
+                        ), (
+                            gt_choir[i].squeeze().cpu().numpy(),
+                            gt_rescaled_ref_pts.squeeze().cpu().numpy(),
+                            gt_scalar.cpu().numpy(),
+                            gt_joints[i].squeeze().cpu().numpy(),
+                            gt_anchors[i].squeeze().cpu().numpy(),
+                            gt_params_frame["theta"].squeeze().cpu().numpy(),
+                            gt_params_frame["beta"].squeeze().cpu().numpy(),
+                            gt_params_frame["rot"].squeeze().cpu().numpy(),
+                            gt_params_frame["trans"].squeeze().cpu().numpy(),
                         )
                         # =================================================================
 
@@ -632,7 +647,7 @@ class GRABDataset(BaseDataset):
                             # remap_bps_distances=self._remap_bps_distances,
                             # exponential_map_w=self._exponential_map_w,
                             # )
-                            # has_visualized = True
+                            has_visualized = True
                     if len(choir_sequence_paths) >= 10:
                         choir_paths.append(choir_sequence_paths)
         print(
@@ -752,6 +767,7 @@ class GRABDataset(BaseDataset):
                 + f"_{self._test_objects}-test-held-out"
             )
             + f"_{self._obj_ptcld_size}-obj-pts"
+            + f"_{self._n_augs if self._augment else 0}-augs"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
         )
         if os.path.isfile(dataset_path):
@@ -799,7 +815,7 @@ class GRABDataset(BaseDataset):
                         object_path
                     ), f"object_path {object_path} is not a file"
 
-                    if self._debug:
+                    if self._debug and False:
                         scene_anim = ScenePicAnim()
                         obj_mesh = o3dio.read_triangle_mesh(object_path)
                         obj_mesh = Trimesh(
@@ -845,7 +861,7 @@ class GRABDataset(BaseDataset):
                     # between True values of the mask:
                     gap_cuts = np.where(np.diff(np.where(hand_contact_mask)[0]) > 1)[0]
                     if len(gap_cuts) == 0:
-                        if self._debug:
+                        if self._debug and False:
                             print(
                                 f"No gaps in the mask. Saving {frame_mask.sum()} frames."
                             )
@@ -857,7 +873,7 @@ class GRABDataset(BaseDataset):
 
                     else:
                         original_length = frame_mask.shape[0]
-                        if self._debug:
+                        if self._debug and False:
                             print(
                                 f"Gaps in the mask of length {original_length}: ",
                                 gap_cuts,
@@ -887,7 +903,7 @@ class GRABDataset(BaseDataset):
                             )
                             objects.append(object_path)
 
-                            if self._debug:
+                            if self._debug and False:
                                 print(
                                     f"Subsequence {i+1} of {len(gap_cuts)+1}: {T} frames (from {start} to {end})."
                                 )
@@ -935,15 +951,15 @@ class GRABDataset(BaseDataset):
                         T = new_frame_mask.sum()
                         if T < 10:
                             continue
-                        grasp_name = (
-                            f"{obj_name}_{p_num}_{intent}_subseq-{len(gap_cuts)}"
-                        )
-                        grasp_sequences.append(
-                            (grasp_name, fpath, new_frame_mask),
-                        )
-                        objects.append(object_path)
+                        n_augs = self._n_augs if self._augment else 0
+                        for k in range(n_augs + 1):
+                            grasp_name = f"{obj_name}_{p_num}_{intent}_subseq-{len(gap_cuts)}_aug-{k}"
+                            grasp_sequences.append(
+                                (grasp_name, fpath, new_frame_mask),
+                            )
+                            objects.append(object_path)
 
-                        if self._debug:
+                        if self._debug and False:
                             print(
                                 f"Subsequence {len(gap_cuts)+1} of {len(gap_cuts)+1}: {T} frames from {start} to {end}."
                             )
