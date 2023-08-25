@@ -447,209 +447,226 @@ class GRABDataset(BaseDataset):
                 # TODO: Refactor this because it can be sped up by a lot. There is a lot of redundant
                 # computation (same for ContactPose) that's due to many incremental changes to this in
                 # haste and not enough time to refactor it properly :( Research code really sucks!
-                for k in range(n_augs + 1):
-                    # ============ Shift the pair to the object's center ============
-                    # if self._center_on_object_com:
-                    if self._center_on_object_com and not (self._augment and k > 0):
-                        obj_center = torch.from_numpy(obj_mesh.get_center())
-                        obj_mesh.translate(-obj_center)
-                        gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
-                    # ================================================================
-                    # =================== Apply augmentation =========================
-                    if k > 0:
-                        obj_mesh, gt_params = augment_hand_object_pose_grab(
-                            obj_mesh, gt_params, self._use_affine_mano, around_z=False
-                        )
-                    # =================================================================
-                    gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
-                        gt_params, grasping_hand
+                print(grasp_name)
+                k = int(grasp_name.split("aug-")[-1].split(".")[0])
+                print(k)
+                # ============ Shift the pair to the object's center ============
+                # if self._center_on_object_com:
+                if self._center_on_object_com and not (self._augment and k > 0):
+                    obj_center = torch.from_numpy(obj_mesh.get_center())
+                    obj_mesh.translate(-obj_center)
+                    gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
+                # ================================================================
+                # =================== Apply augmentation =========================
+                if k > 0:
+                    obj_mesh, gt_params = augment_hand_object_pose_grab(
+                        obj_mesh, gt_params, self._use_affine_mano, around_z=False
                     )
-                    gt_anchors = self._affine_mano.get_anchors(gt_verts)
-                    obj_ptcld = torch.from_numpy(
-                        np.asarray(
-                            obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
-                        )
+                # =================================================================
+                gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
+                    gt_params, grasping_hand
+                )
+                gt_anchors = self._affine_mano.get_anchors(gt_verts)
+                obj_ptcld = torch.from_numpy(
+                    np.asarray(
+                        obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                     )
-                    # ================== Rescaled Hand-Object Pair ==================
-                    gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
+                )
+                # ================== Rescaled Hand-Object Pair ==================
+                gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
 
+                # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
+                # workers, but bps_torch is forcing my hand here so I might as well help it.
+                if self._debug:
+                    import timeit
+
+                    start = timeit.default_timer()
+                gt_choir, gt_rescaled_ref_pts = compute_choir(
+                    to_cuda_(obj_ptcld).unsqueeze(0),
+                    to_cuda_(gt_anchors),
+                    scalar=gt_scalar,
+                    bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
+                    anchor_indices=self._anchor_indices.cuda(),  # type: ignore
+                    remap_bps_distances=self._remap_bps_distances,
+                    exponential_map_w=self._exponential_map_w,
+                )
+                if self._debug:
+                    end = timeit.default_timer()
+                    print(
+                        f"CHOIR computation time for N={seq['n_frames']}: {(end - start)*1000:.3f}ms"
+                    )
+
+                choir_sequence_paths = []
+                if self._debug:
+                    scene_anim = ScenePicAnim()
+                    tmesh_obj = Trimesh(
+                        vertices=obj_mesh.vertices,
+                        faces=obj_mesh.triangles,
+                    )
+                    print(f"[*] Rendering sequence {grasp_name}...")
+
+                # ================== Perturbed Hand-Object Pair ==================
+                for i in range(seq["n_frames"]):
+                    sample_pth = osp.join(
+                        samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
+                    )
+                    if osp.isfile(sample_pth):
+                        choir_sequence_paths.append(sample_pth)
+                        continue
+                    trans_noise = (
+                        torch.randn(3, device=gt_params["trans"].device)
+                        * self._perturbations[self._perturbation_level]["trans"]
+                    )
+                    pose_noise = torch.cat(
+                        [
+                            torch.randn(24, device=gt_params["theta"].device)
+                            * self._perturbations[self._perturbation_level]["pca"],
+                        ]
+                    )
+                    global_orient_noise = (
+                        torch.randn(3, device=gt_params["rot"].device)
+                        * self._perturbations[self._perturbation_level]["rot"]
+                    )
+
+                    gt_params_frame = {
+                        k: v[i].unsqueeze(0) if k != "vtemp" else v
+                        for k, v in gt_params.items()
+                    }
+                    verts, joints, faces, params = self._get_verts_and_joints(
+                        gt_params_frame,
+                        grasping_hand,
+                        pose_noise=pose_noise,
+                        trans_noise=trans_noise,
+                        rot_noise=global_orient_noise,
+                    )
+
+                    anchors = self._affine_mano.get_anchors(verts)
+                    scalar = get_scalar(anchors, obj_ptcld, self._rescale)
+
+                    mpjpe = torch.linalg.vector_norm(
+                        joints.squeeze(0) - gt_joints[i].squeeze(0), dim=1, ord=2
+                    ).mean()
+                    dataset_mpjpe.update(mpjpe.item())
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
-                    if self._debug:
-                        import timeit
-
-                        start = timeit.default_timer()
-                    gt_choir, gt_rescaled_ref_pts = compute_choir(
+                    choir, rescaled_ref_pts = compute_choir(
                         to_cuda_(obj_ptcld).unsqueeze(0),
-                        to_cuda_(gt_anchors),
-                        scalar=gt_scalar,
+                        to_cuda_(anchors),
+                        scalar=scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
                         anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
+                    # sample, label = pack_and_pad_sample_label(
+                    # params["theta"],
+                    # params["beta"],
+                    # params["rot"],
+                    # params["trans"],
+                    # choir,
+                    # rescaled_ref_pts,
+                    # scalar,
+                    # torch.ones((1, 1)).cuda()
+                    # if grasping_hand == "rhand"
+                    # else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                    # gt_choir[i],
+                    # gt_rescaled_ref_pts,
+                    # gt_scalar,
+                    # gt_joints[i],
+                    # gt_anchors[i],
+                    # gt_params_frame["theta"],
+                    # gt_params_frame["beta"],
+                    # gt_params_frame["rot"],
+                    # gt_params_frame["trans"],
+                    # self._bps_dim,
+                    # )
+                    sample, label = (
+                        choir.squeeze().cpu().numpy(),
+                        rescaled_ref_pts.squeeze().cpu().numpy(),
+                        scalar.cpu().numpy(),
+                        np.ones((1)) if grasping_hand == "rhand" else np.zeros((1)),
+                        params["theta"].squeeze().cpu().numpy(),
+                        params["beta"].squeeze().cpu().numpy(),
+                        params["rot"].squeeze().cpu().numpy(),
+                        params["trans"].squeeze().cpu().numpy(),
+                    ), (
+                        gt_choir[i].squeeze().cpu().numpy(),
+                        gt_rescaled_ref_pts.squeeze().cpu().numpy(),
+                        gt_scalar.cpu().numpy(),
+                        gt_joints[i].squeeze().cpu().numpy(),
+                        gt_anchors[i].squeeze().cpu().numpy(),
+                        gt_params_frame["theta"].squeeze().cpu().numpy(),
+                        gt_params_frame["beta"].squeeze().cpu().numpy(),
+                        gt_params_frame["rot"].squeeze().cpu().numpy(),
+                        gt_params_frame["trans"].squeeze().cpu().numpy(),
+                    )
+                    # =================================================================
                     if self._debug:
-                        end = timeit.default_timer()
-                        print(
-                            f"CHOIR computation time for N={seq['n_frames']}: {(end - start)*1000:.3f}ms"
+                        scene_anim.add_frame(
+                            {
+                                "object": tmesh_obj,
+                                "hand": Trimesh(
+                                    vertices=gt_verts[i].cpu().numpy(), faces=faces
+                                ),
+                                "hand_aug": Trimesh(
+                                    vertices=verts.squeeze(0).cpu().numpy(),
+                                    faces=faces,
+                                ),
+                            }
                         )
 
-                    choir_sequence_paths = []
-                    # ================== Perturbed Hand-Object Pair ==================
-                    for i in range(seq["n_frames"]):
-                        sample_pth = osp.join(
-                            samples_labels_pickle_pth, grasp_name, f"sample_{i:06d}.pkl"
-                        )
-                        if osp.isfile(sample_pth):
-                            choir_sequence_paths.append(sample_pth)
-                            continue
-                        # Distance hand-object, with object at origin:
-                        dist = torch.norm(torch.mean(gt_verts[i], dim=0))
-                        # Filter the sequence frames to keep only those where the hand is within
-                        # 15cm of the object (as in the TOCH paper!)
-                        if dist > 0.15:
-                            continue
-
-                        trans_noise = (
-                            torch.randn(3, device=gt_params["trans"].device)
-                            * self._perturbations[self._perturbation_level]["trans"]
-                        )
-                        pose_noise = torch.cat(
-                            [
-                                torch.randn(24, device=gt_params["theta"].device)
-                                * self._perturbations[self._perturbation_level]["pca"],
-                            ]
-                        )
-                        global_orient_noise = (
-                            torch.randn(3, device=gt_params["rot"].device)
-                            * self._perturbations[self._perturbation_level]["rot"]
-                        )
-
-                        gt_params_frame = {
-                            k: v[i].unsqueeze(0) if k != "vtemp" else v
-                            for k, v in gt_params.items()
-                        }
-                        verts, joints, faces, params = self._get_verts_and_joints(
-                            gt_params_frame,
-                            grasping_hand,
-                            pose_noise=pose_noise,
-                            trans_noise=trans_noise,
-                            rot_noise=global_orient_noise,
-                        )
-
-                        anchors = self._affine_mano.get_anchors(verts)
-                        scalar = get_scalar(anchors, obj_ptcld, self._rescale)
-
-                        mpjpe = torch.linalg.vector_norm(
-                            joints.squeeze(0) - gt_joints[i].squeeze(0), dim=1, ord=2
-                        ).mean()
-                        dataset_mpjpe.update(mpjpe.item())
-                        # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
-                        # workers, but bps_torch is forcing my hand here so I might as well help it.
-                        choir, rescaled_ref_pts = compute_choir(
-                            to_cuda_(obj_ptcld).unsqueeze(0),
-                            to_cuda_(anchors),
-                            scalar=scalar,
-                            bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                            anchor_indices=self._anchor_indices.cuda(),  # type: ignore
-                            remap_bps_distances=self._remap_bps_distances,
-                            exponential_map_w=self._exponential_map_w,
-                        )
-                        # sample, label = pack_and_pad_sample_label(
-                        # params["theta"],
-                        # params["beta"],
-                        # params["rot"],
-                        # params["trans"],
-                        # choir,
-                        # rescaled_ref_pts,
-                        # scalar,
-                        # torch.ones((1, 1)).cuda()
-                        # if grasping_hand == "rhand"
-                        # else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                    with open(sample_pth, "wb") as f:
+                        pkl = pickle.dumps((sample, label, mesh_pth))
+                        compressed_pkl = blosc.compress(pkl)
+                        f.write(compressed_pkl)
+                    choir_sequence_paths.append(sample_pth)
+                    if (
+                        visualize
+                        and not has_visualized
+                        and random.Random().random() < 0.01
+                    ):
+                        print(f"[*] Visualizing {grasp_name} frame {i}")
+                        print("[*] Plotting CHOIR... (please be patient)")
+                        # visualize_CHOIR(
                         # gt_choir[i],
-                        # gt_rescaled_ref_pts,
+                        # self._bps,
                         # gt_scalar,
-                        # gt_joints[i],
+                        # gt_verts[i],
                         # gt_anchors[i],
-                        # gt_params_frame["theta"],
-                        # gt_params_frame["beta"],
-                        # gt_params_frame["rot"],
-                        # gt_params_frame["trans"],
-                        # self._bps_dim,
+                        # obj_mesh,
+                        # obj_ptcld,
+                        # gt_rescaled_ref_pts.squeeze(0),
+                        # self._affine_mano,
                         # )
-                        sample, label = (
-                            choir.squeeze().cpu().numpy(),
-                            rescaled_ref_pts.squeeze().cpu().numpy(),
-                            scalar.cpu().numpy(),
-                            np.ones((1)) if grasping_hand == "rhand" else np.zeros((1)),
-                            params["theta"].squeeze().cpu().numpy(),
-                            params["beta"].squeeze().cpu().numpy(),
-                            params["rot"].squeeze().cpu().numpy(),
-                            params["trans"].squeeze().cpu().numpy(),
-                        ), (
-                            gt_choir[i].squeeze().cpu().numpy(),
-                            gt_rescaled_ref_pts.squeeze().cpu().numpy(),
-                            gt_scalar.cpu().numpy(),
-                            gt_joints[i].squeeze().cpu().numpy(),
-                            gt_anchors[i].squeeze().cpu().numpy(),
-                            gt_params_frame["theta"].squeeze().cpu().numpy(),
-                            gt_params_frame["beta"].squeeze().cpu().numpy(),
-                            gt_params_frame["rot"].squeeze().cpu().numpy(),
-                            gt_params_frame["trans"].squeeze().cpu().numpy(),
+                        gt_MANO_mesh = Trimesh(gt_verts[i].cpu().numpy(), gt_faces)
+                        pred_MANO_mesh = Trimesh(verts.squeeze(0).cpu().numpy(), faces)
+                        visualize_MANO(
+                            pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                         )
-                        # =================================================================
+                        # visualize_CHOIR_prediction(
+                        # gt_choir[i].unsqueeze(0),
+                        # gt_choir[i].unsqueeze(0),
+                        # self._bps,
+                        # self._anchor_indices,
+                        # scalar,
+                        # gt_scalar,
+                        # rescaled_ref_pts,
+                        # gt_rescaled_ref_pts,
+                        # gt_verts[i].unsqueeze(0),
+                        # gt_joints[i].unsqueeze(0),
+                        # gt_anchors[i].unsqueeze(0),
+                        # is_rhand=(grasping_hand == "rhand"),
+                        # use_smplx=False,
+                        # dataset="grab",
+                        # remap_bps_distances=self._remap_bps_distances,
+                        # exponential_map_w=self._exponential_map_w,
+                        # )
+                        has_visualized = True
+                if len(choir_sequence_paths) >= 10:
+                    choir_paths.append(choir_sequence_paths)
 
-                        with open(sample_pth, "wb") as f:
-                            pkl = pickle.dumps((sample, label, mesh_pth))
-                            compressed_pkl = blosc.compress(pkl)
-                            f.write(compressed_pkl)
-                        choir_sequence_paths.append(sample_pth)
-                        if (
-                            visualize
-                            and not has_visualized
-                            and random.Random().random() < 0.01
-                        ):
-                            print(f"[*] Visualizing {grasp_name} frame {i}")
-                            print("[*] Plotting CHOIR... (please be patient)")
-                            # visualize_CHOIR(
-                            # gt_choir[i],
-                            # self._bps,
-                            # gt_scalar,
-                            # gt_verts[i],
-                            # gt_anchors[i],
-                            # obj_mesh,
-                            # obj_ptcld,
-                            # gt_rescaled_ref_pts.squeeze(0),
-                            # self._affine_mano,
-                            # )
-                            gt_MANO_mesh = Trimesh(gt_verts[i].cpu().numpy(), gt_faces)
-                            pred_MANO_mesh = Trimesh(
-                                verts.squeeze(0).cpu().numpy(), faces
-                            )
-                            visualize_MANO(
-                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            )
-                            # visualize_CHOIR_prediction(
-                            # gt_choir[i].unsqueeze(0),
-                            # gt_choir[i].unsqueeze(0),
-                            # self._bps,
-                            # self._anchor_indices,
-                            # scalar,
-                            # gt_scalar,
-                            # rescaled_ref_pts,
-                            # gt_rescaled_ref_pts,
-                            # gt_verts[i].unsqueeze(0),
-                            # gt_joints[i].unsqueeze(0),
-                            # gt_anchors[i].unsqueeze(0),
-                            # is_rhand=(grasping_hand == "rhand"),
-                            # use_smplx=False,
-                            # dataset="grab",
-                            # remap_bps_distances=self._remap_bps_distances,
-                            # exponential_map_w=self._exponential_map_w,
-                            # )
-                            has_visualized = True
-                    if len(choir_sequence_paths) >= 10:
-                        choir_paths.append(choir_sequence_paths)
+                scene_anim.save_animation(f"{grasp_name}.html")
+                print(f"Saved sequence as {grasp_name}.html")
         print(
             f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
         )
@@ -784,6 +801,7 @@ class GRABDataset(BaseDataset):
                 key=lambda x: int(x[1:]),
             )
             grasping_hand = "rhand"
+            n_augs = self._n_augs if self._augment else 0
             if not self._right_hand_only:
                 # This is how: https://github.com/kzhou23/toch/blob/019a1827e89d5fc064d30b742412524a70b92cdd/data/grab/preprocessing.py#L327
                 # Basically load sequences for each individual hands and then merge them.
@@ -801,9 +819,6 @@ class GRABDataset(BaseDataset):
                     fpath = os.path.join(self._root_path, "grab", participant, f)
                     seq = np.load(fpath, allow_pickle=True)
                     seq = {k: seq[k].item() for k in seq.files}
-                    hand_contact_mask = self.filter_contact_frames(seq, grasping_hand)
-                    ds_mask = self.downsample_frames(seq, rate=4)  # 30FPS
-                    frame_mask = ds_mask & hand_contact_mask  # Binary mask
 
                     obj_name = seq["obj_name"]
                     intent = seq["motion_intent"]
@@ -815,6 +830,42 @@ class GRABDataset(BaseDataset):
                         object_path
                     ), f"object_path {object_path} is not a file"
 
+                    # ================== Distance filtering =========================
+                    gt_params = self._load_sequence_params(seq, p_num, grasping_hand)
+                    # Now I must center the grasp on the object s.t. the object is at the origin
+                    # and in canonical pose. This is done by applying the inverse of the object's
+                    # global orientation and translation to the hand's global orientation and
+                    # translation. We can use pytorch3d's transform_points for this.
+                    gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
+                    gt_verts, gt_joints, gt_faces, _ = self._get_verts_and_joints(
+                        gt_params, grasping_hand
+                    )
+                    # Distance hand-object, with object at origin:
+                    obj_mesh = o3dio.read_triangle_mesh(object_path)
+                    # gt_joints has shape (T, 21, 3)
+                    # We'll sample points on the object surface and compute the distance to the
+                    # hand joints. If the minimum distance is less than 15cm, we keep the frame.
+                    dist = torch.cdist(
+                        gt_joints,
+                        torch.from_numpy(
+                            np.asarray(
+                                obj_mesh.sample_points_uniformly(300).points  # type: ignore
+                            )
+                        )
+                        .cuda()
+                        .float(),
+                    )
+                    dist = dist.min(dim=-1).values.min(dim=-1).values
+                    # Filter the sequence frames to keep only those where the hand is within
+                    # 15cm of the object (as in the TOCH paper!)
+                    distance_mask = (dist <= 0.15).cpu().numpy()
+                    # =================================================================
+
+                    hand_contact_mask = self.filter_contact_frames(seq, grasping_hand)
+                    ds_mask = self.downsample_frames(seq, rate=4)  # 30FPS
+                    frame_mask = (
+                        ds_mask & hand_contact_mask & distance_mask
+                    )  # Binary mask
                     if self._debug and False:
                         scene_anim = ScenePicAnim()
                         obj_mesh = o3dio.read_triangle_mesh(object_path)
@@ -865,11 +916,12 @@ class GRABDataset(BaseDataset):
                             print(
                                 f"No gaps in the mask. Saving {frame_mask.sum()} frames."
                             )
-                        grasp_name = f"{obj_name}_{p_num}_{intent}"
-                        grasp_sequences.append(
-                            (grasp_name, fpath, frame_mask),
-                        )
-                        objects.append(object_path)
+                        for k in range(n_augs + 1):
+                            grasp_name = f"{obj_name}_{p_num}_{intent}_aug-{k}"
+                            grasp_sequences.append(
+                                (grasp_name, fpath, frame_mask),
+                            )
+                            objects.append(object_path)
 
                     else:
                         original_length = frame_mask.shape[0]
@@ -897,11 +949,14 @@ class GRABDataset(BaseDataset):
                             T = new_frame_mask.sum()
                             if T < 10:
                                 continue
-                            grasp_name = f"{obj_name}_{p_num}_{intent}_subseq-{i}"
-                            grasp_sequences.append(
-                                (grasp_name, fpath, new_frame_mask),
-                            )
-                            objects.append(object_path)
+                            for k in range(n_augs + 1):
+                                grasp_name = (
+                                    f"{obj_name}_{p_num}_{intent}_subseq-{i}_aug-{k}"
+                                )
+                                grasp_sequences.append(
+                                    (grasp_name, fpath, new_frame_mask),
+                                )
+                                objects.append(object_path)
 
                             if self._debug and False:
                                 print(
@@ -951,7 +1006,6 @@ class GRABDataset(BaseDataset):
                         T = new_frame_mask.sum()
                         if T < 10:
                             continue
-                        n_augs = self._n_augs if self._augment else 0
                         for k in range(n_augs + 1):
                             grasp_name = f"{obj_name}_{p_num}_{intent}_subseq-{len(gap_cuts)}_aug-{k}"
                             grasp_sequences.append(
