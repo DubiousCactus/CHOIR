@@ -447,9 +447,7 @@ class GRABDataset(BaseDataset):
                 # TODO: Refactor this because it can be sped up by a lot. There is a lot of redundant
                 # computation (same for ContactPose) that's due to many incremental changes to this in
                 # haste and not enough time to refactor it properly :( Research code really sucks!
-                print(grasp_name)
                 k = int(grasp_name.split("aug-")[-1].split(".")[0])
-                print(k)
                 # ============ Shift the pair to the object's center ============
                 # if self._center_on_object_com:
                 if self._center_on_object_com and not (self._augment and k > 0):
@@ -665,8 +663,9 @@ class GRABDataset(BaseDataset):
                 if len(choir_sequence_paths) >= 10:
                     choir_paths.append(choir_sequence_paths)
 
-                scene_anim.save_animation(f"{grasp_name}.html")
-                print(f"Saved sequence as {grasp_name}.html")
+                if self._debug:
+                    scene_anim.save_animation(f"{grasp_name}.html")
+                    print(f"Saved sequence as {grasp_name}.html")
         print(
             f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
         )
@@ -710,7 +709,7 @@ class GRABDataset(BaseDataset):
         Returns a list of object mesh paths, a list of grasp sequence paths associated, and the dataset name.
         """
         objects, grasp_sequences = [], []
-        n_participants = 10 if not tiny else 3
+        n_participants = 10 if not tiny else 2
         # 1. Get list of objects so we can split them into train/val/test. The object name is
         # <obj_name>_*.npz in the object path.
         object_names = []
@@ -858,7 +857,7 @@ class GRABDataset(BaseDataset):
                     dist = dist.min(dim=-1).values.min(dim=-1).values
                     # Filter the sequence frames to keep only those where the hand is within
                     # 15cm of the object (as in the TOCH paper!)
-                    distance_mask = (dist <= 0.15).cpu().numpy()
+                    distance_mask = (dist < 0.15).cpu().numpy()
                     # =================================================================
 
                     hand_contact_mask = self.filter_contact_frames(seq, grasping_hand)
@@ -910,7 +909,9 @@ class GRABDataset(BaseDataset):
                     # bothering with this issue, but I think their method would struggle converging
                     # when finding these jumps. My method would definitely so let's check for gaps
                     # between True values of the mask:
-                    gap_cuts = np.where(np.diff(np.where(hand_contact_mask)[0]) > 1)[0]
+                    gap_cuts = np.where(
+                        np.diff(np.where(hand_contact_mask & distance_mask)[0]) > 1
+                    )[0]
                     if len(gap_cuts) == 0:
                         if self._debug and False:
                             print(
@@ -944,8 +945,14 @@ class GRABDataset(BaseDataset):
                                 end = gap_end
                             new_frame_mask = np.zeros_like(frame_mask).astype(bool)
                             new_frame_mask[
-                                np.where(hand_contact_mask)[0][start : end + 1]
-                            ] = ds_mask[np.where(hand_contact_mask)[0][start : end + 1]]
+                                np.where(hand_contact_mask & distance_mask)[0][
+                                    start : end + 1
+                                ]
+                            ] = ds_mask[
+                                np.where(hand_contact_mask & distance_mask)[0][
+                                    start : end + 1
+                                ]
+                            ]
                             T = new_frame_mask.sum()
                             if T < 10:
                                 continue
@@ -998,11 +1005,13 @@ class GRABDataset(BaseDataset):
 
                         # Add the last subsequence:
                         start = gap_cuts[-1] + 1
-                        end = len(hand_contact_mask) - 1
+                        end = len(hand_contact_mask & distance_mask) - 1
                         new_frame_mask = np.zeros_like(frame_mask).astype(bool)
                         new_frame_mask[
-                            np.where(hand_contact_mask)[0][start:]
-                        ] = ds_mask[np.where(hand_contact_mask)[0][start:]]
+                            np.where(hand_contact_mask & distance_mask)[0][start:]
+                        ] = ds_mask[
+                            np.where(hand_contact_mask & distance_mask)[0][start:]
+                        ]
                         T = new_frame_mask.sum()
                         if T < 10:
                             continue
