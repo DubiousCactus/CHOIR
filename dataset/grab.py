@@ -357,7 +357,7 @@ class GRABDataset(BaseDataset):
         ):
             if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                 os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
-            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) >= 10:
+            if len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name))) >= 30:
                 choir_paths.append(
                     [
                         os.path.join(samples_labels_pickle_pth, grasp_name, f)
@@ -412,26 +412,6 @@ class GRABDataset(BaseDataset):
                     )
 
                 seq = self._mask_out_sequence(seq, frame_mask)
-
-                # TODO: I still don't understand how TOCH handles approaching hands :/ It seems to
-                # me that all their sequences start from the T-pose. But I may be wrong because I
-                # only looked at their pre-processing code, so they might filter even more during
-                # the TOCH field creation.
-                # What I'm doing is just checking for the mean distance between the hand mesh and
-                # the object mesh (centroids) and if it's more than a threshold (i.e. 30cm) I skip
-                # the frame. In the end my grasp sequence only contains the frames where the hand
-                # is within this distance to the object.
-
-                # Let's now filter out the dynamic grasps if needed, by making sure the difference in
-                # PCA space is small enough between the first and last frames. This is SUPER
-                # approximative (seems to filter mostly use and pass grasps), so it'll only be used
-                # for first tests on the model. Final results will be run on the full dataset with
-                # dynamic grasps.
-                hand_poses = torch.from_numpy(seq[grasping_hand]["params"]["hand_pose"])
-                pca_dist = torch.linalg.norm(hand_poses[0] - hand_poses[-1])
-                # print(f"PCA distance for {grasp_name}: {pca_dist}")
-                if pca_dist > 2.0 and self._static_grasps_only:
-                    continue
 
                 obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                 visualize = self._debug and (random.Random().random() < 0.5)
@@ -660,7 +640,7 @@ class GRABDataset(BaseDataset):
                         # exponential_map_w=self._exponential_map_w,
                         # )
                         has_visualized = True
-                if len(choir_sequence_paths) >= 10:
+                if len(choir_sequence_paths) >= 30:
                     choir_paths.append(choir_sequence_paths)
 
                 if self._debug:
@@ -709,7 +689,7 @@ class GRABDataset(BaseDataset):
         Returns a list of object mesh paths, a list of grasp sequence paths associated, and the dataset name.
         """
         objects, grasp_sequences = [], []
-        n_participants = 10 if not tiny else 2
+        n_participants = 10 if not tiny else 3
         # 1. Get list of objects so we can split them into train/val/test. The object name is
         # <obj_name>_*.npz in the object path.
         object_names = []
@@ -954,7 +934,7 @@ class GRABDataset(BaseDataset):
                                 ]
                             ]
                             T = new_frame_mask.sum()
-                            if T < 10:
+                            if T < 30:
                                 continue
                             for k in range(n_augs + 1):
                                 grasp_name = (
@@ -1013,7 +993,7 @@ class GRABDataset(BaseDataset):
                             np.where(hand_contact_mask & distance_mask)[0][start:]
                         ]
                         T = new_frame_mask.sum()
-                        if T < 10:
+                        if T < 30:
                             continue
                         for k in range(n_augs + 1):
                             grasp_name = f"{obj_name}_{p_num}_{intent}_subseq-{len(gap_cuts)}_aug-{k}"
