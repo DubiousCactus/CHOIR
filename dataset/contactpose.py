@@ -51,6 +51,7 @@ class ContactPoseDataset(BaseDataset):
         self,
         split: str,
         use_contactopt_splits: bool = False,
+        use_improved_contactopt_splits: bool = False,
         validation_objects: int = 3,
         test_objects: int = 2,
         perturbation_level: int = 0,
@@ -84,6 +85,7 @@ class ContactPoseDataset(BaseDataset):
             },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
         ]
         self._use_contactopt_splits = use_contactopt_splits
+        self._use_improved_contactopt_splits = use_improved_contactopt_splits
         # Using ContactOpt's parameters
         if self._use_contactopt_splits:
             if split == "train":
@@ -147,12 +149,15 @@ class ContactPoseDataset(BaseDataset):
         # First, build a dictionary of object names to the participant, intent, and hand used. The
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
-        cp_dataset = {} if not self._use_contactopt_splits else []
+        participant_splits = (
+            self._use_contactopt_splits or self._use_improved_contactopt_splits
+        )
+        cp_dataset = {} if not participant_splits else []
         n_participants = 15 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
-                    if self._use_contactopt_splits:
+                    if participant_splits:
                         cp_dataset.append((p_num, intent, obj_name))
                     else:
                         if obj_name not in cp_dataset:
@@ -162,20 +167,30 @@ class ContactPoseDataset(BaseDataset):
                             cp_dataset[obj_name].append((p_num, intent, "left"))
         hand_indices = {"right": 1, "left": 0}
 
-        if self._use_contactopt_splits:
+        if participant_splits:
+            assert not (
+                self._use_contactopt_splits and self._use_improved_contactopt_splits
+            ), "You can't use both ContactOpt's splits and the improved splits."
             # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
-            low_split = int(
-                len(cp_dataset)
-                * (0.0 if split == "train" else (0.8 if not tiny else 0.5))
-            )
-            high_split = int(
-                len(cp_dataset)
-                * (
-                    (0.8 if not tiny else 0.5)
-                    if split == "train"
-                    else (1.0 if not tiny else 0.7)
-                )
-            )
+            if self._use_contactopt_splits:
+                low_p, high_p = 0, 0
+                if split == "train":
+                    low_p, high_p = 0, 0.8
+                else:
+                    low_p, high_p = 0.8, 1.0
+            elif self._use_improved_contactopt_splits:
+                # I'm improving it so that we have a validation split here.
+                low_p, high_p = 0, 0
+                if split == "train":
+                    low_p, high_p = 0, 0.7
+                elif split == "val":
+                    low_p, high_p = 0.7, 0.8
+                elif split == "test":
+                    low_p, high_p = 0.8, 1.0
+
+            low_split = int(len(cp_dataset) * low_p)
+            high_split = int(len(cp_dataset) * high_p)
+            print(low_split, high_split)
             cp_dataset = cp_dataset[
                 low_split:high_split
             ]  # [0.0, 0.8] for train, [0.8, 1.0] for test

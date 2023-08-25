@@ -92,6 +92,7 @@ dataset_store(
         builds_bases=(GraspingDatasetConf,),
         noisy_samples_per_grasp=16,
         use_contactopt_splits=False,
+        use_improved_contactopt_splits=False,
     ),
     name="contactpose",
 )

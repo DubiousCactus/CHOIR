@@ -351,7 +351,6 @@ class GRABDataset(BaseDataset):
         choir_paths = []
         print("[*] Computing CHOIR fields...")
         dataset_mpjpe = MeanMetric()
-        n_augs = self._n_augs if self._augment else 0
         for mesh_pth, (grasp_name, grasp_path, frame_mask) in tqdm(
             zip(objects, grasp_sequences), total=len(objects)
         ):
@@ -412,6 +411,7 @@ class GRABDataset(BaseDataset):
                     )
 
                 seq = self._mask_out_sequence(seq, frame_mask)
+                aug_no = int(grasp_name.split("aug-")[-1].split(".")[0])
 
                 obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                 visualize = self._debug and (random.Random().random() < 0.5)
@@ -423,20 +423,15 @@ class GRABDataset(BaseDataset):
                 # global orientation and translation to the hand's global orientation and
                 # translation. We can use pytorch3d's transform_points for this.
                 gt_params = self._bring_parameters_to_canonical_form(seq, gt_params)
-
-                # TODO: Refactor this because it can be sped up by a lot. There is a lot of redundant
-                # computation (same for ContactPose) that's due to many incremental changes to this in
-                # haste and not enough time to refactor it properly :( Research code really sucks!
-                k = int(grasp_name.split("aug-")[-1].split(".")[0])
                 # ============ Shift the pair to the object's center ============
                 # if self._center_on_object_com:
-                if self._center_on_object_com and not (self._augment and k > 0):
+                if self._center_on_object_com and not (self._augment and aug_no > 0):
                     obj_center = torch.from_numpy(obj_mesh.get_center())
                     obj_mesh.translate(-obj_center)
                     gt_params["trans"] -= obj_center.to(gt_params["trans"].device)
                 # ================================================================
                 # =================== Apply augmentation =========================
-                if k > 0:
+                if aug_no > 0:
                     obj_mesh, gt_params = augment_hand_object_pose_grab(
                         obj_mesh, gt_params, self._use_affine_mano, around_z=False
                     )
@@ -536,28 +531,6 @@ class GRABDataset(BaseDataset):
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                     )
-                    # sample, label = pack_and_pad_sample_label(
-                    # params["theta"],
-                    # params["beta"],
-                    # params["rot"],
-                    # params["trans"],
-                    # choir,
-                    # rescaled_ref_pts,
-                    # scalar,
-                    # torch.ones((1, 1)).cuda()
-                    # if grasping_hand == "rhand"
-                    # else torch.zeros((1, 1)).cuda(),  # (1, 1)
-                    # gt_choir[i],
-                    # gt_rescaled_ref_pts,
-                    # gt_scalar,
-                    # gt_joints[i],
-                    # gt_anchors[i],
-                    # gt_params_frame["theta"],
-                    # gt_params_frame["beta"],
-                    # gt_params_frame["rot"],
-                    # gt_params_frame["trans"],
-                    # self._bps_dim,
-                    # )
                     sample, label = (
                         choir.squeeze().cpu().numpy(),
                         rescaled_ref_pts.squeeze().cpu().numpy(),
