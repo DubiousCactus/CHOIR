@@ -100,13 +100,12 @@ class MultiHeadAttention(torch.nn.Module):
             # print("Head K: ", self._heads_k[h](k).shape)
             # print(
             # "Head V: ",
-            # self._heads_v[h](
-            # self._attention(self._heads_q[h](q), self._heads_k[h](k), v)
+            # self._attention(self._heads_q[h](q), self._heads_k[h](k), self._heads_v[j](v))
             # ).shape,
             # )
             output.append(
-                self._heads_v[h](
-                    self._attention(self._heads_q[h](q), self._heads_k[h](k), v)
+                self._attention(
+                    self._heads_q[h](q), self._heads_k[h](k), self._heads_v[h](v)
                 )
             )
         output = torch.cat(output, dim=-1)
@@ -166,13 +165,18 @@ class AttentionAggregator(torch.nn.Module):
             assert q_dim_out is not None
             if v_dim_out is None:
                 v_dim_out = v_dim_in
+            model_dim = q_dim_in
             self._multihead = torch.nn.MultiheadAttention(
-                v_dim_out * n_heads,
+                model_dim,
                 n_heads,
                 dropout=0.0,
                 kdim=k_dim_in,
                 vdim=v_dim_in,
                 bias=multi_head_use_bias,
+                batch_first=True,
+            )
+            self._multihead_proj = torch.nn.Linear(
+                model_dim, v_dim_out, bias=multi_head_use_bias
             )
 
     def _uniform(self, q, k, v):
@@ -218,10 +222,10 @@ class AttentionAggregator(torch.nn.Module):
         return self._multihead(q, k, v)
 
     def _multi_head_pytorch(self, q, k, v):
-        # TODO: Pre-embed q, k, v? It won't work as is because of dim issues
-        raise NotImplementedError
-        # Returns a tuple: attn_output, attn_output_weights
-        return self._multihead(q, k, v)[0]
+        # TODO: Embed the output of the multihead attention into the same dimension as the input
+        # (i.e. v_dim_out). Why doesn't pytorch let me do this???
+        res = self._multihead(q, k, v, need_weights=False)[0]
+        return self._multihead_proj(res)
 
     def forward(self, x, r, x_q):
         """Given a set of key-value pairs (x, r) and a query x_q, returns the

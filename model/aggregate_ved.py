@@ -61,14 +61,14 @@ class Aggregate_VED(torch.nn.Module):
         # Multi-head cross-attention aggregator
         self.mhca_aggregator = (
             AttentionAggregator(
-                "multi_head",
-                multi_head_use_bias=False,
+                "multi_head_pytorch",
+                multi_head_use_bias=True,
                 n_heads=8,
                 k_dim_in=(self.choir_dim - 1)
                 * bps_dim,  # -1 cause not including the object
-                k_dim_out=1024,
+                k_dim_out=bps_dim,
                 q_dim_in=(self.choir_dim - 1) * bps_dim,
-                q_dim_out=1024,
+                q_dim_out=bps_dim,
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )
