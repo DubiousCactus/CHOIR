@@ -123,7 +123,7 @@ class DataloaderConf:
     batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
-    num_workers: int = 1
+    num_workers: int = 0
     pin_memory: bool = False
     n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
