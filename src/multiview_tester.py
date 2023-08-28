@@ -457,7 +457,7 @@ class MultiViewTester(MultiViewTrainer):
         self._model.eval()
         test_errors = []
         with torch.no_grad():
-            for i in range(3, 15):
+            for i in range(1, 15):
                 test_errors.append(
                     self.test_n_observations(i, visualize_every=visualize_every)
                 )

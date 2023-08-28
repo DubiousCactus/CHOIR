@@ -92,6 +92,7 @@ class ContactPoseDataset(BaseDataset):
                 noisy_samples_per_grasp = 16
             else:
                 noisy_samples_per_grasp = 4
+        # To evaluate the "plateau of observations", comment out the following:
         if split != "train":
             noisy_samples_per_grasp = 4
 
@@ -190,7 +191,6 @@ class ContactPoseDataset(BaseDataset):
 
             low_split = int(len(cp_dataset) * low_p)
             high_split = int(len(cp_dataset) * high_p)
-            print(low_split, high_split)
             cp_dataset = cp_dataset[
                 low_split:high_split
             ]  # [0.0, 0.8] for train, [0.8, 1.0] for test

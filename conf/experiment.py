@@ -168,8 +168,8 @@ model_store(
         decoder_dropout=False,
         predict_deltas=False,
         frame_to_predict=MISSING,
-        encoder_layer_dims=(1024, 1024, 1024, 1024),
-        decoder_layer_dims=(1024, 1024),
+        encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
+        decoder_layer_dims=(1024, 1024, 1024),
         aggregator="mean",
     ),
     name="agg_ved",
@@ -383,34 +383,6 @@ experiment_store(
             {"override /model": "agg_ved"},
             {"override /trainer": "multiview"},
             {"override /tester": "multiview"},
-        ],
-        dataset=dict(
-            perturbation_level=2,
-            max_views_per_grasp=4,
-            use_contactopt_splits=True,
-            augment=True,
-        ),
-        training_loss=dict(multi_view=True),
-        data_loader=dict(batch_size=32),
-        model=dict(
-            latent_dim=128,
-        ),
-        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
-        # decoder_layer_dims=(128, 256, 512, 1024)),
-        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
-        bases=(Experiment,),
-    ),
-    name="multiview_contactopt_replica_aug",
-)
-
-
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "agg_ved"},
-            {"override /trainer": "multiview"},
-            {"override /tester": "multiview"},
             {"override /dataset": "grab"},
         ],
         dataset=dict(
@@ -425,8 +397,7 @@ experiment_store(
         model=dict(
             latent_dim=128,
             encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
-            # decoder_layer_dims=(2048, 2048, 2048),
-            decoder_layer_dims=(1024, 1024, 1024),
+            decoder_layer_dims=(2048, 2048, 2048),
         ),
         bases=(Experiment,),
     ),
