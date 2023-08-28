@@ -416,7 +416,7 @@ experiment_store(
         dataset=dict(
             perturbation_level=1,
             min_views_per_grasp=2,
-            max_views_per_grasp=10,
+            max_views_per_grasp=15,
             use_affine_mano=True,
             static_grasps_only=False,
         ),

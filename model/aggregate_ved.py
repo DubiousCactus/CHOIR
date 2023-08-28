@@ -220,9 +220,9 @@ class Aggregate_VED(torch.nn.Module):
         s = self.prior_encoder[-1](x)
         if self.mhca_aggregator is not None:
             # s_c = torch.mean(s, dim=1)
-            # Key: _x.flatten(start_dim=2) / The CHOIRs
+            # Key: _x[..., 1:].flatten(start_dim=2) / The noisy anchor distances
             # Value: s / The latent distributions
-            # Query: _x[:, -1].flatten(start_dim=1) / The last frame's CHOIR
+            # Query: _x[:, -1].flatten(start_dim=1) / The last frame's anchor distances
             s_c = self.mhca_aggregator(
                 _x[..., 1:].flatten(start_dim=2),
                 s,
@@ -263,11 +263,11 @@ class Aggregate_VED(torch.nn.Module):
             s = self.posterior_encoder[-1](x)
             if self.mhca_aggregator is not None:
                 # s_c = torch.mean(s, dim=1)
-                # Key: _x.flatten(start_dim=2) / The CHOIRs
+                # Key: _x[..., 1:].flatten(start_dim=2) / The noisy anchor distances
                 # Value: s / The latent distributions
-                # Query: _x[:, -1].flatten(start_dim=1) / The last frame's CHOIR
+                # Query: _x[:, -1].flatten(start_dim=1) / The last frame's anchor distances
                 s_c = self.mhca_aggregator(
-                    y[..., 1:].flatten(start_dim=2),
+                    _x[..., 1:].flatten(start_dim=2),
                     s,
                     _x[:, -1, :, 1:].flatten(start_dim=1).unsqueeze(1),
                 ).squeeze()
