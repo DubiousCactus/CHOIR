@@ -105,18 +105,18 @@ def visualize_model_predictions_with_multiple_views(
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
         input_scalar = samples["scalar"][0].view(-1, *samples["scalar"].shape[2:])
-        choir_gt = labels["choir"][0, 0].unsqueeze(0)
+        choir_gt = labels["choir"][0, -1].unsqueeze(0)
         input_choirs = samples["choir"][0].view(-1, *samples["choir"].shape[2:])
         input_ref_pts = samples["rescaled_ref_pts"][0].view(
             -1, *samples["rescaled_ref_pts"].shape[2:]
         )
         gt_scalar = (
-            labels["scalar"][0, 0].unsqueeze(0)
+            labels["scalar"][0, -1].unsqueeze(0)
             if len(labels["scalar"].shape) >= 2
-            else labels["scalar"][0].unsqueeze(0)
+            else labels["scalar"][-1].unsqueeze(0)
         )
         # gt_scalar = labels["scalar"][0].view(-1, *labels["scalar"].shape[2:])
-        gt_ref_pts = labels["rescaled_ref_pts"][0, 0].unsqueeze(0)
+        gt_ref_pts = labels["rescaled_ref_pts"][0, -1].unsqueeze(0)
         # =============================================================
 
         if dataset.lower() == "grab":
@@ -157,9 +157,9 @@ def visualize_model_predictions_with_multiple_views(
                 scalar=input_scalar,
                 is_rhand=samples["is_rhand"][0],
                 # max_iterations=5000,
-                max_iterations=800,
-                loss_thresh=1e-7,
-                lr=1e-2,
+                max_iterations=1000,
+                loss_thresh=1e-6,
+                lr=8e-2,
                 use_smplx=use_smplx,
                 dataset=dataset,
                 remap_bps_distances=remap_bps_distances,
@@ -170,8 +170,8 @@ def visualize_model_predictions_with_multiple_views(
                     if k
                     in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
                 },
-                beta_w=1e-5,
-                theta_w=1e-8,
+                beta_w=1e-4,
+                theta_w=1e-7,
                 choir_w=1000,
                 # max_iterations=8000,
                 # lr=1e-1,
@@ -200,7 +200,7 @@ def visualize_model_predictions_with_multiple_views(
             "rot_6d": labels["rot"],
             "trans": labels["trans"],
         }
-        mano_params_gt = {k: v[0, 0].unsqueeze(0) for k, v in mano_params_gt.items()}
+        mano_params_gt = {k: v[0, -1].unsqueeze(0) for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         verts_gt, joints_gt = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         anchors_gt = affine_mano.get_anchors(verts_gt)
@@ -237,7 +237,7 @@ def visualize_model_predictions_with_multiple_views(
                 remap_bps_distances=remap_bps_distances,
                 exponential_map_w=exponential_map_w,
                 initial_params={
-                    k: v[0].unsqueeze(0)
+                    k: v[0, -1].unsqueeze(0)
                     for k, v in samples.items()
                     if k
                     in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]

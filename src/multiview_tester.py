@@ -113,17 +113,18 @@ class MultiViewTester(MultiViewTrainer):
             "rot_6d": labels["rot"],
             "trans": labels["trans"],
         }
-        # Only use the first view for each batch element
-        mano_params_gt = {k: v[:, 0] for k, v in mano_params_gt.items()}
+        # Only use the last view for each batch element (they're all the same anyway for static
+        # grasps, but for dynamic grasps we want to predict the LAST frame!).
+        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
+        multiple_obs = len(samples["theta"].shape) > 2
         if use_input:
-            multiple_obs = len(samples["theta"].shape) > 2
             input_params = {
-                k: (v[:, 0] if multiple_obs else v)
+                k: (v[:, -1] if multiple_obs else v)
                 for k, v in samples.items()
                 if k in ["theta", "beta", "rot", "trans"]
             }
@@ -154,7 +155,9 @@ class MultiViewTester(MultiViewTrainer):
                     remap_bps_distances=self._remap_bps_distances,
                     exponential_map_w=self._exponential_map_w,
                     initial_params={
-                        k: v
+                        k: (
+                            v[:, -1] if multiple_obs else v
+                        )  # Initial pose is the last observation
                         for k, v in samples.items()
                         if k
                         in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]

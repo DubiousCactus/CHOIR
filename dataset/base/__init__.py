@@ -356,6 +356,7 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_rot_6d.append(label[7])
             gt_trans.append(label[8])
             mesh_pths.append(mesh_pth)
+        # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
         sample = {
             "choir": torch.from_numpy(np.array([a for a in choir])),
             "rescaled_ref_pts": torch.from_numpy(

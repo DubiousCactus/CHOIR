@@ -30,11 +30,7 @@ import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
-from model.aggregate_ved import (
-    Aggregate_VED,
-    Aggregate_VED_Simple,
-    Aggregate_VED_SuperSimple,
-)
+from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
@@ -176,36 +172,9 @@ model_store(
         decoder_layer_dims=(1024, 1024),
         aggregator="mean",
     ),
-    name="aggregate_cpvae",
+    name="agg_ved",
 )
 
-model_store(
-    pbuilds(
-        Aggregate_VED_Simple,
-        builds_bases=(BaselineModelConf,),
-        bps_dim=MISSING,
-        remapped_bps_distances=MISSING,  # Sigmoid if so
-        batch_norm=True,
-        decoder_use_obj=False,
-        skip_connections=True,
-        use_dropout=False,
-    ),
-    name="aggregate_cpvae_s",
-)
-
-model_store(
-    pbuilds(
-        Aggregate_VED_SuperSimple,
-        builds_bases=(BaselineModelConf,),
-        bps_dim=MISSING,
-        remapped_bps_distances=MISSING,  # Sigmoid if so
-        batch_norm=True,
-        decoder_use_obj=False,
-        skip_connections=True,
-        use_dropout=False,
-    ),
-    name="aggregate_cpvae_ss",
-)
 " ================== Losses ================== "
 
 
@@ -364,7 +333,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "aggregate_cpvae"},
+            {"override /model": "agg_ved"},
             {"override /trainer": "multiview"},
             {"override /tester": "multiview"},
         ],
@@ -385,7 +354,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "aggregate_cpvae"},
+            {"override /model": "agg_ved"},
             {"override /trainer": "multiview"},
             {"override /tester": "multiview"},
         ],
@@ -411,7 +380,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "aggregate_cpvae"},
+            {"override /model": "agg_ved"},
             {"override /trainer": "multiview"},
             {"override /tester": "multiview"},
         ],
@@ -439,7 +408,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "aggregate_cpvae"},
+            {"override /model": "agg_ved"},
             {"override /trainer": "multiview"},
             {"override /tester": "multiview"},
             {"override /dataset": "grab"},
