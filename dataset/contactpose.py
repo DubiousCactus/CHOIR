@@ -71,6 +71,8 @@ class ContactPoseDataset(BaseDataset):
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
         random_anchor_assignment: bool = False,
+        eval_observations_plateau: bool = False,
+        eval_anchor_assignment: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -87,14 +89,21 @@ class ContactPoseDataset(BaseDataset):
         self._use_contactopt_splits = use_contactopt_splits
         self._use_improved_contactopt_splits = use_improved_contactopt_splits
         # Using ContactOpt's parameters
-        if self._use_contactopt_splits:
+        if self._use_contactopt_splits or self._use_improved_contactopt_splits:
             if split == "train":
                 noisy_samples_per_grasp = 16
             else:
                 noisy_samples_per_grasp = 4
-        # To evaluate the "plateau of observations", comment out the following:
-        if split != "train":
-            noisy_samples_per_grasp = 4
+
+        if eval_observations_plateau:
+            if split == "test":
+                noisy_samples_per_grasp = 15
+
+        if eval_anchor_assignment:
+            noisy_samples_per_grasp = 1
+            max_views_per_grasp = 1
+
+        self._eval_anchor_assignment = eval_anchor_assignment
 
         super().__init__(
             dataset_name="ContactPose",
@@ -119,6 +128,10 @@ class ContactPoseDataset(BaseDataset):
             seed=seed,
             debug=debug,
         )
+
+    @property
+    def eval_anchor_assignment(self):
+        return self._eval_anchor_assignment
 
     @property
     def theta_dim(self):
@@ -151,7 +164,9 @@ class ContactPoseDataset(BaseDataset):
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
         participant_splits = (
-            self._use_contactopt_splits or self._use_improved_contactopt_splits
+            self._use_contactopt_splits
+            or self._use_improved_contactopt_splits
+            or self._eval_anchor_assignment
         )
         cp_dataset = {} if not participant_splits else []
         n_participants = 15 if tiny else 51
@@ -173,21 +188,25 @@ class ContactPoseDataset(BaseDataset):
                 self._use_contactopt_splits and self._use_improved_contactopt_splits
             ), "You can't use both ContactOpt's splits and the improved splits."
             # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
+            low_p, high_p = 0, 0
             if self._use_contactopt_splits:
-                low_p, high_p = 0, 0
                 if split == "train":
                     low_p, high_p = 0, 0.8
                 else:
                     low_p, high_p = 0.8, 1.0
             elif self._use_improved_contactopt_splits:
                 # I'm improving it so that we have a validation split here.
-                low_p, high_p = 0, 0
                 if split == "train":
                     low_p, high_p = 0, 0.7
                 elif split == "val":
                     low_p, high_p = 0.7, 0.8
                 elif split == "test":
                     low_p, high_p = 0.8, 1.0
+            elif self._eval_anchor_assignment:
+                if split != "test":
+                    low_p, high_p = 0.0, 0.1
+                else:
+                    low_p, high_p = 0.0, 1.0  # Use all the dataset to test this!
 
             low_split = int(len(cp_dataset) * low_p)
             high_split = int(len(cp_dataset) * high_p)
@@ -250,8 +269,8 @@ class ContactPoseDataset(BaseDataset):
             + (
                 f"_{self._validation_objects}-val-held-out"
                 + f"_{self._test_objects}-test-held-out"
-                if not self._use_contactopt_splits
-                else "_contactopt-splits"
+                if not participant_splits
+                else "_from-{low_p}_to-{high_p}_split"
             )
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",

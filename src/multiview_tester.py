@@ -21,7 +21,7 @@ from tqdm import tqdm
 from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
-from utils import to_cuda, to_cuda_
+from utils import colorize, to_cuda, to_cuda_
 from utils.training import optimize_pose_pca_from_choir
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
@@ -44,8 +44,14 @@ class MultiViewTester(MultiViewTrainer):
         """
         self._run_name = run_name
         self._model = model
-        assert model_ckpt_path is not None, "No checkpoint path provided."
-        self._load_checkpoint(model_ckpt_path, model_only=True)
+        if model_ckpt_path is None:
+            print(
+                colorize(
+                    "[!] No checkpoint path provided.", project_conf.ANSI_COLORS["red"]
+                )
+            )
+        else:
+            self._load_checkpoint(model_ckpt_path, model_only=True)
         self._training_loss = training_loss
         self._data_loader = data_loader
         self._running = True
@@ -123,13 +129,44 @@ class MultiViewTester(MultiViewTrainer):
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
         if use_input:
-            input_params = {
-                k: (v[:, -1] if multiple_obs else v)
-                for k, v in samples.items()
-                if k in ["theta", "beta", "rot", "trans"]
-            }
-            verts_pred, joints_pred = self._affine_mano(*input_params.values())
-            anchors_pred = self._affine_mano.get_anchors(verts_pred)
+            # For ground-truth:
+            if not self._data_loader.dataset.eval_anchor_assignment:
+                input_params = {
+                    k: (v[:, -1] if multiple_obs else v)
+                    for k, v in samples.items()
+                    if k in ["theta", "beta", "rot", "trans"]
+                }
+                verts_pred, joints_pred = self._affine_mano(*input_params.values())
+                anchors_pred = self._affine_mano.get_anchors(verts_pred)
+            # For MANO fitting:
+            else:
+                with torch.set_grad_enabled(True):
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(
+                        samples["choir"].squeeze(),
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=4000,
+                        loss_thresh=1e-10,
+                        lr=1e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=False,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params=None,  # We want to see how well we can fit a randomly initialize MANO of course!
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
         else:
             use_smplx = False  # TODO: I don't use it for now
             with torch.set_grad_enabled(True):
@@ -387,26 +424,26 @@ class MultiViewTester(MultiViewTrainer):
         ) = self._test_batch(
             samples, labels, mesh_pths, n_observations, batch_idx, use_prior=True
         )
-        (
-            anchor_error,
-            mpjpe,
-            root_aligned_mpjpe,
-            mpvpe,
-            intersection_volume,
-        ) = self._test_batch(
-            samples, labels, mesh_pths, n_observations, batch_idx, use_prior=False
-        )
+        # (
+        # anchor_error,
+        # mpjpe,
+        # root_aligned_mpjpe,
+        # mpvpe,
+        # intersection_volume,
+        # ) = self._test_batch(
+        # samples, labels, mesh_pths, n_observations, batch_idx, use_prior=False
+        # )
         return {
             "[PRIOR] Anchor error (mm)": anchor_error_p,
             "[PRIOR] MPJPE (mm)": mpjpe_p,
             "[PRIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe_p,
             "[PRIOR] MPVPE (mm)": mpvpe_p,
             "[PRIOR] Intersection volume (cm3)": intersection_volume_p,
-            "[POSTERIOR] Anchor error (mm)": anchor_error,
-            "[POSTERIOR] MPJPE (mm)": mpjpe,
-            "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
-            "[POSTERIOR] MPVPE (mm)": mpvpe,
-            "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
+            # "[POSTERIOR] Anchor error (mm)": anchor_error,
+            # "[POSTERIOR] MPJPE (mm)": mpjpe,
+            # "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
+            # "[POSTERIOR] MPVPE (mm)": mpvpe,
+            # "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
             # "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
             # "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
             # "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,

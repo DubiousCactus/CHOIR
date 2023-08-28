@@ -67,7 +67,7 @@ class BaseDataset(TaskSet, abc.ABC):
         # only meant to be used with the traditional context + target paradigm. This will work but
         # requires min_pts=1 and max_ctx_pts=1, as well as using n_target. Don't change any of
         # these defaults or it will break for this case.
-        seq_len = 1 if seq_len == 0 else seq_len
+        seq_len = 1 if seq_len == 0 else seq_len  # TODO: wtf is this??
         assert seq_len >= max_views_per_grasp
         super().__init__(
             min_pts=min_views_per_grasp,
@@ -150,6 +150,10 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+
+    @property
+    def eval_anchor_assignment(self):
+        return False
 
     @property
     def theta_dim(self):

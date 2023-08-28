@@ -89,6 +89,8 @@ dataset_store(
         noisy_samples_per_grasp=16,
         use_contactopt_splits=False,
         use_improved_contactopt_splits=False,
+        eval_observations_plateau=False,
+        eval_anchor_assignment=False,
     ),
     name="contactpose",
 )
