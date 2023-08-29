@@ -729,6 +729,8 @@ def visualize_MANO(
     cam_pose: Optional[tuple] = None,
 ):
     pl = pv.Plotter(off_screen=False)
+    if not isinstance(pred_hand, Trimesh):
+        pred_hand = Trimesh(pred_hand.vertices, pred_hand.triangles)
     hand_mesh = pv.wrap(pred_hand)
     pl.add_mesh(
         hand_mesh,
