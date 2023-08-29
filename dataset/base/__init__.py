@@ -156,6 +156,10 @@ class BaseDataset(TaskSet, abc.ABC):
         return False
 
     @property
+    def eval_observation_plateau(self):
+        return False
+
+    @property
     def theta_dim(self):
         raise NotImplementedError
 
@@ -200,7 +204,19 @@ class BaseDataset(TaskSet, abc.ABC):
         # https://stackoverflow.com/questions/27974126/get-all-n-choose-k-combinations-of-length-n
         self._observations_number = n
         if self._seq_len is not None:
-            self._combinations = list(itertools.combinations(range(self._seq_len), n))
+            if self.eval_observation_plateau:
+                # We don't wanna go through all combinations since that takes forever on more than
+                # 5 observations :( Instead, we'll randomly sample 100 combinations and use those
+                # for the evaluation. This should approximate the true accuracy anyways, and we're
+                # not interested in very precise numbers here.
+                comb = list(itertools.combinations(range(self._seq_len), n))
+                self._combinations = (
+                    random.sample(comb, 100) if len(comb) > 100 else comb
+                )
+            else:
+                self._combinations = list(
+                    itertools.combinations(range(self._seq_len), n)
+                )
             self._n_combinations = len(self._combinations)
         else:
             # We need to do things differently for GRAB, where we have sequences of variable

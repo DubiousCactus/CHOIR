@@ -95,6 +95,7 @@ class ContactPoseDataset(BaseDataset):
             else:
                 noisy_samples_per_grasp = 4
 
+        self._eval_observation_plateau = eval_observations_plateau
         if eval_observations_plateau:
             if split == "test":
                 noisy_samples_per_grasp = 15
@@ -132,6 +133,10 @@ class ContactPoseDataset(BaseDataset):
     @property
     def eval_anchor_assignment(self):
         return self._eval_anchor_assignment
+
+    @property
+    def eval_observation_plateau(self):
+        return self._eval_observation_plateau
 
     @property
     def theta_dim(self):

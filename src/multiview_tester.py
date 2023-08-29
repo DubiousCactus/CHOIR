@@ -273,6 +273,15 @@ class MultiViewTester(MultiViewTrainer):
             mpjpe, root_aligned_mpjpe = compute_mpjpe(gt_joints, joints_pred)
             mpjpe *= self._data_loader.dataset.base_unit
             root_aligned_mpjpe *= self._data_loader.dataset.base_unit
+            if self._data_loader.dataset.eval_observation_plateau:
+                return (
+                    anchor_error.detach(),
+                    mpjpe.detach(),
+                    root_aligned_mpjpe.detach(),
+                    torch.zeros(1),
+                    torch.zeros(1),
+                    torch.zeros(1),
+                )
             # ====== MPVPE ======
             # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
             # hand meshes.
