@@ -724,12 +724,15 @@ def visualize_MANO(
     obj_ptcld: Optional[torch.Tensor] = None,
     gt_hand: Optional[Any] = None,
     save_as: Optional[str] = None,
+    opacity: float = 0.4,
+    return_cam_pose: bool = False,
+    cam_pose: Optional[tuple] = None,
 ):
     pl = pv.Plotter(off_screen=False)
     hand_mesh = pv.wrap(pred_hand)
     pl.add_mesh(
         hand_mesh,
-        opacity=0.4,
+        opacity=opacity,
         name="hand_mesh",
         label="Predicted Hand",
         smooth_shading=True,
@@ -751,7 +754,7 @@ def visualize_MANO(
         obj_mesh_pv = pv.wrap(obj_mesh)
         pl.add_mesh(
             obj_mesh_pv,
-            opacity=0.3,
+            opacity=opacity,
             name="obj_mesh",
             label="Object mesh",
             smooth_shading=True,
@@ -767,8 +770,11 @@ def visualize_MANO(
         )
     pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
-    pl.add_camera_orientation_widget()
+    # pl.add_camera_orientation_widget()
     pl.add_legend(loc="upper left", size=(0.1, 0.1))
+    if cam_pose is not None:
+        pl.camera.model_transform_matrix = cam_pose[1]
+        pl.camera.position = cam_pose[0]
     if save_as is not None:
         # pl.show()
         # pl.screenshot(save_as)
@@ -777,6 +783,8 @@ def visualize_MANO(
     else:
         pl.add_axes_at_origin()
         pl.show(interactive=True)
+    if return_cam_pose:
+        return (pl.camera.position, pl.camera.model_transform_matrix)
 
 
 class ScenePicAnim:

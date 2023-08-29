@@ -286,6 +286,7 @@ class RunConfig:
     load_from: Optional[str] = None
     training_mode: bool = True
     fine_tune: bool = False
+    save_predictions: bool = False
 
 
 run_store = store(group="run")

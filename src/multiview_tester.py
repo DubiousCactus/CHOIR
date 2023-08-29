@@ -6,6 +6,7 @@
 # Distributed under terms of the MIT license.
 
 
+import os
 import pickle
 import signal
 from collections import defaultdict
@@ -18,6 +19,7 @@ import open3d.io as o3dio
 import torch
 import trimesh
 import trimesh.voxel.creation as voxel_create
+from hydra.core.hydra_config import HydraConfig
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -27,7 +29,10 @@ from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.training import optimize_pose_pca_from_choir
-from utils.visualization import visualize_model_predictions_with_multiple_views
+from utils.visualization import (
+    visualize_MANO,
+    visualize_model_predictions_with_multiple_views,
+)
 
 
 class MultiViewTester(MultiViewTrainer):
@@ -72,6 +77,7 @@ class MultiViewTester(MultiViewTrainer):
         self._anchor_indices = to_cuda_(data_loader.dataset.anchor_indices)
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
+        self._n_ctrl_c = 0
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -107,6 +113,7 @@ class MultiViewTester(MultiViewTrainer):
         batch_idx: int,
         use_prior: bool = True,
         use_input: bool = False,
+        save_predictions: bool = False,
     ) -> Tuple:
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
@@ -132,6 +139,11 @@ class MultiViewTester(MultiViewTrainer):
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
+        # For mesh_pths we have a tuple of N lists of B entries. N is the number of
+        # observations and B is the batch size. We'll take the last observation for each batch
+        # element.
+        mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
+
         if use_input:
             # For ground-truth:
             if not self._data_loader.dataset.eval_anchor_assignment:
@@ -207,26 +219,48 @@ class MultiViewTester(MultiViewTrainer):
                     theta_w=1e-7,
                     choir_w=1000,
                 )
-            # if use_prior:
-            # image_dir = os.path.join(HydraConfig.get().runtime.output_dir, "tto_images",
-            # f"N={n_observations}")
-            # if not os.path.exists(image_dir):
-            # os.makedirs(image_dir)
-            # viewed_meshes = []
-            # for i, mesh_pth in enumerate(mesh_pths):
-            # mesh_name = os.path.basename(mesh_pth)
-            # if mesh_name not in viewed_meshes:
-            # pred_hand_mesh = trimesh.Trimesh(vertices=verts_pred[i].detach().cpu().numpy(),
-            # faces=self._affine_mano.closed_faces.detach().cpu().numpy())
-            # gt_hand_mesh = trimesh.Trimesh(vertices=gt_verts[i].detach().cpu().numpy(),
-            # faces=self._affine_mano.closed_faces.detach().cpu().numpy())
-            # obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-            # if self._data_loader.dataset.center_on_object_com:
-            # obj_mesh.translate(-obj_mesh.get_center())
-            # visualize_MANO(pred_hand_mesh, obj_mesh, gt_hand=gt_hand_mesh,
-            # save_as=os.path.join(image_dir,
-            # f"{mesh_name}_tto_{batch_idx}.html"))
-            # viewed_meshes.append(mesh_name)
+            if save_predictions:
+                image_dir = os.path.join(
+                    HydraConfig.get().runtime.output_dir,
+                    "tto_images",
+                    f"N={n_observations}",
+                )
+                if not os.path.exists(image_dir):
+                    os.makedirs(image_dir)
+                viewed_meshes = []
+                for i, mesh_pth in enumerate(mesh_pths):
+                    mesh_name = os.path.basename(mesh_pth)
+                    if mesh_name not in viewed_meshes:
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[i].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[i].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                        if self._data_loader.dataset.center_on_object_com:
+                            obj_mesh.translate(-obj_mesh.get_center())
+                        cam_pose = visualize_MANO(
+                            gt_hand_mesh,
+                            obj_mesh,
+                            save_as=os.path.join(
+                                image_dir, f"{mesh_name}_tto_{batch_idx}_GT.html"
+                            ),
+                            opacity=1.0,
+                            return_cam_pose=True,
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh,
+                            save_as=os.path.join(
+                                image_dir, f"{mesh_name}_tto_{batch_idx}.html"
+                            ),
+                            opacity=1.0,
+                            cam_pose=cam_pose,
+                        )
+                        viewed_meshes.append(mesh_name)
         with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
@@ -325,10 +359,6 @@ class MultiViewTester(MultiViewTrainer):
             # TODO: Multithread this?
             # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
             obj_voxels = {}
-            # For mesh_pths we have a tuple of N lists of K entries. N is the number of
-            # observations and K is the batch size. We'll take the last observation for each batch
-            # element.
-            mesh_pths = [x[-1] for x in mesh_pths]
             for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
                 if path not in obj_voxels:
                     obj_mesh = o3dio.read_triangle_mesh(path)
@@ -362,15 +392,15 @@ class MultiViewTester(MultiViewTrainer):
                 # ),
                 # )
                 # both_voxels.show()
-                obj_volume = (
-                    np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
-                )  # m^3 -> cm^3
-                hand_volume = (
-                    np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
-                )  # m^3 -> cm^3
-                typical_hand_volume = (
-                    379.7  # cm^3 https://doi.org/10.1177/154193128603000417
-                )
+                # obj_volume = (
+                # np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
+                # )  # m^3 -> cm^3
+                # hand_volume = (
+                # np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
+                # )  # m^3 -> cm^3
+                # typical_hand_volume = (
+                # 379.7  # cm^3 https://doi.org/10.1177/154193128603000417
+                # )
                 # Make sure we're within 35% of the typical hand volume:
                 # assert (
                 # hand_volume > typical_hand_volume * 0.65
@@ -383,7 +413,6 @@ class MultiViewTester(MultiViewTrainer):
                 # print(
                 # f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
                 # )
-
                 intersection_volume = (
                     np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
                 )
@@ -407,6 +436,7 @@ class MultiViewTester(MultiViewTrainer):
         batch: Union[Tuple, List, torch.Tensor],
         n_observations: int,
         batch_idx: int,
+        save_predictions: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Evaluation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
@@ -430,7 +460,13 @@ class MultiViewTester(MultiViewTrainer):
             mpvpe_p,
             intersection_volume_p,
         ) = self._test_batch(
-            samples, labels, mesh_pths, n_observations, batch_idx, use_prior=True
+            samples,
+            labels,
+            mesh_pths,
+            n_observations,
+            batch_idx,
+            use_prior=True,
+            save_predictions=save_predictions,
         )
         # (
         # anchor_error,
@@ -460,7 +496,10 @@ class MultiViewTester(MultiViewTrainer):
         }
 
     def test_n_observations(
-        self, n_observations: int, visualize_every: int = 0
+        self,
+        n_observations: int,
+        visualize_every: int = 0,
+        save_predictions: bool = False,
     ) -> Dict[str, float]:
         metrics = defaultdict(MeanMetric)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
@@ -471,7 +510,9 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            batch_metrics = self._test_iteration(batch, n_observations, i)
+            batch_metrics = self._test_iteration(
+                batch, n_observations, i, save_predictions
+            )
             for k, v in batch_metrics.items():
                 metrics[k].update(v.detach().item())
             del batch_metrics
@@ -504,7 +545,11 @@ class MultiViewTester(MultiViewTrainer):
         with torch.no_grad():
             for i in range(1, 15):
                 test_errors.append(
-                    self.test_n_observations(i, visualize_every=visualize_every)
+                    self.test_n_observations(
+                        i,
+                        visualize_every=visualize_every,
+                        save_predictions=kwargs["save_predictions"],
+                    )
                 )
 
         with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
