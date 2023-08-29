@@ -379,6 +379,35 @@ experiment_store(
     name="multiview_contactopt_replica",
 )
 
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "agg_ved"},
+            {"override /trainer": "multiview"},
+            {"override /tester": "multiview"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=4,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            augment=True,
+            n_augs=20,
+        ),
+        training_loss=dict(multi_view=True, kl_w=1e-11, use_kl_scheduler=True),
+        data_loader=dict(batch_size=64, num_workers=4, prefetch_factor=2),
+        model=dict(
+            latent_dim=128,
+            encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
+            decoder_layer_dims=(1024, 1024, 1024),
+            residual_connections=True,
+        ),
+        bases=(Experiment,),
+    ),
+    name="multiview_contactopt",
+)
+
 
 experiment_store(
     make_config(

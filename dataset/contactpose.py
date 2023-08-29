@@ -275,7 +275,7 @@ class ContactPoseDataset(BaseDataset):
                 f"_{self._validation_objects}-val-held-out"
                 + f"_{self._test_objects}-test-held-out"
                 if not participant_splits
-                else "_from-{low_p}_to-{high_p}_split"
+                else f"_from-{low_p}_to-{high_p}_split"
             )
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",

@@ -16,12 +16,14 @@ import blosc
 import matplotlib.pyplot as plt
 import numpy as np
 import open3d.io as o3dio
+import pyvista as pv
 import torch
 import trimesh
 from hydra.core.hydra_config import HydraConfig
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
+from trimesh import Trimesh
 
 from conf import project as project_conf
 from model.affine_mano import AffineMANO
@@ -29,10 +31,7 @@ from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.testing import compute_mpjpe, compute_solid_intersection_volume
 from utils.training import optimize_pose_pca_from_choir
-from utils.visualization import (
-    visualize_MANO,
-    visualize_model_predictions_with_multiple_views,
-)
+from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
 class MultiViewTester(MultiViewTrainer):
@@ -113,7 +112,6 @@ class MultiViewTester(MultiViewTrainer):
         batch_idx: int,
         use_prior: bool = True,
         use_input: bool = False,
-        save_predictions: bool = False,
     ) -> Tuple:
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
@@ -219,48 +217,6 @@ class MultiViewTester(MultiViewTrainer):
                     theta_w=1e-7,
                     choir_w=1000,
                 )
-            if save_predictions:
-                image_dir = os.path.join(
-                    HydraConfig.get().runtime.output_dir,
-                    "tto_images",
-                    f"N={n_observations}",
-                )
-                if not os.path.exists(image_dir):
-                    os.makedirs(image_dir)
-                viewed_meshes = []
-                for i, mesh_pth in enumerate(mesh_pths):
-                    mesh_name = os.path.basename(mesh_pth)
-                    if mesh_name not in viewed_meshes:
-                        pred_hand_mesh = trimesh.Trimesh(
-                            vertices=verts_pred[i].detach().cpu().numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        gt_hand_mesh = trimesh.Trimesh(
-                            vertices=gt_verts[i].detach().cpu().numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                        if self._data_loader.dataset.center_on_object_com:
-                            obj_mesh.translate(-obj_mesh.get_center())
-                        cam_pose = visualize_MANO(
-                            gt_hand_mesh,
-                            obj_mesh,
-                            save_as=os.path.join(
-                                image_dir, f"{mesh_name}_tto_{batch_idx}_GT.html"
-                            ),
-                            opacity=1.0,
-                            return_cam_pose=True,
-                        )
-                        visualize_MANO(
-                            pred_hand_mesh,
-                            obj_mesh,
-                            save_as=os.path.join(
-                                image_dir, f"{mesh_name}_tto_{batch_idx}.html"
-                            ),
-                            opacity=1.0,
-                            cam_pose=cam_pose,
-                        )
-                        viewed_meshes.append(mesh_name)
         with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
@@ -363,7 +319,6 @@ class MultiViewTester(MultiViewTrainer):
         batch: Union[Tuple, List, torch.Tensor],
         n_observations: int,
         batch_idx: int,
-        save_predictions: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Evaluation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
@@ -395,7 +350,6 @@ class MultiViewTester(MultiViewTrainer):
             n_observations,
             batch_idx,
             use_prior=True,
-            save_predictions=save_predictions,
         )
         # (
         # anchor_error,
@@ -428,11 +382,180 @@ class MultiViewTester(MultiViewTrainer):
             # "[NOISY INPUT] Contact coverage (%)": contact_coverage_x,
         }
 
+    @to_cuda
+    def _save_batch_predictions(
+        self,
+        samples: Dict,
+        labels: Dict,
+        mesh_pths: List[str],
+        n_observations: int,
+        batch_idx: int,
+    ):
+        print("save_batch_predictions")
+        plots = {}
+        gt_is_plotted = False
+        for n in range(1, n_observations + 1):
+            print(f"For {n} observations")
+            print(samples["choir"].shape, samples["choir"][:, :n].shape)
+            input_scalar = samples["scalar"]
+            if len(input_scalar.shape) == 2:
+                input_scalar = input_scalar.mean(
+                    dim=1
+                )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
+            y_hat = self._model(samples["choir"][:, :n], use_mean=True)
+            print(y_hat["choir"].shape)
+            mano_params_gt = {
+                "pose": labels["theta"][:, :n],
+                "beta": labels["beta"][:, :n],
+                "rot_6d": labels["rot"][:, :n],
+                "trans": labels["trans"][:, :n],
+            }
+            # Only use the last view for each batch element (they're all the same anyway for static
+            # grasps, but for dynamic grasps we want to predict the LAST frame!).
+            mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+            gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+            gt_verts, gt_joints = self._affine_mano(
+                gt_pose, gt_shape, gt_rot_6d, gt_trans
+            )
+            if not self._data_loader.dataset.is_right_hand_only:
+                raise NotImplementedError("Right hand only is implemented for testing.")
+            multiple_obs = len(samples["theta"].shape) > 2
+            # For mesh_pths we have a tuple of N lists of B entries. N is the number of
+            # observations and B is the batch size. We'll take the last observation for each batch
+            # element.
+            mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
+            use_smplx = False  # TODO: I don't use it for now
+
+            with torch.set_grad_enabled(True):
+                (
+                    _,
+                    _,
+                    _,
+                    _,
+                    anchors_pred,
+                    verts_pred,
+                    joints_pred,
+                ) = optimize_pose_pca_from_choir(
+                    y_hat["choir"],
+                    bps=self._bps,
+                    anchor_indices=self._anchor_indices,
+                    scalar=input_scalar,
+                    max_iterations=2000,
+                    loss_thresh=1e-6,
+                    lr=8e-2,
+                    is_rhand=samples["is_rhand"],
+                    use_smplx=use_smplx,
+                    dataset=self._data_loader.dataset.name,
+                    remap_bps_distances=self._remap_bps_distances,
+                    exponential_map_w=self._exponential_map_w,
+                    initial_params={
+                        k: (
+                            v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                        )  # Initial pose is the last observation
+                        for k, v in samples.items()
+                        if k
+                        in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                    },
+                    beta_w=1e-4,
+                    theta_w=1e-7,
+                    choir_w=1000,
+                )
+                image_dir = os.path.join(
+                    HydraConfig.get().runtime.output_dir,
+                    "tto_images",
+                )
+                if not os.path.exists(image_dir):
+                    os.makedirs(image_dir)
+                viewed_meshes = []
+                for i, mesh_pth in enumerate(mesh_pths_iter):
+                    mesh_name = os.path.basename(mesh_pth)
+                    if mesh_name in viewed_meshes:
+                        continue
+                    pred_hand_mesh = trimesh.Trimesh(
+                        vertices=verts_pred[i].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                    if self._data_loader.dataset.center_on_object_com:
+                        obj_mesh.translate(-obj_mesh.get_center())
+                    obj_mesh_pv = pv.wrap(
+                        Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                    )
+
+                    if mesh_name not in plots:
+                        pl = pv.Plotter(
+                            shape=(1, n_observations + 1),
+                            border=False,
+                            off_screen=False,
+                        )
+                        plots[mesh_name] = pl
+
+                    pl = plots[mesh_name]
+                    if not gt_is_plotted:
+                        pl.subplot(0, 0)
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[i].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        gt_hand = pv.wrap(gt_hand_mesh)
+                        pl.add_mesh(
+                            gt_hand,
+                            opacity=1.0,
+                            name="gt_hand",
+                            label="Ground-truth Hand",
+                            smooth_shading=True,
+                        )
+                        pl.add_mesh(
+                            obj_mesh_pv,
+                            opacity=1.0,
+                            name="obj_mesh",
+                            label="Object mesh",
+                            smooth_shading=True,
+                            color="red",
+                        )
+
+                    pl.subplot(0, n)
+                    hand_mesh = pv.wrap(pred_hand_mesh)
+                    pl.add_mesh(
+                        hand_mesh,
+                        opacity=1.0,
+                        name="hand_mesh",
+                        label="Predicted Hand",
+                        smooth_shading=True,
+                    )
+                    pl.add_mesh(
+                        obj_mesh_pv,
+                        opacity=1.0,
+                        name="obj_mesh",
+                        label="Object mesh",
+                        smooth_shading=True,
+                        color="red",
+                    )
+                    viewed_meshes.append(mesh_name)
+        for mesh_name, plot in plots.items():
+            plot.set_background("white")  # type: ignore
+            plot.link_views()
+            plot.export_html(
+                os.path.join(image_dir, f"{mesh_name}_tto_{batch_idx}.html")
+            )
+
+    def _save_model_predictions(self, n_observations: int) -> None:
+        """The deadline is in 20h so I'll write this quick and dirty, sorry reader."""
+        self._data_loader.dataset.set_observations_number(n_observations)
+        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar.refresh()
+        for i, batch in enumerate(self._data_loader):
+            if not self._running:
+                print("[!] Testing aborted.")
+            samples, labels, mesh_pths = batch  # type: ignore
+            self._save_batch_predictions(samples, labels, mesh_pths, n_observations, i)
+            self._pbar.update()
+        self._pbar.close()
+
     def test_n_observations(
         self,
         n_observations: int,
         visualize_every: int = 0,
-        save_predictions: bool = False,
     ) -> Dict[str, float]:
         metrics = defaultdict(MeanMetric)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
@@ -443,9 +566,7 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            batch_metrics = self._test_iteration(
-                batch, n_observations, i, save_predictions
-            )
+            batch_metrics = self._test_iteration(batch, n_observations, i)
             for k, v in batch_metrics.items():
                 metrics[k].update(v.detach().item())
             del batch_metrics
@@ -474,6 +595,10 @@ class MultiViewTester(MultiViewTrainer):
             Defaults to 0 (no visualization).
         """
         self._model.eval()
+        if kwargs["save_predictions"]:
+            with torch.no_grad():
+                self._save_model_predictions(4)
+            return
         test_errors = []
         with torch.no_grad():
             for i in range(1, 15):
@@ -481,7 +606,6 @@ class MultiViewTester(MultiViewTrainer):
                     self.test_n_observations(
                         i,
                         visualize_every=visualize_every,
-                        save_predictions=kwargs["save_predictions"],
                     )
                 )
 
