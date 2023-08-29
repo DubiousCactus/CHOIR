@@ -13,7 +13,11 @@ from typing import Dict, List, Tuple, Union
 
 import blosc
 import matplotlib.pyplot as plt
+import numpy as np
+import open3d.io as o3dio
 import torch
+import trimesh
+import trimesh.voxel.creation as voxel_create
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -306,8 +310,11 @@ class MultiViewTester(MultiViewTrainer):
             # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
             # visualize_MANO(hand_mesh, obj_mesh=intersection)
             # intersection_volumes.append(intersection.volume)
+
             # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
             # both meshes:
+            intersection_volumes = []
+            mano_faces = self._affine_mano.faces.cpu().numpy()
             pitch_mm = 2
             pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
             # TODO: The radius only needs to be slightly larger than the object bounding box.
@@ -316,75 +323,76 @@ class MultiViewTester(MultiViewTrainer):
             # canonical position in the test set! This might be the case for ContactPose, but probably
             # not for GRAB.
             # TODO: Multithread this?
-            obj_voxels = {}
             # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
-            # for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
-            # break
-            # if path not in obj_voxels:
-            # obj_mesh = o3dio.read_triangle_mesh(path)
-            # if self._data_loader.dataset.center_on_object_com:
-            # obj_mesh.translate(-obj_mesh.get_center())
-            # obj_mesh = trimesh.Trimesh(
-            # vertices=obj_mesh.vertices, faces=obj_mesh.triangles
-            # )
-            # obj_voxel = (
-            # voxel_create.local_voxelize(
-            # obj_mesh, np.array([0, 0, 0]), pitch, radius
-            # )
-            # .fill()
-            # .matrix
-            # )
-            # obj_voxels[path] = obj_voxel
-            # else:
-            # obj_voxel = obj_voxels[path]
-            # hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
-            # hand_voxel = (
-            # voxel_create.local_voxelize(
-            # hand_mesh, np.array([0, 0, 0]), pitch, radius
-            # )
-            # .fill()
-            # .matrix
-            # )
-            # # both_voxels = trimesh.voxel.VoxelGrid(
-            # # trimesh.voxel.encoding.DenseEncoding(
-            # # obj_voxel | hand_voxel
-            # # ),
-            # # )
-            # # both_voxels.show()
-            # obj_volume = (
-            # np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
-            # )  # m^3 -> cm^3
-            # hand_volume = (
-            # np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
-            # )  # m^3 -> cm^3
-            # typical_hand_volume = (
-            # 379.7  # cm^3 https://doi.org/10.1177/154193128603000417
-            # )
-            # # Make sure we're within 35% of the typical hand volume:
-            # # assert (
-            # # hand_volume > typical_hand_volume * 0.65
-            # # and hand_volume < typical_hand_volume * 1.35
-            # # ), f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
-            # if (
-            # hand_volume > typical_hand_volume * 0.65
-            # and hand_volume < typical_hand_volume * 1.35
-            # ):
-            # print(
-            # f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
-            # )
+            obj_voxels = {}
+            # For mesh_pths we have a tuple of N lists of K entries. N is the number of
+            # observations and K is the batch size. We'll take the last observation for each batch
+            # element.
+            mesh_pths = [x[-1] for x in mesh_pths]
+            for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
+                if path not in obj_voxels:
+                    obj_mesh = o3dio.read_triangle_mesh(path)
+                    if self._data_loader.dataset.center_on_object_com:
+                        obj_mesh.translate(-obj_mesh.get_center())
 
-            # intersection_volume = (
-            # np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
-            # )
-            # print(
-            # f"Volume of hand: {hand_volume:.2f} cm^3, volume of obj: {obj_volume:.2f} cm^3, intersection volume: {intersection_volume:.2f} cm^3"
-            # )
-            # intersection_volumes.append(intersection_volume)
-            # if i == 10:
-            # break
+                    obj_mesh = trimesh.Trimesh(
+                        vertices=obj_mesh.vertices, faces=obj_mesh.triangles
+                    )
+                    obj_voxel = (
+                        voxel_create.local_voxelize(
+                            obj_mesh, np.array([0, 0, 0]), pitch, radius
+                        )
+                        .fill()
+                        .matrix
+                    )
+                    obj_voxels[path] = obj_voxel
+                else:
+                    obj_voxel = obj_voxels[path]
+                hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
+                hand_voxel = (
+                    voxel_create.local_voxelize(
+                        hand_mesh, np.array([0, 0, 0]), pitch, radius
+                    )
+                    .fill()
+                    .matrix
+                )
+                # both_voxels = trimesh.voxel.VoxelGrid(
+                # trimesh.voxel.encoding.DenseEncoding(
+                # obj_voxel | hand_voxel
+                # ),
+                # )
+                # both_voxels.show()
+                obj_volume = (
+                    np.count_nonzero(obj_voxel) * (pitch**3) * 1000000
+                )  # m^3 -> cm^3
+                hand_volume = (
+                    np.count_nonzero(hand_voxel) * (pitch**3) * 1000000
+                )  # m^3 -> cm^3
+                typical_hand_volume = (
+                    379.7  # cm^3 https://doi.org/10.1177/154193128603000417
+                )
+                # Make sure we're within 35% of the typical hand volume:
+                # assert (
+                # hand_volume > typical_hand_volume * 0.65
+                # and hand_volume < typical_hand_volume * 1.35
+                # ), f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
+                # if (
+                # hand_volume > typical_hand_volume * 0.65
+                # and hand_volume < typical_hand_volume * 1.35
+                # ):
+                # print(
+                # f"Hand volume is {hand_volume:.2f} cm^3, which is not within 30% of the typical"
+                # )
 
-        # # intersection_volume = torch.tensor(intersection_volumes).float().mean()
-        intersection_volume = torch.tensor(0.0)
+                intersection_volume = (
+                    np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
+                )
+                # print(
+                # f"Volume of hand: {hand_volume:.2f} cm^3, volume of obj: {obj_volume:.2f} cm^3, intersection volume: {intersection_volume:.2f} cm^3"
+                # )
+                intersection_volumes.append(intersection_volume)
+
+        intersection_volume = torch.tensor(intersection_volumes).float().mean()
         return (
             anchor_error.detach(),
             mpjpe.detach(),
