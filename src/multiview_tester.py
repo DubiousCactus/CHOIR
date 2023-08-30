@@ -266,7 +266,6 @@ class MultiViewTester(MultiViewTrainer):
                 self._data_loader.dataset.center_on_object_com,
                 return_meshes=True,
             )
-            intersection_volume = torch.zeros(1)
             # ======= Contact Coverage =======
             # Percentage of hand points within 2mm of the object surface.
             contact_coverage = []

@@ -24,18 +24,13 @@ from open3d import io as o3dio
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
-from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
 from utils.dataset import augment_hand_object_pose, compute_choir, get_scalar
-from utils.visualization import (
-    visualize_CHOIR,
-    visualize_CHOIR_prediction,
-    visualize_MANO,
-)
+from utils.visualization import visualize_CHOIR
 
 
 class ContactPoseDataset(BaseDataset):
@@ -174,7 +169,7 @@ class ContactPoseDataset(BaseDataset):
             or self._eval_anchor_assignment
         )
         cp_dataset = {} if not participant_splits else []
-        n_participants = 15 if tiny else 51
+        n_participants = 3 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):
@@ -378,6 +373,7 @@ class ContactPoseDataset(BaseDataset):
         print("[*] Computing CHOIR fields...")
         pbar = tqdm(total=len(objects_w_contacts) * (n_augs + 1))
         dataset_mpjpe = MeanMetric()
+        dataset_root_aligned_mpjpe = MeanMetric()
         for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
             """
             grasp_data = {
@@ -510,7 +506,14 @@ class ContactPoseDataset(BaseDataset):
                         mpjpe = torch.linalg.vector_norm(
                             joints.squeeze(0) - gt_joints.squeeze(0), dim=1, ord=2
                         ).mean()
+                        root_aligned_mpjpe = torch.linalg.vector_norm(
+                            (joints - joints[:, 0:1, :]).squeeze(0)
+                            - (gt_joints - gt_joints[:, 0:1, :]).squeeze(0),
+                            dim=1,
+                            ord=2,
+                        ).mean()
                         dataset_mpjpe.update(mpjpe.item())
+                        dataset_root_aligned_mpjpe.update(root_aligned_mpjpe.item())
 
                         anchors = affine_mano.get_anchors(verts)
                         scalar = get_scalar(anchors, obj_ptcld, self._rescale)
@@ -558,49 +561,53 @@ class ContactPoseDataset(BaseDataset):
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
                             visualize_CHOIR(
-                                choir.squeeze(0),
+                                # choir.squeeze(0),
+                                gt_choir.squeeze(0),
                                 self._bps,
                                 self._anchor_indices,
                                 scalar,
-                                verts.squeeze(0),
-                                anchors.squeeze(0),
+                                gt_verts.squeeze(0),
+                                gt_anchors.squeeze(0),
                                 obj_mesh,
                                 obj_ptcld,
                                 gt_rescaled_ref_pts.squeeze(0),
                                 affine_mano,
                             )
-                            faces = affine_mano.faces
-                            gt_MANO_mesh = Trimesh(
-                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            )
-                            pred_MANO_mesh = Trimesh(
-                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            )
-                            visualize_MANO(
-                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            )
-                            visualize_CHOIR_prediction(
-                                gt_choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                scalar,
-                                gt_scalar,
-                                rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                            )
+                            # faces = affine_mano.faces
+                            # gt_MANO_mesh = Trimesh(
+                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # pred_MANO_mesh = Trimesh(
+                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # visualize_MANO(
+                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            # )
+                            # visualize_CHOIR_prediction(
+                            # gt_choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # gt_scalar,
+                            # rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # )
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()
         print(
             f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
+        )
+        print(
+            f"[*] Dataset Root-aligned MPJPE (mm): {dataset_root_aligned_mpjpe.compute().item() * self.base_unit}"
         )
         return grasp_paths
