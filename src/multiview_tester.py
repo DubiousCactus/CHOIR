@@ -274,15 +274,15 @@ class MultiViewTester(MultiViewTrainer):
             contact_coverage = []
             N = 3000
             for i, path in enumerate(mesh_pths):
-                # pred_hand_mesh = trimesh.Trimesh(
-                # vertices=verts_pred[i].detach().cpu().numpy(),
-                # faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                # )
-                gt_hand_mesh = trimesh.Trimesh(
-                    vertices=gt_verts[i].detach().cpu().numpy(),
-                    # Careful not to use the closed faces as they shouldn't count for the hand surface points!
-                    faces=self._affine_mano.faces.detach().cpu().numpy(),
+                pred_hand_mesh = trimesh.Trimesh(
+                    vertices=verts_pred[i].detach().cpu().numpy(),
+                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
+                # gt_hand_mesh = trimesh.Trimesh(
+                # vertices=gt_verts[i].detach().cpu().numpy(),
+                # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
+                # faces=self._affine_mano.faces.detach().cpu().numpy(),
+                # )
                 obj_points = (
                     torch.from_numpy(
                         np.asarray(
@@ -293,7 +293,9 @@ class MultiViewTester(MultiViewTrainer):
                     .float()
                 )
                 hand_points = (
-                    torch.from_numpy(trimesh.sample.sample_surface(gt_hand_mesh, N)[0])
+                    torch.from_numpy(
+                        trimesh.sample.sample_surface(pred_hand_mesh, N)[0]
+                    )
                     .cuda()
                     .float()
                 )
