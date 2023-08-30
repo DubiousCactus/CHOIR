@@ -410,6 +410,12 @@ class MultiViewTester(MultiViewTrainer):
                 "rot_6d": labels["rot"][:, :n],
                 "trans": labels["trans"][:, :n],
             }
+            mano_params_input = {
+                "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
+                "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
+                "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
+                "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
+            }
             # Only use the last view for each batch element (they're all the same anyway for static
             # grasps, but for dynamic grasps we want to predict the LAST frame!).
             mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
@@ -417,6 +423,7 @@ class MultiViewTester(MultiViewTrainer):
             gt_verts, gt_joints = self._affine_mano(
                 gt_pose, gt_shape, gt_rot_6d, gt_trans
             )
+            sample_verts, sample_joints = self._affine_mano(*mano_params_input.values())
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
             multiple_obs = len(samples["theta"].shape) > 2
@@ -484,7 +491,7 @@ class MultiViewTester(MultiViewTrainer):
 
                     if mesh_name not in plots:
                         pl = pv.Plotter(
-                            shape=(1, n_observations + 1),
+                            shape=(2, n_observations + 1),
                             border=False,
                             off_screen=False,
                         )
@@ -503,6 +510,32 @@ class MultiViewTester(MultiViewTrainer):
                             opacity=1.0,
                             name="gt_hand",
                             label="Ground-truth Hand",
+                            smooth_shading=True,
+                        )
+                        pl.add_mesh(
+                            obj_mesh_pv,
+                            opacity=1.0,
+                            name="obj_mesh",
+                            label="Object mesh",
+                            smooth_shading=True,
+                            color="red",
+                        )
+                        pl.subplot(1, n)
+                        # i corresponds to batch element
+                        # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
+                        input_hand_mesh = trimesh.Trimesh(
+                            vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
+                            .detach()
+                            .cpu()
+                            .numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        input_hand = pv.wrap(input_hand_mesh)
+                        pl.add_mesh(
+                            input_hand,
+                            opacity=1.0,
+                            name="input_hand",
+                            label="Input Hand",
                             smooth_shading=True,
                         )
                         pl.add_mesh(
