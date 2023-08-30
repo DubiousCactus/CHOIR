@@ -260,6 +260,7 @@ class MultiViewTester(MultiViewTrainer):
             # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
             # the thing to do is to skip empty voxels. I'll try to implement it.
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
+            object_meshes = None
             intersection_volume, object_meshes = compute_solid_intersection_volume(
                 pitch,
                 radius,
@@ -270,6 +271,13 @@ class MultiViewTester(MultiViewTrainer):
                 return_meshes=True,
             )
             # ======= Contact Coverage =======
+            if object_meshes is None:
+                object_meshes = {}
+                for path in mesh_pths:
+                    obj_mesh = o3dio.read_triangle_mesh(path)
+                    if self._data_loader.dataset.center_on_object_com:
+                        obj_mesh.translate(-obj_mesh.get_center())
+                    object_meshes[path] = obj_mesh
             # Percentage of hand points within 2mm of the object surface.
             contact_coverage = []
             N = 3000
