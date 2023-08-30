@@ -256,6 +256,9 @@ class MultiViewTester(MultiViewTrainer):
             pitch_mm = 2
             pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
             # TODO: The radius only needs to be slightly larger than the object bounding box.
+            # TODO: WARNING!! For GRAB and approaching hands I can end up with empty hand voxels
+            # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
+            # the thing to do is to skip empty voxels. I'll try to implement it.
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             intersection_volume, object_meshes = compute_solid_intersection_volume(
                 pitch,

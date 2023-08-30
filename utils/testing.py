@@ -175,11 +175,14 @@ def compute_solid_intersection_volume(
         else:
             obj_voxel = obj_voxels[path]
         hand_mesh = trimesh.Trimesh(hand_verts[i].cpu().numpy(), mesh_faces)
-        hand_voxel = (
-            voxel_create.local_voxelize(hand_mesh, np.array([0, 0, 0]), pitch, radius)
-            .fill()
-            .matrix
+        hand_voxel = voxel_create.local_voxelize(
+            hand_mesh, np.array([0, 0, 0]), pitch, radius
         )
+        # If the hand voxel is empty, return 0.0:
+        if np.count_nonzero(hand_voxel) == 0:
+            intersection_volumes.append(0.0)
+            continue
+        hand_voxel = hand_voxel.fill().matrix
         # both_voxels = trimesh.voxel.VoxelGrid(
         # trimesh.voxel.encoding.DenseEncoding(
         # obj_voxel | hand_voxel
