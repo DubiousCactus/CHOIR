@@ -261,6 +261,7 @@ class MultiViewTester(MultiViewTrainer):
             # the thing to do is to skip empty voxels. I'll try to implement it.
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             object_meshes = None
+            intersection_volume = torch.zeros(1)
             intersection_volume, object_meshes = compute_solid_intersection_volume(
                 pitch,
                 radius,
