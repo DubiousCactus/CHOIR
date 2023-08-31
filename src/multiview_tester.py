@@ -6,6 +6,7 @@
 # Distributed under terms of the MIT license.
 
 
+import json
 import os
 import pickle
 import signal
@@ -20,6 +21,7 @@ import pyvista as pv
 import torch
 import trimesh
 from hydra.core.hydra_config import HydraConfig
+from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -31,7 +33,10 @@ from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.testing import compute_mpjpe, compute_solid_intersection_volume
 from utils.training import optimize_pose_pca_from_choir
-from utils.visualization import visualize_model_predictions_with_multiple_views
+from utils.visualization import (
+    ScenePicAnim,
+    visualize_model_predictions_with_multiple_views,
+)
 
 
 class MultiViewTester(MultiViewTrainer):
@@ -396,6 +401,135 @@ class MultiViewTester(MultiViewTrainer):
         }
 
     @to_cuda
+    def _save_batch_predictions_as_sequence(
+        self,
+        samples: Dict,
+        labels: Dict,
+        mesh_pths: List[str],
+        n_observations: int,
+        batch_idx: int,
+        scenes: Dict,
+    ):
+        print(f"For {n_observations} observations")
+        input_scalar = samples["scalar"]
+        if len(input_scalar.shape) == 2:
+            input_scalar = input_scalar.mean(
+                dim=1
+            )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
+        y_hat = self._model(samples["choir"], use_mean=True)
+        mano_params_gt = {
+            "pose": labels["theta"],
+            "beta": labels["beta"],
+            "rot_6d": labels["rot"],
+            "trans": labels["trans"],
+        }
+        mano_params_input = {
+            "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
+            "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
+            "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
+            "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
+        }
+        # Only use the last view for each batch element (they're all the same anyway for static
+        # grasps, but for dynamic grasps we want to predict the LAST frame!).
+        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+        gt_verts, _ = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        sample_verts, sample_joints = self._affine_mano(*mano_params_input.values())
+        if not self._data_loader.dataset.is_right_hand_only:
+            raise NotImplementedError("Right hand only is implemented for testing.")
+        multiple_obs = len(samples["theta"].shape) > 2
+        # For mesh_pths we have a tuple of N lists of B entries. N is the number of
+        # observations and B is the batch size. We'll take the last observation for each batch
+        # element.
+        mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
+        use_smplx = False  # TODO: I don't use it for now
+
+        with torch.set_grad_enabled(True):
+            (
+                _,
+                _,
+                _,
+                _,
+                anchors_pred,
+                verts_pred,
+                joints_pred,
+            ) = optimize_pose_pca_from_choir(
+                y_hat["choir"],
+                bps=self._bps,
+                anchor_indices=self._anchor_indices,
+                scalar=input_scalar,
+                max_iterations=2000,
+                loss_thresh=1e-6,
+                lr=8e-2,
+                is_rhand=samples["is_rhand"],
+                use_smplx=use_smplx,
+                dataset=self._data_loader.dataset.name,
+                remap_bps_distances=self._remap_bps_distances,
+                exponential_map_w=self._exponential_map_w,
+                initial_params={
+                    k: (
+                        v[:, -1] if multiple_obs else v
+                    )  # Initial pose is the last observation
+                    for k, v in samples.items()
+                    if k
+                    in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                },
+                beta_w=1e-4,
+                theta_w=1e-7,
+                choir_w=1000,
+            )
+            image_dir = os.path.join(
+                HydraConfig.get().runtime.output_dir,
+                "tto_images",
+            )
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+            viewed_meshes = []
+            obj_meshes = {}
+            for i, mesh_pth in enumerate(mesh_pths_iter):
+                mesh_name = os.path.basename(mesh_pth)
+                pred_hand_mesh = trimesh.Trimesh(
+                    vertices=verts_pred[i].detach().cpu().numpy(),
+                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                )
+                # i corresponds to batch element
+                # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we
+                # need to do [i * T + n - 1]. n-1 because n is 1-indexed.
+                input_hand_mesh = trimesh.Trimesh(
+                    vertices=sample_verts[
+                        i * samples["theta"].shape[1] + n_observations - 1
+                    ]
+                    .detach()
+                    .cpu()
+                    .numpy(),
+                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                )
+                gt_hand_mesh = trimesh.Trimesh(
+                    vertices=gt_verts[i].detach().cpu().numpy(),
+                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                )
+                if mesh_name not in obj_meshes:
+                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                    if self._data_loader.dataset.center_on_object_com:
+                        obj_mesh.translate(-obj_mesh.get_center())
+                    obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                    obj_meshes[mesh_name] = obj_mesh
+
+                if mesh_name not in scenes:
+                    scene_anim = ScenePicAnim()
+                    scenes[mesh_name] = scene_anim
+
+                scenes[mesh_name].add_frame(
+                    {
+                        "object": obj_mesh,
+                        "hand": pred_hand_mesh,
+                        "hand_aug": input_hand_mesh,
+                        "gt_hand": gt_hand_mesh,
+                    }
+                )
+            return scenes
+
+    @to_cuda
     def _save_batch_predictions(
         self,
         samples: Dict,
@@ -404,7 +538,6 @@ class MultiViewTester(MultiViewTrainer):
         n_observations: int,
         batch_idx: int,
     ):
-        print("save_batch_predictions")
         plots = {}
         gt_is_plotted = False
         for n in range(1, n_observations + 1):
@@ -487,30 +620,77 @@ class MultiViewTester(MultiViewTrainer):
                 if not os.path.exists(image_dir):
                     os.makedirs(image_dir)
                 viewed_meshes = []
+                obj_meshes = {}
                 for i, mesh_pth in enumerate(mesh_pths_iter):
                     mesh_name = os.path.basename(mesh_pth)
-                    if mesh_name in viewed_meshes:
-                        continue
                     pred_hand_mesh = trimesh.Trimesh(
                         vertices=verts_pred[i].detach().cpu().numpy(),
                         faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                     )
-                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                    if self._data_loader.dataset.center_on_object_com:
-                        obj_mesh.translate(-obj_mesh.get_center())
-                    obj_mesh_pv = pv.wrap(
-                        Trimesh(obj_mesh.vertices, obj_mesh.triangles)
-                    )
+                    if mesh_name not in obj_meshes:
+                        obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                        if self._data_loader.dataset.center_on_object_com:
+                            obj_mesh.translate(-obj_mesh.get_center())
+                        obj_mesh_pv = pv.wrap(
+                            Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                        )
+                        obj_meshes[mesh_name] = obj_mesh_pv
 
-                    if mesh_name not in plots:
+                    grasp_key = (mesh_name, i)
+                    if grasp_key not in plots:
                         pl = pv.Plotter(
                             shape=(2, n_observations + 1),
                             border=False,
                             off_screen=False,
                         )
-                        plots[mesh_name] = pl
+                        plots[grasp_key] = pl
+                        with open(
+                            os.path.join(
+                                image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.json"
+                            ),
+                            "w",
+                        ) as f:
+                            print(
+                                mano_params_input["beta"].shape,
+                                mano_params_input["pose"].shape,
+                            )
+                            f.write(
+                                json.dumps(
+                                    {
+                                        "beta": mano_params_input["beta"][
+                                            i * samples["beta"].shape[1] + n - 1
+                                        ]
+                                        .detach()
+                                        .cpu()
+                                        .numpy()
+                                        .tolist(),
+                                        "pose": mano_params_input["pose"][
+                                            i * samples["theta"].shape[1] + n - 1
+                                        ]
+                                        .detach()
+                                        .cpu()
+                                        .numpy()
+                                        .tolist(),
+                                        "trans": mano_params_input["trans"][
+                                            i * samples["trans"].shape[1] + n - 1
+                                        ]
+                                        .detach()
+                                        .cpu()
+                                        .numpy()
+                                        .tolist(),
+                                        "hTm": rotation_6d_to_matrix(
+                                            mano_params_input["rot_6d"][
+                                                i * samples["rot"].shape[1] + n - 1
+                                            ].detach()
+                                        )
+                                        .cpu()
+                                        .numpy()
+                                        .tolist(),
+                                    }
+                                )
+                            )
 
-                    pl = plots[mesh_name]
+                    pl = plots[grasp_key]
                     if not gt_is_plotted:
                         pl.subplot(0, 0)
                         gt_hand_mesh = trimesh.Trimesh(
@@ -578,24 +758,41 @@ class MultiViewTester(MultiViewTrainer):
                         color="red",
                     )
                     viewed_meshes.append(mesh_name)
-        for mesh_name, plot in plots.items():
+        for (mesh_name, i), plot in plots.items():
             plot.set_background("white")  # type: ignore
             plot.link_views()
             plot.export_html(
-                os.path.join(image_dir, f"{mesh_name}_tto_{batch_idx}.html")
+                os.path.join(image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.html")
             )
 
     def _save_model_predictions(self, n_observations: int) -> None:
+        # Use a batch size of 1 cause no clue what happens above that
         """The deadline is in 20h so I'll write this quick and dirty, sorry reader."""
         self._data_loader.dataset.set_observations_number(n_observations)
         self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
         self._pbar.refresh()
+        scenes = {}
         for i, batch in enumerate(self._data_loader):
             if not self._running:
                 print("[!] Testing aborted.")
             samples, labels, mesh_pths = batch  # type: ignore
-            self._save_batch_predictions(samples, labels, mesh_pths, n_observations, i)
+            if self._data_loader.dataset.name.lower() == "contactpose":
+                self._save_batch_predictions(
+                    samples, labels, mesh_pths, n_observations, i
+                )
+            elif self._data_loader.dataset.name.lower() == "grab":
+                scenes = self._save_batch_predictions_as_sequence(
+                    samples, labels, mesh_pths, n_observations, i, scenes
+                )
+            if len(list(scenes.keys())) > 1:
+                del scenes[list(scenes.keys())[-1]]
+                break
+            if scenes[list(scenes.keys())[0]].n_frames > 60:
+                break
             self._pbar.update()
+        for mesh_name, scene in scenes.items():
+            print(f"Saving {mesh_name}")
+            scene.save_animation(f"{mesh_name}_tto.html")
         self._pbar.close()
 
     def test_n_observations(
@@ -643,7 +840,9 @@ class MultiViewTester(MultiViewTrainer):
         self._model.eval()
         if kwargs["save_predictions"]:
             with torch.no_grad():
-                self._save_model_predictions(4)
+                self._save_model_predictions(
+                    4 if self._data_loader.dataset.name.lower() == "contactpose" else 7
+                )
             return
         test_errors = []
         with torch.no_grad():

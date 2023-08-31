@@ -11,3 +11,4 @@ tags.*
 *.tgz
 *.pickle
 models/
+FIGURES/

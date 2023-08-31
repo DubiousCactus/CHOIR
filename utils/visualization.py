@@ -797,6 +797,7 @@ class ScenePicAnim:
     ):
         super().__init__()
         self.scene = sp.Scene()
+        self.n_frames = 0
         self.main = self.scene.create_canvas_3d(width=width, height=height)
         self.colors = sp.Colors
 
@@ -831,6 +832,7 @@ class ScenePicAnim:
         for i, m in enumerate(meshes_list):
             # self.main.set_layer_settings({layer_names[i]:{}})
             main_frame.add_mesh(m)
+        self.n_frames += 1
 
     def save_animation(self, sp_anim_name):
         self.scene.link_canvas_events(self.main)
