@@ -411,6 +411,7 @@ class MultiViewTester(MultiViewTrainer):
         scenes: Dict,
     ):
         print(f"For {n_observations} observations")
+        hand_color = trimesh.visual.random_color()
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(
@@ -418,10 +419,10 @@ class MultiViewTester(MultiViewTrainer):
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
         y_hat = self._model(samples["choir"], use_mean=True)
         mano_params_gt = {
-            "pose": labels["theta"],
-            "beta": labels["beta"],
-            "rot_6d": labels["rot"],
-            "trans": labels["trans"],
+            "pose": labels["theta"].view(-1, *labels["theta"].shape[2:]),
+            "beta": labels["beta"].view(-1, *labels["beta"].shape[2:]),
+            "rot_6d": labels["rot"].view(-1, *labels["rot"].shape[2:]),
+            "trans": labels["trans"].view(-1, *labels["trans"].shape[2:]),
         }
         mano_params_input = {
             "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
@@ -431,9 +432,8 @@ class MultiViewTester(MultiViewTrainer):
         }
         # Only use the last view for each batch element (they're all the same anyway for static
         # grasps, but for dynamic grasps we want to predict the LAST frame!).
-        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
-        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-        gt_verts, _ = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        # mano_params_gt = {k: v for k, v in mano_params_gt.items()}
+        gt_verts, _ = self._affine_mano(*mano_params_gt.values())
         sample_verts, sample_joints = self._affine_mano(*mano_params_input.values())
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
@@ -442,6 +442,17 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
+        mesh = os.path.basename(mesh_pths_iter[0]).split(".")[0]
+        if mesh in [
+            "wineglass",
+            "binoculars",
+            "camera",
+            "mug",
+            "fryingpan",
+            "toothpaste",
+        ]:
+            return scenes
+        print(f"Rendering {mesh}")
         use_smplx = False  # TODO: I don't use it for now
 
         with torch.set_grad_enabled(True):
@@ -492,6 +503,7 @@ class MultiViewTester(MultiViewTrainer):
                     vertices=verts_pred[i].detach().cpu().numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
+                pred_hand_mesh.visual.vertex_colors = hand_color
                 # i corresponds to batch element
                 # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we
                 # need to do [i * T + n - 1]. n-1 because n is 1-indexed.
@@ -504,15 +516,21 @@ class MultiViewTester(MultiViewTrainer):
                     .numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
+                input_hand_mesh.visual.vertex_colors = hand_color
                 gt_hand_mesh = trimesh.Trimesh(
-                    vertices=gt_verts[i].detach().cpu().numpy(),
+                    vertices=gt_verts[i * labels["theta"].shape[1] + n_observations - 1]
+                    .detach()
+                    .cpu()
+                    .numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
+                gt_hand_mesh.visual.vertex_colors = hand_color
                 if mesh_name not in obj_meshes:
                     obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                     if self._data_loader.dataset.center_on_object_com:
                         obj_mesh.translate(-obj_mesh.get_center())
                     obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                    obj_mesh.visual.vertex_colors = trimesh.visual.random_color()
                     obj_meshes[mesh_name] = obj_mesh
 
                 if mesh_name not in scenes:
@@ -787,7 +805,10 @@ class MultiViewTester(MultiViewTrainer):
             if len(list(scenes.keys())) > 1:
                 del scenes[list(scenes.keys())[-1]]
                 break
-            if scenes[list(scenes.keys())[0]].n_frames > 60:
+            if (
+                len(list(scenes.keys())) > 0
+                and scenes[list(scenes.keys())[0]].n_frames > 130
+            ):
                 break
             self._pbar.update()
         for mesh_name, scene in scenes.items():

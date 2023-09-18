@@ -806,14 +806,14 @@ class ScenePicAnim:
         for mesh_name, mesh in meshes.items():
             params = {
                 "vertices": mesh.vertices.astype(np.float32),
-                "normals": mesh.vertex_normals.astype(np.float32),
+                # "normals": mesh.vertex_normals.astype(np.float32),
                 "triangles": mesh.faces.astype(np.int32),
-                "colors": mesh.visual.vertex_colors.astype(np.float32)[..., :3],
+                "colors": mesh.visual.vertex_colors.astype(np.float32)[..., :3] / 255.0,
             }
             # params = {'vertices' : m.v.astype(np.float32), 'triangles' : m.f, 'colors' : m.vc.astype(np.float32)}
             # sp_m = sp.Mesh()
             sp_m = self.scene.create_mesh(layer_id=mesh_name)
-            sp_m.add_mesh_with_normals(**params)
+            sp_m.add_mesh_without_normals(**params)
             if mesh_name == "ground_mesh":
                 sp_m.double_sided = True
             sp_meshes.append(sp_m)
