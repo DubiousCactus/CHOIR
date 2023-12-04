@@ -431,6 +431,7 @@ experiment_store(
             latent_dim=128,
             encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
             decoder_layer_dims=(2048, 2048, 2048),
+            aggregator="attention_pytorch",
         ),
         bases=(Experiment,),
     ),

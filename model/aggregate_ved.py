@@ -61,7 +61,9 @@ class Aggregate_VED(torch.nn.Module):
         # Multi-head cross-attention aggregator
         self.mhca_aggregator = (
             AttentionAggregator(
-                "multi_head_pytorch",
+                "multi_head_pytorch"
+                if aggregator == "attention_pytorch"
+                else "multi_head",
                 multi_head_use_bias=True,
                 n_heads=8,
                 k_dim_in=(self.choir_dim - 1)
@@ -72,7 +74,7 @@ class Aggregate_VED(torch.nn.Module):
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )
-            if aggregator == "attention"
+            if aggregator.starts_with("attention")
             else None
         )
 
@@ -236,7 +238,7 @@ class Aggregate_VED(torch.nn.Module):
 
         if y is None:
             # Sample from the prior latent distribution q(z|O) at test time, with O being the
-            # noisy observations. rsample() uses the reparameterization trick, allowing us to
+            # noisy observations. rsample() uses the reparameterization trick, allowing us tola
             # differentiate through z and into the latent encoder layers.
             z = p_mu if use_mean else prior.rsample()
             q_mu, q_var = None, None

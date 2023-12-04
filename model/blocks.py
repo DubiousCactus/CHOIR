@@ -222,9 +222,9 @@ class AttentionAggregator(torch.nn.Module):
         return self._multihead(q, k, v)
 
     def _multi_head_pytorch(self, q, k, v):
-        # TODO: Embed the output of the multihead attention into the same dimension as the input
-        # (i.e. v_dim_out). Why doesn't pytorch let me do this???
         res = self._multihead(q, k, v, need_weights=False)[0]
+        # Embed the output of the multihead attention into the same dimension as the input
+        # (i.e. v_dim_out). Why doesn't pytorch let me do this???
         return self._multihead_proj(res)
 
     def forward(self, x, r, x_q):
