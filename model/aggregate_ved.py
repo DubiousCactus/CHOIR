@@ -57,7 +57,8 @@ class Aggregate_VED(torch.nn.Module):
         assert aggregator in [
             "mean",
             "attention",
-        ], "Invalid aggregator. Must be 'mean' or 'attention'"
+            "attention_pytorch",
+        ], "Invalid aggregator. Must be 'mean', 'attention' or 'attention_pytorch'"
         # Multi-head cross-attention aggregator
         self.mhca_aggregator = (
             AttentionAggregator(
