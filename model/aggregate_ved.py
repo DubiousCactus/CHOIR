@@ -37,6 +37,7 @@ class Aggregate_VED(torch.nn.Module):
         predict_deltas: bool,
         frame_to_predict: str = "average",
         aggregator: str = "mean",
+        agg_heads: int = 8,
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -66,7 +67,7 @@ class Aggregate_VED(torch.nn.Module):
                 if aggregator == "attention_pytorch"
                 else "multi_head",
                 multi_head_use_bias=True,
-                n_heads=8,
+                n_heads=agg_heads,
                 k_dim_in=(self.choir_dim - 1)
                 * bps_dim,  # -1 cause not including the object
                 k_dim_out=bps_dim,
