@@ -21,8 +21,10 @@ class Aggregate_VED(torch.nn.Module):
     def __init__(
         self,
         bps_dim: int,
+        choir_encoder_dims: Tuple[int],
         encoder_layer_dims: Tuple[int],
         decoder_layer_dims: Tuple[int],
+        choir_embedding_dim: int,
         latent_dim: int,
         predict_mano: bool,
         predict_anchor_orientation: bool,
@@ -69,11 +71,10 @@ class Aggregate_VED(torch.nn.Module):
                 else "multi_head",
                 multi_head_use_bias=True,
                 n_heads=agg_heads,
-                k_dim_in=(self.choir_dim - 1)
-                * bps_dim,  # -1 cause not including the object
-                k_dim_out=bps_dim if aggregator == "attention_pytorch" else agg_kq_dim,
-                q_dim_in=(self.choir_dim - 1) * bps_dim,
-                q_dim_out=bps_dim if aggregator == "attention_pytorch" else agg_kq_dim,
+                k_dim_in=choir_embedding_dim,
+                k_dim_out=agg_kq_dim,
+                q_dim_in=choir_embedding_dim,
+                q_dim_out=agg_kq_dim,
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )
@@ -98,58 +99,79 @@ class Aggregate_VED(torch.nn.Module):
             ]
         )
 
-        if (decoder_use_obj or predict_deltas) and not decoder_all_same_dim:
+        if (predict_deltas) and not decoder_all_same_dim:
             decoder_layer_dims = [bps_dim * (2 if predict_deltas else 1)] * (
                 len(decoder_layer_dims)
             )
         # ======================= Encoder =======================
         # encoder_proj: List[torch.nn.Module] = [torch.nn.Linear(1024, 1024)]
-        posterior_encoder: List[torch.nn.Module] = [
+        choir_encoder: List[torch.nn.Module] = [
             torch.nn.Linear(
                 self.choir_dim * bps_dim,
-                encoder_layer_dims[0],
+                choir_encoder_dims[0],
             ),
         ]
-        posterior_bn: List[torch.nn.Module] = [
+        choir_encoder_bn: List[torch.nn.Module] = [
+            torch.nn.BatchNorm1d(choir_encoder_dims[0]),
+        ]
+        posterior_encoder: List[torch.nn.Module] = [
+            torch.nn.Linear(choir_embedding_dim, encoder_layer_dims[0]),
             torch.nn.BatchNorm1d(encoder_layer_dims[0]),
+            torch.nn.ReLU(inplace=True),
         ]
         for i in range(len(encoder_layer_dims) - 1):
-            posterior_encoder.append(
-                torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1])
+            posterior_encoder.extend(
+                [
+                    torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1]),
+                    torch.nn.BatchNorm1d(encoder_layer_dims[i + 1]),
+                    torch.nn.ReLU(inplace=True),
+                ]
             )
-            posterior_bn.append(torch.nn.BatchNorm1d(encoder_layer_dims[i + 1]))
-            # if i > 1:
-            # encoder_proj.append(
-            # torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1]) if not encoder_all_same_dim else torch.nn.Identity()
-            # )  # for residual connections
+
         posterior_encoder.append(
             torch.nn.Linear(encoder_layer_dims[-1], latent_dim * 2)
         )
-        self.posterior_encoder = torch.nn.ModuleList(posterior_encoder)
-        self.posterior_bn = torch.nn.ModuleList(posterior_bn)
-        # self.encoder_proj = torch.nn.Linear
-        # For the prior encoder, skip the first linear layer because we only have one CHOIR input
+        self.posterior_encoder = torch.nn.Sequential(*posterior_encoder)
+
+        for i in range(len(choir_encoder_dims) - 1):
+            choir_encoder.append(
+                torch.nn.Linear(choir_encoder_dims[i], choir_encoder_dims[i + 1]),
+            )
+            choir_encoder_bn.append(
+                torch.nn.BatchNorm1d(choir_encoder_dims[i + 1]),
+            )
+
+        choir_encoder.append(
+            torch.nn.Linear(choir_encoder_dims[-1], choir_embedding_dim)
+        )
+        self.choir_encoder = torch.nn.ModuleList(choir_encoder)
+        self.choir_encoder_bn = torch.nn.ModuleList(choir_encoder_bn)
+
         prior_encoder: List[torch.nn.Module] = [
-            torch.nn.Linear(self.choir_dim * bps_dim, encoder_layer_dims[0]),
-        ]
-        prior_bn: List[torch.nn.Module] = [
+            torch.nn.Linear(choir_embedding_dim, encoder_layer_dims[0]),
             torch.nn.BatchNorm1d(encoder_layer_dims[0]),
+            torch.nn.ReLU(inplace=True),
         ]
         for i in range(0, len(encoder_layer_dims) - 1):
-            prior_encoder.append(
-                torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1])
+            prior_encoder.extend(
+                [
+                    torch.nn.Linear(encoder_layer_dims[i], encoder_layer_dims[i + 1]),
+                    torch.nn.BatchNorm1d(encoder_layer_dims[i + 1]),
+                    torch.nn.ReLU(inplace=True),
+                ]
             )
-            prior_bn.append(torch.nn.BatchNorm1d(encoder_layer_dims[i + 1]))
         prior_encoder.append(torch.nn.Linear(encoder_layer_dims[-1], latent_dim * 2))
-        self.prior_encoder = torch.nn.ModuleList(prior_encoder)
-        self.prior_bn = torch.nn.ModuleList(prior_bn)
+        self.prior_encoder = torch.nn.Sequential(*prior_encoder)
         # ========================================================
         # ======================= Decoder =======================
         decoder: List[torch.nn.Module] = [
             torch.nn.Linear(
                 latent_dim
-                + (bps_dim if decoder_use_obj else 0)
-                + (bps_dim * 2 if predict_deltas or frame_to_predict == "last" else 0),
+                + (
+                    choir_embedding_dim
+                    if predict_deltas or frame_to_predict == "last"
+                    else 0
+                ),
                 decoder_layer_dims[0],
             ),
         ]
@@ -208,9 +230,10 @@ class Aggregate_VED(torch.nn.Module):
         _x = x
 
         # ========================= Prior distribution =========================
+        # 1. Embed the input (noisy) CHOIRs
         x = _x.flatten(start_dim=2)
         x_prev = x
-        for i, (layer, bn) in enumerate(zip(self.prior_encoder, self.prior_bn)):
+        for i, (layer, bn) in enumerate(zip(self.choir_encoder, self.choir_encoder_bn)):
             x = layer(x)
             if self.use_batch_norm:
                 x = bn(x.view(B * T, -1)).view(B, T, -1)
@@ -222,16 +245,28 @@ class Aggregate_VED(torch.nn.Module):
             x_prev = x
         if self.encoder_dropout:
             x = F.dropout(x, p=0.1, training=self.training)
-        s = self.prior_encoder[-1](x)
+        choir_embedding = self.choir_encoder[-1](x)
+
+        # 2. Encode the CHOIR embeddings into latent distributions (except the last frame if
+        # predicting last frame)
+        if self.frame_to_predict == "last":
+            s = self.prior_encoder(
+                choir_embedding[:, :-1].reshape(B * (T - 1), -1)
+            ).reshape(B, T - 1, -1)
+        else:
+            s = self.prior_encoder(choir_embedding[:, :-1].view(B * T, -1)).view(
+                B, T, -1
+            )
+
         if self.mhca_aggregator is not None:
             # s_c = torch.mean(s, dim=1)
-            # Key: _x[..., 1:].flatten(start_dim=2) / The noisy anchor distances
-            # Value: s / The latent distributions
-            # Query: _x[:, -1].flatten(start_dim=1) / The last frame's anchor distances
+            # Keys: CHOIR embeddings of the context frames
+            # Values: s / The latent distributions
+            # Query: CHOIR embedding of the target frame (last)
             s_c = self.mhca_aggregator(
-                _x[..., 1:].flatten(start_dim=2),
+                choir_embedding[:, :-1],  # All but the last frame
                 s,
-                _x[:, -1, :, 1:].flatten(start_dim=1).unsqueeze(1),
+                choir_embedding[:, -1].unsqueeze(1),  # The last frame
             ).squeeze()
         else:
             s_c = torch.mean(s, dim=1)
@@ -254,27 +289,39 @@ class Aggregate_VED(torch.nn.Module):
             x = y.flatten(start_dim=2)
             x_prev = x
             for i, (layer, bn) in enumerate(
-                zip(self.posterior_encoder, self.posterior_bn)
+                zip(self.choir_encoder, self.choir_encoder_bn)
             ):
                 x = layer(x)
                 if self.use_batch_norm:
                     x = bn(x.view(B * T, -1)).view(B, T, -1)
-                if self.residual_connections and i > 2:
+                if self.residual_connections and i > 0:
                     x -= x_prev  # self.encoder_proj[i](x_prev)
+                if self.encoder_dropout:
+                    x = F.dropout(x, p=0.1, training=self.training)
                 x = F.relu(x, inplace=False)
                 x_prev = x
-            # if self.use_dropout:
-            # x = F.dropout(x, p=0.5, training=self.training)
-            s = self.posterior_encoder[-1](x)
+            if self.encoder_dropout:
+                x = F.dropout(x, p=0.1, training=self.training)
+            posterior_choir_embedding = self.choir_encoder[-1](x)
+
+            if self.frame_to_predict == "last":
+                s = self.posterior_encoder(
+                    posterior_choir_embedding[:, :-1].reshape(B * (T - 1), -1)
+                ).reshape(B, T - 1, -1)
+            else:
+                s = self.posterior_encoder(
+                    posterior_choir_embedding[:, :-1].view(B * T, -1)
+                ).view(B, T, -1)
+
             if self.mhca_aggregator is not None:
                 # s_c = torch.mean(s, dim=1)
-                # Key: _x[..., 1:].flatten(start_dim=2) / The noisy anchor distances
-                # Value: s / The latent distributions
-                # Query: _x[:, -1].flatten(start_dim=1) / The last frame's anchor distances
+                # Keys: CHOIR embeddings of the context frames
+                # Values: s / The latent distributions
+                # Query: CHOIR embedding of the target frame (last)
                 s_c = self.mhca_aggregator(
-                    _x[..., 1:].flatten(start_dim=2),
+                    posterior_choir_embedding[:, :-1],  # All but the last frame
                     s,
-                    _x[:, -1, :, 1:].flatten(start_dim=1).unsqueeze(1),
+                    posterior_choir_embedding[:, -1].unsqueeze(1),  # The last frame
                 ).squeeze()
             else:
                 s_c = torch.mean(s, dim=1)
@@ -286,10 +333,8 @@ class Aggregate_VED(torch.nn.Module):
         # When predicting the average frame for contact pose, we just take any frame since they're
         # all the same.
         last_frame = _x[:, -1]
-        if self.decoder_use_obj:
-            dec_input = torch.cat([z, last_frame[..., 0]], dim=-1)
-        elif self.predict_deltas or self.frame_to_predict == "last":
-            dec_input = torch.cat([z, last_frame.flatten(start_dim=1)], dim=-1)
+        if self.predict_deltas or self.frame_to_predict == "last":
+            dec_input = torch.cat([z, choir_embedding[:, -1]], dim=-1)
         else:
             dec_input = z
 
