@@ -74,7 +74,7 @@ class Aggregate_VED(torch.nn.Module):
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )
-            if aggregator.starts_with("attention")
+            if aggregator.startswith("attention")
             else None
         )
 
