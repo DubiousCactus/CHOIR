@@ -38,6 +38,7 @@ class Aggregate_VED(torch.nn.Module):
         frame_to_predict: str = "average",
         aggregator: str = "mean",
         agg_heads: int = 8,
+        agg_kq_dim: int = 1024,
     ) -> None:
         super().__init__()
         self.choir_dim = 2  # 0: closest object point distance, 1: fixed anchor distance
@@ -70,9 +71,9 @@ class Aggregate_VED(torch.nn.Module):
                 n_heads=agg_heads,
                 k_dim_in=(self.choir_dim - 1)
                 * bps_dim,  # -1 cause not including the object
-                k_dim_out=bps_dim,
+                k_dim_out=bps_dim if aggregator == "attention_pytorch" else agg_kq_dim,
                 q_dim_in=(self.choir_dim - 1) * bps_dim,
-                q_dim_out=bps_dim,
+                q_dim_out=bps_dim if aggregator == "attention_pytorch" else agg_kq_dim,
                 v_dim_in=latent_dim * 2,
                 v_dim_out=latent_dim * 2,
             )

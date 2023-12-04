@@ -175,6 +175,7 @@ model_store(
         decoder_layer_dims=(1024, 1024, 1024),
         aggregator="mean",
         agg_heads=8,
+        agg_kq_dim=1024,
     ),
     name="agg_ved",
 )
