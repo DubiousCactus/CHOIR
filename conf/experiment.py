@@ -32,8 +32,10 @@ from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
+from model.diffusion_model import DiffusionModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
+from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
@@ -182,6 +184,19 @@ model_store(
     name="agg_ved",
 )
 
+
+model_store(
+    pbuilds(
+        DiffusionModel,
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        bps_dim=MISSING,
+        temporal_dim=512,
+    ),
+    name="ddpm",
+)
+
 " ================== Losses ================== "
 
 
@@ -214,6 +229,14 @@ training_loss_store(
         builds_bases=(CHOIRLossConf,),
     ),
     name="choir",
+)
+
+training_loss_store(
+    pbuilds(
+        DDPMLoss,
+        reduction="mean",
+    ),
+    name="diffusion",
 )
 
 " ================== Optimizer ================== "
@@ -336,6 +359,25 @@ store(Experiment, name="base_experiment")
 # - must be stored under the _global_ package
 # - must inherit from `Experiment`
 experiment_store = store(group="experiment", package="_global_")
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "base"},
+            {"override /tester": "base"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(perturbation_level=0),
+        data_loader=dict(batch_size=64),
+        model=dict(temporal_dim=256),
+        bases=(Experiment,),
+    ),
+    name="ddpm",
+)
+
 
 experiment_store(
     make_config(

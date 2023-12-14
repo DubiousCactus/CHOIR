@@ -17,17 +17,16 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
-import wandb
 from hydra.core.hydra_config import HydraConfig
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
 
+import wandb
 from conf import project as project_conf
 from utils import blink_pbar, to_cuda, to_cuda_, update_pbar_str
 from utils.helpers import BestNModelSaver
-from utils.training import get_dict_from_sample_and_label_tensors
 from utils.visualization import visualize_model_predictions
 
 
@@ -41,6 +40,7 @@ class BaseTrainer:
         val_loader: DataLoader,
         training_loss: torch.nn.Module,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+        **kwargs,
     ) -> None:
         """Base trainer class.
         Args:
@@ -97,6 +97,7 @@ class BaseTrainer:
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so write this code only once at the cost of many function calls!
@@ -105,8 +106,7 @@ class BaseTrainer:
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        x, y = batch
-        samples, labels = get_dict_from_sample_and_label_tensors(x, y)
+        samples, labels, _ = batch
         # ============== Uncomment to make sure the data is loaded correctly ==============
         # print(f"Displaying {samples['choir'].shape[1]} samples")
         # for i in range(samples["choir"].shape[1]):

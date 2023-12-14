@@ -23,7 +23,10 @@ from hydra_zen.typing import Partial
 import conf.experiment  # Must import the config to add all components to the store!
 import wandb
 from conf import project as project_conf
+from model.aggregate_ved import Aggregate_VED
+from model.diffusion_model import DiffusionModel
 from src.base_trainer import BaseTrainer
+from src.losses.hoi import CHOIRLoss
 from utils import colorize, to_cuda_
 
 
@@ -65,17 +68,20 @@ def launch_experiment(
     )
 
     "============ Partials instantiation ============"
-    model_inst = model(
-        bps_dim=just(dataset).bps_dim,
-        remapped_bps_distances=just(
-            dataset
-        ).remap_bps_distances,  # Whether to use sigmoid in last layer
-        predict_anchor_orientation=just(training_loss).predict_anchor_orientation
-        or just(training_loss).predict_anchor_position,
-        predict_mano=just(training_loss).predict_mano,
-        # predict_deltas=just(training_loss).temporal,
-        frame_to_predict="last" if just(training_loss).temporal else "average",
-    )  # Use just() to get the config out of the Zen-Partial
+    if model.func is Aggregate_VED:
+        model_inst = model(
+            bps_dim=just(dataset).bps_dim,
+            remapped_bps_distances=just(
+                dataset
+            ).remap_bps_distances,  # Whether to use sigmoid in last layer
+            predict_anchor_orientation=just(training_loss).predict_anchor_orientation
+            or just(training_loss).predict_anchor_position,
+            predict_mano=just(training_loss).predict_mano,
+            # predict_deltas=just(training_loss).temporal,
+            frame_to_predict="last" if just(training_loss).temporal else "average",
+        )  # Use just() to get the config out of the Zen-Partial
+    elif model.func is DiffusionModel:
+        model_inst = model(bps_dim=just(dataset).bps_dim)
     print(model_inst)
     print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
     print(
@@ -102,11 +108,14 @@ def launch_experiment(
     if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
         scheduler_inst.T_max = run.epochs
 
-    training_loss_inst = training_loss(
-        bps=bps,
-        remap_bps_distances=remap_bps_distances,
-        exponential_map_w=exponential_map_w,
-    )
+    if training_loss.func is CHOIRLoss:
+        training_loss_inst = training_loss(
+            bps=bps,
+            remap_bps_distances=remap_bps_distances,
+            exponential_map_w=exponential_map_w,
+        )
+    else:
+        training_loss_inst = training_loss()
 
     "============ CUDA ============"
     model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
