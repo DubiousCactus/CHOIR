@@ -24,14 +24,14 @@ class ResidualBlock(torch.nn.Module):
             dim_in,
             dim_out,
         )
-        self.norm1 = torch.nn.BatchNorm1d(dim_out)
-        self.nonlin = torch.nn.GELU()
+        self.norm1 = torch.nn.LayerNorm(dim_out)
+        self.nonlin = torch.nn.SiLU()
         self.lin2 = torch.nn.Linear(
             dim_out,
             dim_out,
         )
-        self.norm2 = torch.nn.BatchNorm1d(dim_out)
-        self.out_activation = torch.nn.GELU()
+        self.norm2 = torch.nn.LayerNorm(dim_out)
+        self.out_activation = torch.nn.SiLU()
         self.residual_scaling = (
             torch.nn.Linear(
                 dim_in,
@@ -69,20 +69,21 @@ class TemporalResidualBlock(torch.nn.Module):
         dim_in: int,
         dim_out: int,
         temporal_dim: int,
+        n_norm_groups: int = 32,
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(
             dim_in,
             dim_out,
         )
-        self.norm1 = torch.nn.BatchNorm1d(dim_out)
-        self.nonlin = torch.nn.GELU()
+        self.norm1 = torch.nn.GroupNorm(n_norm_groups, dim_out)
+        self.nonlin = torch.nn.SiLU()
         self.lin2 = torch.nn.Linear(
             dim_out,
             dim_out,
         )
-        self.norm2 = torch.nn.BatchNorm1d(dim_out)
-        self.out_activation = torch.nn.GELU()
+        self.norm2 = torch.nn.GroupNorm(n_norm_groups, dim_out)
+        self.out_activation = torch.nn.SiLU()
         self.temporal_projection = torch.nn.Linear(
             temporal_dim,
             dim_out * 2,
@@ -111,15 +112,15 @@ class TemporalResidualBlock(torch.nn.Module):
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
         x = self.lin1(x)
         print_debug(f"After lin1, x.shape = {x.shape}")
+        x = x * (scale + 1) + shift
         x = self.norm1(x)
-        x *= (scale + 1) + shift
         x = self.nonlin(x)
         print_debug(f"Temb is {t_emb.shape}")
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
         x = self.lin2(x)
         print_debug(f"After lin2, x.shape = {x.shape}")
+        x = x * (scale + 1) + shift
         x = self.norm2(x)
-        x *= (scale + 1) + shift
         print_debug(
             f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
         )
