@@ -362,6 +362,71 @@ def visualize_model_predictions(
         pass
 
 
+def visualize_ddpm_generation(
+    model: torch.nn.Module,
+    batch: Union[Tuple, List, torch.Tensor],
+    step: int,
+    bps: torch.Tensor,
+    anchor_indices: torch.Tensor,
+    bps_dim: int,
+    dataset: str,
+    **kwargs,
+) -> None:
+    assert bps_dim == bps.shape[0]
+    samples, labels, _ = batch
+    if not project_conf.HEADLESS:
+        choir_pred = model.generate(1)
+        mano_params_gt = {
+            "pose": labels["theta"],
+            "beta": labels["beta"],
+            "rot_6d": labels["rot"],
+            "trans": labels["trans"],
+        }
+        if dataset.lower() == "grab":
+            affine_mano = AffineMANO(
+                ncomps=24, flat_hand_mean=True, for_contactpose=False
+            ).cuda()
+        elif dataset.lower() == "contactpose":
+            affine_mano = AffineMANO(
+                ncomps=15, flat_hand_mean=False, for_contactpose=True
+            ).cuda()
+        else:
+            raise NotImplementedError(f"Unknown dataset: {dataset}")
+        mano_params_gt = {k: v[0, -1].unsqueeze(0) for k, v in mano_params_gt.items()}
+        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+        gt_verts, _ = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        print(
+            choir_pred.min(),
+            choir_pred.max(),
+            " -- ",
+            labels["choir"][0].min(),
+            labels["choir"][0].max(),
+        )
+        visualize_CHOIR_prediction(
+            choir_pred,
+            labels["choir"][0],
+            bps,
+            anchor_indices,
+            samples["scalar"][0],
+            labels["scalar"][0],
+            samples["rescaled_ref_pts"][0],
+            labels["rescaled_ref_pts"][0],
+            gt_verts,
+            labels["joints"][0],
+            labels["anchors"][0],
+            is_rhand=samples["is_rhand"][0][0].bool().item(),
+            use_smplx=False,
+            dataset=dataset,
+            remap_bps_distances=kwargs["remap_bps_distances"],
+            exponential_map_w=kwargs["exponential_map_w"],
+        )
+    if project_conf.USE_WANDB:
+        # TODO: Log a few predictions and the ground truth to wandb.
+        # wandb.log({"pointcloud": wandb.Object3D(ptcld)}, step=step)
+        # raise NotImplementedError("Visualization is not implemented for wandb.")
+        pass
+
+
 # TODO: Refactor the 2 following functions. It's too WET!!!
 @to_cuda
 def visualize_CHOIR_prediction(

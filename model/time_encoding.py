@@ -36,4 +36,4 @@ class SinusoidalTimeEncoder(torch.nn.Module):
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         assert type(t) == torch.Tensor
         assert len(t.shape) == 2, "t must be (B, 1)"
-        return self.time_embeddings[t].squeeze()
+        return self.time_embeddings[t].view(t.shape[0], -1)

@@ -83,7 +83,7 @@ class DiffusionModel(torch.nn.Module):
         with torch.no_grad():
             device = next(self.parameters()).device
             z_current = torch.randn(n, *self._input_shape).to(device)
-            pbar = tqdm(total=self.time_steps, desc="Generating...")
+            pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat = self.backbone(
                     z_current, torch.tensor(t).view(1, 1).repeat(n, 1).to(device)
@@ -105,7 +105,10 @@ class DiffusionModel(torch.nn.Module):
             ) * eps_hat
             pbar.update()
             pbar.close()
-            return x_hat.view(n, *self._input_shape)
+            output = x_hat.view(n, *self._input_shape)
+            # Back to [0, 1]:
+            output = torch.clamp((output + 1) / 2, 0, 1)
+            return output
 
 
 class LatentDiffusionModel(torch.nn.Module):

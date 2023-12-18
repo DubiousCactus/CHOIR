@@ -35,6 +35,7 @@ from model.baseline import BaselineModel
 from model.diffusion_model import DiffusionModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
+from src.ddpm_trainer import DDPMTrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
 from src.multiview_tester import MultiViewTester
@@ -322,6 +323,7 @@ run_store(RunConfig, name="default")
 trainer_store = store(group="trainer")
 trainer_store(pbuilds(BaseTrainer, populate_full_signature=True), name="base")
 trainer_store(pbuilds(MultiViewTrainer, populate_full_signature=True), name="multiview")
+trainer_store(pbuilds(DDPMTrainer, populate_full_signature=True), name="ddpm")
 
 tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
@@ -366,7 +368,7 @@ experiment_store(
             "_self_",
             {"override /model": "ddpm"},
             {"override /dataset": "contactpose"},
-            {"override /trainer": "base"},
+            {"override /trainer": "ddpm"},
             {"override /tester": "base"},
             {"override /training_loss": "diffusion"},
         ],
