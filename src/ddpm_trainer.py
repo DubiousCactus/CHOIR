@@ -18,6 +18,7 @@ from utils.visualization import visualize_ddpm_generation
 class DDPMTrainer(BaseTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.conditional = kwargs.get("conditional", False)
 
     @to_cuda
     def _visualize(
@@ -64,7 +65,8 @@ class DDPMTrainer(BaseTrainer):
             # labels[k] = v.view(-1, *v.shape[2:])
             labels[k] = v[:, 0, ...]
         y_hat = self._model(
-            samples["choir"][..., -1].unsqueeze(-1)
+            samples["choir"][..., -1].unsqueeze(-1),
+            samples["choir"][..., 0].unsqueeze(-1) if self.conditional else None,
         )  # Only the hand distances!
         losses = self._training_loss(samples, labels, y_hat)
         loss = sum([v for v in losses.values()])

@@ -10,7 +10,11 @@
 """
 
 
+from typing import Optional
+
 import torch
+
+from model.attention import VectorAttentionLayer
 
 
 class ResidualBlock(torch.nn.Module):
@@ -70,6 +74,7 @@ class TemporalResidualBlock(torch.nn.Module):
         dim_out: int,
         temporal_dim: int,
         n_norm_groups: int = 32,
+        y_dim: int = None,
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(
@@ -88,6 +93,13 @@ class TemporalResidualBlock(torch.nn.Module):
             temporal_dim,
             dim_out * 2,
         )
+        self.cross_attention = (
+            VectorAttentionLayer(
+                q_dim=dim_out, k_dim=y_dim, v_dim=y_dim, output_dim=dim_out
+            )
+            if y_dim is not None
+            else None
+        )
         self.residual_scaling = (
             torch.nn.Linear(
                 dim_in,
@@ -99,7 +111,11 @@ class TemporalResidualBlock(torch.nn.Module):
         )
 
     def forward(
-        self, x: torch.Tensor, t_emb: torch.Tensor, debug: bool = False
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        y_emb: Optional[torch.Tensor] = None,
+        debug: bool = False,
     ) -> torch.Tensor:
         def print_debug(str):
             nonlocal debug
@@ -112,6 +128,7 @@ class TemporalResidualBlock(torch.nn.Module):
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
         x = self.lin1(x)
         print_debug(f"After lin1, x.shape = {x.shape}")
+        # x = x + self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0
         x = x * (scale + 1) + shift
         x = self.norm1(x)
         x = self.nonlin(x)
@@ -119,6 +136,7 @@ class TemporalResidualBlock(torch.nn.Module):
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
         x = self.lin2(x)
         print_debug(f"After lin2, x.shape = {x.shape}")
+        x = x + self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0
         x = x * (scale + 1) + shift
         x = self.norm2(x)
         print_debug(

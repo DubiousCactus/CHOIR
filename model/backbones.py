@@ -9,6 +9,8 @@
 Backbones for all sorts of things (diffusion hehehehehehehe).
 """
 
+from typing import Optional
+
 import torch
 
 from model.resnet_1d import TemporalResidualBlock as ResBlock
@@ -63,6 +65,7 @@ class MLPResNetBackboneModel(torch.nn.Module):
         bps_dim: int,
         temporal_dim: int,
         hidden_dim: int = 2048,
+        y_dim: Optional[int] = None,
     ):
         super().__init__()
         self.choir_dim = 1
@@ -72,20 +75,23 @@ class MLPResNetBackboneModel(torch.nn.Module):
             torch.nn.GELU(),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
-        self.input_layer = torch.nn.Linear(bps_dim * self.choir_dim, hidden_dim)
-        self.block_1 = ResBlock(hidden_dim, hidden_dim, temporal_dim)
-        self.block_2 = ResBlock(hidden_dim, hidden_dim, temporal_dim)
-        self.block_3 = ResBlock(hidden_dim, hidden_dim, temporal_dim)
-        self.block_4 = ResBlock(hidden_dim, hidden_dim, temporal_dim)
+        y_dim = y_dim if y_dim is not None else 0
+        self.input_layer = torch.nn.Linear(bps_dim * self.choir_dim + y_dim, hidden_dim)
+        self.block_1 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
+        self.block_2 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
+        self.block_3 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
+        self.block_4 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
         self.output_layer = torch.nn.Linear(hidden_dim, bps_dim * self.choir_dim)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, y: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         input_shape = x.shape
         x = x.view(x.shape[0], -1)
         time_embed = self.time_mlp(self.time_encoder(t))
-        x1 = self.input_layer(x)
-        x2 = self.block_1(x1, time_embed)
-        x3 = self.block_2(x2, time_embed)
-        x4 = self.block_3(x3, time_embed)
-        x5 = self.block_4(x4, time_embed)
+        x1 = self.input_layer(torch.cat((x, y), dim=-1) if y is not None else x)
+        x2 = self.block_1(x1, time_embed, y)
+        x3 = self.block_2(x2, time_embed, y)
+        x4 = self.block_3(x3, time_embed, y)
+        x5 = self.block_4(x4, time_embed, y)
         return self.output_layer(x5).view(input_shape)

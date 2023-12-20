@@ -195,6 +195,8 @@ model_store(
         beta_T=0.02,
         bps_dim=MISSING,
         temporal_dim=512,
+        y_dim=1024,
+        y_embed_dim=512,
     ),
     name="ddpm",
 )
@@ -316,6 +318,7 @@ class RunConfig:
     training_mode: bool = True
     fine_tune: bool = False
     save_predictions: bool = False
+    conditional: bool = False
 
 
 run_store = store(group="run")
@@ -376,12 +379,30 @@ experiment_store(
         ],
         dataset=dict(perturbation_level=0),
         data_loader=dict(batch_size=64),
-        model=dict(temporal_dim=256),
+        model=dict(temporal_dim=256, y_dim=None, y_embed_dim=None),
         bases=(Experiment,),
     ),
     name="ddpm",
 )
 
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm"},
+            {"override /tester": "ddpm"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(perturbation_level=0),
+        data_loader=dict(batch_size=64),
+        model=dict(temporal_dim=256, y_dim=1024, y_embed_dim=512),
+        run=dict(conditional=True),
+        bases=(Experiment,),
+    ),
+    name="cddpm",
+)
 
 experiment_store(
     make_config(

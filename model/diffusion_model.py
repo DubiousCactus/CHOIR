@@ -10,7 +10,7 @@ Denoising Diffusion Probabilistic Models (DDPMs) and their variants.
 """
 
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from tqdm import tqdm
@@ -27,13 +27,29 @@ class DiffusionModel(torch.nn.Module):
         beta_T: float,
         bps_dim: int,
         temporal_dim: int,
+        y_dim: Optional[int] = None,
+        y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
         self.backbone = MLPResNetBackboneModel(
             SinusoidalTimeEncoder(time_steps, temporal_dim),
             bps_dim,
             temporal_dim,
-            hidden_dim=4096,
+            hidden_dim=2048,
+            y_dim=y_embed_dim,
+        )
+        if y_dim is not None or y_embed_dim is not None:
+            assert y_dim is not None and y_embed_dim is not None
+        self.embedder = (
+            torch.nn.Sequential(
+                torch.nn.Linear(y_dim, y_embed_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(y_embed_dim, y_embed_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(y_embed_dim, y_embed_dim),
+            )
+            if y_dim is not None
+            else None
         )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
@@ -54,6 +70,7 @@ class DiffusionModel(torch.nn.Module):
     def forward(
         self,
         x: torch.Tensor,
+        y: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
@@ -77,19 +94,23 @@ class DiffusionModel(torch.nn.Module):
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
         # 4. Predict the noise sample
-        eps_hat = self.backbone(diffused_x, t)
+        y_embed = self.embedder(y.view(y.shape[0], -1)) if y is not None else None
+        eps_hat = self.backbone(diffused_x, t, y_embed)
         return eps_hat, eps
 
-    def generate(self, n: int) -> torch.Tensor:
+    def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
         # ===== Inference =======
         assert self._input_shape is not None, "Must call forward first"
         with torch.no_grad():
             device = next(self.parameters()).device
+            y_embed = self.embedder(y) if y is not None else None
             z_current = torch.randn(n, *self._input_shape).to(device)
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat = self.backbone(
-                    z_current, torch.tensor(t).view(1, 1).repeat(n, 1).to(device)
+                    z_current,
+                    torch.tensor(t).view(1, 1).repeat(n, 1).to(device),
+                    y_embed,
                 )
                 z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
                     self.beta[t]
@@ -100,7 +121,7 @@ class DiffusionModel(torch.nn.Module):
                 pbar.update()
             # Now for z_0:
             eps_hat = self.backbone(
-                z_current, torch.tensor(0).view(1, 1).repeat(n, 1).to(device)
+                z_current, torch.tensor(0).view(1, 1).repeat(n, 1).to(device), y_embed
             )
             x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
                 self.beta[0]
