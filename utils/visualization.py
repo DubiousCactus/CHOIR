@@ -21,7 +21,7 @@ from trimesh import Trimesh
 
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
-from utils import to_cuda
+from utils import to_cuda, to_cuda_
 from utils.dataset import drop_fingertip_joints, snap_to_original_mano
 from utils.training import optimize_pose_pca_from_choir
 
@@ -383,37 +383,31 @@ def visualize_ddpm_generation(
             "trans": labels["trans"],
         }
         if dataset.lower() == "grab":
-            affine_mano = AffineMANO(
-                ncomps=24, flat_hand_mean=True, for_contactpose=False
-            ).cuda()
+            affine_mano = to_cuda_(
+                AffineMANO(ncomps=24, flat_hand_mean=True, for_contactpose=False)
+            )
         elif dataset.lower() == "contactpose":
-            affine_mano = AffineMANO(
-                ncomps=15, flat_hand_mean=False, for_contactpose=True
-            ).cuda()
+            affine_mano = to_cuda_(
+                AffineMANO(ncomps=15, flat_hand_mean=False, for_contactpose=True)
+            )
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset}")
         mano_params_gt = {k: v[0, -1].unsqueeze(0) for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-        gt_verts, _ = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
-        print(
-            choir_pred.min(),
-            choir_pred.max(),
-            " -- ",
-            labels["choir"][0].min(),
-            labels["choir"][0].max(),
-        )
+        # gt_verts, _ = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        gt_verts = to_cuda_(torch.zeros((1, 778, 3)))
         visualize_CHOIR_prediction(
             choir_pred,
-            labels["choir"][0],
+            labels["choir"],
             bps,
             anchor_indices,
-            samples["scalar"][0],
-            labels["scalar"][0],
-            samples["rescaled_ref_pts"][0],
-            labels["rescaled_ref_pts"][0],
+            samples["scalar"][0].unsqueeze(-1),
+            labels["scalar"][0].unsqueeze(-1),
+            samples["rescaled_ref_pts"],
+            labels["rescaled_ref_pts"],
             gt_verts,
-            labels["joints"][0],
-            labels["anchors"][0],
+            labels["joints"],
+            labels["anchors"],
             is_rhand=samples["is_rhand"][0][0].bool().item(),
             use_smplx=False,
             dataset=dataset,
@@ -434,8 +428,8 @@ def visualize_CHOIR_prediction(
     choir_gt: torch.Tensor,
     bps: torch.Tensor,
     anchor_indices: torch.Tensor,
-    input_scalar: float,
-    gt_scalar: float,
+    input_scalar: torch.Tensor,
+    gt_scalar: torch.Tensor,
     input_ref_pts: torch.Tensor,
     gt_ref_pts: torch.Tensor,
     gt_verts: torch.Tensor,
@@ -462,10 +456,14 @@ def visualize_CHOIR_prediction(
         gt_scalar = gt_scalar[0].unsqueeze(0)
     if len(gt_ref_pts.shape) > 2:
         gt_ref_pts = gt_ref_pts[0].unsqueeze(0)
+    if len(gt_joints.shape) > 2:
+        gt_joints = gt_joints[0].unsqueeze(0)
+    if len(gt_anchors.shape) > 2:
+        gt_anchors = gt_anchors[0].unsqueeze(0)
     # =============================================================
     pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
 
-    affine_mano = AffineMANO().cuda()
+    affine_mano = to_cuda_(AffineMANO())
     faces = affine_mano.faces
     F = faces.cpu().numpy()
 
@@ -487,16 +485,19 @@ def visualize_CHOIR_prediction(
             is_rhand=is_rhand,
             use_smplx=use_smplx,
             dataset=dataset,
-            max_iterations=8000,
-            lr=1e-1,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
-            beta_w=1e-8,
+            max_iterations=1000,
+            loss_thresh=1e-6,
+            lr=8e-2,
+            beta_w=1e-4,
+            theta_w=1e-7,
+            choir_w=1000,
         )
     # ====== Metrics and qualitative comparison ======
     # === Anchor error ===
     print(
-        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
     )
     # === MPJPE ===
     if gt_joints.shape[1] == 16 and joints_pred.shape[1] == 21:

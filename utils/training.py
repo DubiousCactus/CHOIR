@@ -52,14 +52,16 @@ def optimize_pose_pca_from_choir(
     affine_mano, smplx_model = None, None
     if use_smplx:
         with redirect_stdout(None):
-            smplx_model = smplx.create(
-                model_path=project_conf.SMPLX_MODEL_PATH,
-                model_type="mano",
-                is_rhand=is_rhand,
-                num_pca_comps=24,
-                flat_hand_mean=False,
-                batch_size=B,
-            ).cuda()
+            smplx_model = to_cuda_(
+                smplx.create(
+                    model_path=project_conf.SMPLX_MODEL_PATH,
+                    model_type="mano",
+                    is_rhand=is_rhand,
+                    num_pca_comps=24,
+                    flat_hand_mean=False,
+                    batch_size=B,
+                )
+            )
     if dataset.lower() == "contactpose":
         affine_mano = to_cuda_(
             AffineMANO(15, flat_hand_mean=False, for_contactpose=True)
@@ -100,16 +102,18 @@ def optimize_pose_pca_from_choir(
         assert (
             theta.shape[0] == B
         ), "compute_pca_from_choir(): batch size mismatch between initial parameters and CHOIR field."
-    rot = rot.cuda().requires_grad_(True)
-    trans = trans.cuda().requires_grad_(True)
-    theta = theta.cuda().requires_grad_(True)
-    beta = beta.cuda().requires_grad_(True)
-    parameters = {
-        "rot": rot,
-        "trans": trans,
-        "fingers_pose": theta,
-        "shape": beta,
-    }
+    rot = rot.requires_grad_(True)
+    trans = trans.requires_grad_(True)
+    theta = theta.requires_grad_(True)
+    beta = beta.requires_grad_(True)
+    parameters = to_cuda_(
+        {
+            "rot": rot,
+            "trans": trans,
+            "fingers_pose": theta,
+            "shape": beta,
+        }
+    )
     params = [{"params": parameters.values()}]
 
     optimizer = torch.optim.Adam(params, lr=lr)
@@ -125,6 +129,9 @@ def optimize_pose_pca_from_choir(
     if remap_bps_distances:
         assert exponential_map_w is not None
         choir = -torch.log(choir) / exponential_map_w
+    assert (
+        choir.shape[0] == scalar.shape[0]
+    ), "Batch size mismatch between CHOIR and scalar."
     choir = (
         choir / scalar[:, None, None]
     )  # CHOIR was computed with scaled up MANO and object pointclouds.
@@ -135,7 +142,7 @@ def optimize_pose_pca_from_choir(
     choir_loss = CHOIRFittingLoss().to(choir.device)
 
     plateau_cnt = 0
-    pose_regularizer = torch.tensor(0.0).cuda()
+    pose_regularizer = to_cuda_(torch.tensor(0.0))
     for _ in proc_bar:
         optimizer.zero_grad()
         if use_smplx:
@@ -146,6 +153,8 @@ def optimize_pose_pca_from_choir(
         else:
             verts, joints = affine_mano(theta, beta, rot, trans)
         anchors = affine_mano.get_anchors(verts)
+        if anchors.isnan().any():
+            raise ValueError("NaNs in anchors.")
         loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
         shape_regularizer = (
             beta_w * torch.norm(beta) ** 2

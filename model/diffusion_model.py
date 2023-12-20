@@ -30,7 +30,10 @@ class DiffusionModel(torch.nn.Module):
     ):
         super().__init__()
         self.backbone = MLPResNetBackboneModel(
-            SinusoidalTimeEncoder(time_steps, temporal_dim), bps_dim, temporal_dim
+            SinusoidalTimeEncoder(time_steps, temporal_dim),
+            bps_dim,
+            temporal_dim,
+            hidden_dim=4096,
         )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
@@ -107,7 +110,9 @@ class DiffusionModel(torch.nn.Module):
             pbar.close()
             output = x_hat.view(n, *self._input_shape)
             # Back to [0, 1]:
-            output = torch.clamp((output + 1) / 2, 0, 1)
+            print(f"Output range: [{output.min()}, {output.max()}]")
+            output = torch.clamp((output + 1) / 2, 0 + 1e-5, 1 - 1e-5)
+            print(f"Output range after stdization: [{output.min()}, {output.max()}]")
             return output
 
 

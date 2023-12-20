@@ -427,7 +427,7 @@ class BaseTrainer:
             None
         """
         print(f"[*] Restoring from checkpoint: {ckpt_path}")
-        ckpt = torch.load(ckpt_path)
+        ckpt = to_cuda_(torch.load(ckpt_path, map_location="cpu"))
         try:
             self._model.load_state_dict(ckpt["model_ckpt"])
         except Exception:
