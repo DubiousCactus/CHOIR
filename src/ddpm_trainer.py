@@ -6,7 +6,7 @@
 # Distributed under terms of the MIT license.
 
 
-from typing import List, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import torch
 
@@ -41,3 +41,31 @@ class DDPMTrainer(BaseTrainer):
             exponential_map_w=self._exponential_map_w,
             dataset=self._train_loader.dataset.name,
         )  # User implementation goes here (utils/training.py)
+
+    @to_cuda
+    def _train_val_iteration(
+        self,
+        batch: Union[Tuple, List, torch.Tensor],
+        validation: bool = False,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Training or validation procedure for one batch. We want to keep the code DRY and avoid
+        making mistakes, so write this code only once at the cost of many function calls!
+        Args:
+            batch: The batch to process.
+        Returns:
+            torch.Tensor: The loss for the batch.
+        """
+        samples, labels, _ = batch
+        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
+        for k, v in samples.items():
+            # samples[k] = v.view(-1, *v.shape[2:])
+            samples[k] = v[:, 0, ...]
+        for k, v in labels.items():
+            # labels[k] = v.view(-1, *v.shape[2:])
+            labels[k] = v[:, 0, ...]
+        y_hat = self._model(
+            samples["choir"][..., -1].unsqueeze(-1)
+        )  # Only the hand distances!
+        losses = self._training_loss(samples, labels, y_hat)
+        loss = sum([v for v in losses.values()])
+        return loss, losses

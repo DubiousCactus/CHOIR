@@ -65,7 +65,7 @@ class MLPResNetBackboneModel(torch.nn.Module):
         hidden_dim: int = 2048,
     ):
         super().__init__()
-        self.choir_dim = 2
+        self.choir_dim = 1
         self.time_encoder = time_encoder
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
