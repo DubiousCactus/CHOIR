@@ -35,7 +35,7 @@ class DiffusionModel(torch.nn.Module):
             SinusoidalTimeEncoder(time_steps, temporal_dim),
             bps_dim,
             temporal_dim,
-            hidden_dim=2048,
+            hidden_dim=4096,
             y_dim=y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:

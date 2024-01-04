@@ -302,6 +302,13 @@ sched_store(
     ),
     name="cosine",
 )
+sched_store(
+    pbuilds(
+        torch.optim.lr_scheduler.ExponentialLR,
+        gamma=0.99
+    ),
+    name="exp",
+)
 
 " ================== Experiment ================== "
 
@@ -344,7 +351,7 @@ Experiment = builds(
         {"dataset": "contactpose"},
         {"model": "baseline"},
         {"optimizer": "adam"},
-        {"scheduler": "step"},
+        {"scheduler": "exp"},
         {"run": "default"},
         {"training_loss": "choir"},
     ],
