@@ -102,11 +102,12 @@ def launch_experiment(
         remap_bps_distances = test_dataset.bps
         exponential_map_w = test_dataset.bps
     opt_inst = optimizer(model_inst.parameters())
-    scheduler_inst = scheduler(
-        opt_inst
-    )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
-    if isinstance(scheduler_inst, torch.optim.lr_scheduler.CosineAnnealingLR):
-        scheduler_inst.T_max = run.epochs
+    if scheduler.func is torch.optim.lr_scheduler.CosineAnnealingLR:
+        scheduler_inst = scheduler(opt_inst, T_max=run.epochs)
+    else:
+        scheduler_inst = scheduler(
+            opt_inst
+        )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
 
     if training_loss.func is CHOIRLoss:
         training_loss_inst = training_loss(

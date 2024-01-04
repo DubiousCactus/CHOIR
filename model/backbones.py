@@ -84,14 +84,14 @@ class MLPResNetBackboneModel(torch.nn.Module):
         self.output_layer = torch.nn.Linear(hidden_dim, bps_dim * self.choir_dim)
 
     def forward(
-        self, x: torch.Tensor, t: torch.Tensor, y: Optional[torch.Tensor] = None
+        self, x: torch.Tensor, t: torch.Tensor, y: Optional[torch.Tensor] = None, debug = False
     ) -> torch.Tensor:
         input_shape = x.shape
         x = x.view(x.shape[0], -1)
         time_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.input_layer(torch.cat((x, y), dim=-1) if y is not None else x)
-        x2 = self.block_1(x1, time_embed, y)
-        x3 = self.block_2(x2, time_embed, y)
-        x4 = self.block_3(x3, time_embed, y)
-        x5 = self.block_4(x4, time_embed, y)
+        x2 = self.block_1(x1, time_embed, y, debug=debug)
+        x3 = self.block_2(x2, time_embed, y, debug=debug)
+        x4 = self.block_3(x3, time_embed, y, debug=debug)
+        x5 = self.block_4(x4, time_embed, y, debug=debug)
         return self.output_layer(x5).view(input_shape)

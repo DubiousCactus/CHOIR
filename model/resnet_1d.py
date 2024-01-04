@@ -78,13 +78,13 @@ class TemporalResidualBlock(torch.nn.Module):
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(
-            dim_in,
+            dim_in + y_dim if y_dim is not None else 0,
             dim_out,
         )
         self.norm1 = torch.nn.GroupNorm(n_norm_groups, dim_out)
         self.nonlin = torch.nn.SiLU()
         self.lin2 = torch.nn.Linear(
-            dim_out,
+            dim_out + y_dim if y_dim is not None else 0,
             dim_out,
         )
         self.norm2 = torch.nn.GroupNorm(n_norm_groups, dim_out)
@@ -95,7 +95,7 @@ class TemporalResidualBlock(torch.nn.Module):
         )
         self.cross_attention = (
             VectorAttentionLayer(
-                q_dim=dim_out, k_dim=y_dim, v_dim=y_dim, output_dim=dim_out
+                q_dim=dim_out, k_dim=y_dim, v_dim=y_dim, output_dim=y_dim
             )
             if y_dim is not None
             else None
@@ -126,19 +126,20 @@ class TemporalResidualBlock(torch.nn.Module):
         scale, shift = self.temporal_projection(t_emb).chunk(2, dim=1)
         print_debug(f"Starting with x.shape = {x.shape}")
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
+        #x = torch.cat((x, self.cross_attention(q=x, k=y_emb, v=y_emb)), dim=1) if y_emb is not None else x
+        x = torch.cat((x, y_emb), dim=1) if y_emb is not None else x
         x = self.lin1(x)
         print_debug(f"After lin1, x.shape = {x.shape}")
-        # x = x + self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0
-        x = x * (scale + 1) + shift
         x = self.norm1(x)
+        x = x * (scale + 1) + shift
         x = self.nonlin(x)
         print_debug(f"Temb is {t_emb.shape}")
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
+        x = torch.cat((x, y_emb), dim=1) if y_emb is not None else x
         x = self.lin2(x)
         print_debug(f"After lin2, x.shape = {x.shape}")
-        x = x + self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0
-        x = x * (scale + 1) + shift
         x = self.norm2(x)
+        x = x * (scale + 1) + shift
         print_debug(
             f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
         )

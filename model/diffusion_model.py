@@ -42,11 +42,13 @@ class DiffusionModel(torch.nn.Module):
             assert y_dim is not None and y_embed_dim is not None
         self.embedder = (
             torch.nn.Sequential(
-                torch.nn.Linear(y_dim, y_embed_dim),
+                torch.nn.Linear(y_dim, 2*y_dim),
+                torch.nn.BatchNorm1d(2*y_dim),
                 torch.nn.GELU(),
-                torch.nn.Linear(y_embed_dim, y_embed_dim),
+                torch.nn.Linear(2*y_dim, 2*y_dim),
+                torch.nn.BatchNorm1d(2*y_dim),
                 torch.nn.GELU(),
-                torch.nn.Linear(y_embed_dim, y_embed_dim),
+                torch.nn.Linear(2*y_dim, y_embed_dim),
             )
             if y_dim is not None
             else None
@@ -95,7 +97,7 @@ class DiffusionModel(torch.nn.Module):
         )
         # 4. Predict the noise sample
         y_embed = self.embedder(y.view(y.shape[0], -1)) if y is not None else None
-        eps_hat = self.backbone(diffused_x, t, y_embed)
+        eps_hat = self.backbone(diffused_x, t, y_embed, debug=False)
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
