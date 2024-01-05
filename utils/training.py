@@ -102,21 +102,11 @@ def optimize_pose_pca_from_choir(
         assert (
             theta.shape[0] == B
         ), "compute_pca_from_choir(): batch size mismatch between initial parameters and CHOIR field."
-    rot = rot.requires_grad_(True)
-    trans = trans.requires_grad_(True)
-    theta = theta.requires_grad_(True)
-    beta = beta.requires_grad_(True)
-    parameters = to_cuda_(
-        {
-            "rot": rot,
-            "trans": trans,
-            "fingers_pose": theta,
-            "shape": beta,
-        }
-    )
-    params = [{"params": parameters.values()}]
+    rot, trans, theta, beta = to_cuda_((rot, trans, theta, beta))
+    for p in (rot, trans, theta, beta):
+        p.requires_grad = True
+    optimizer = torch.optim.Adam([rot, trans, theta, beta], lr=lr)
 
-    optimizer = torch.optim.Adam(params, lr=lr)
     if initial_params is not None:
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
     else:
