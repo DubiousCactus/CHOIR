@@ -19,6 +19,7 @@ class DDPMTrainer(BaseTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
+        self._use_deltas = self._train_loader.dataset.use_deltas
 
     @to_cuda
     def _visualize(
@@ -41,6 +42,7 @@ class DDPMTrainer(BaseTrainer):
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
             dataset=self._train_loader.dataset.name,
+            use_deltas=self._use_deltas,
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda
@@ -64,10 +66,16 @@ class DDPMTrainer(BaseTrainer):
         for k, v in labels.items():
             # labels[k] = v.view(-1, *v.shape[2:])
             labels[k] = v[:, 0, ...]
-        y_hat = self._model(
-            samples["choir"][..., -1].unsqueeze(-1),
-            samples["choir"][..., 0].unsqueeze(-1) if self.conditional else None,
-        )  # Only the hand distances!
+        if not self._use_deltas:
+            y_hat = self._model(
+                samples["choir"][..., -1].unsqueeze(-1),
+                samples["choir"][..., 0].unsqueeze(-1) if self.conditional else None,
+            )  # Only the hand distances!
+        else:
+            y_hat = self._model(
+                samples["choir"][..., 3:],
+                samples["choir"][..., :3] if self.conditional else None,
+            )  # Only the hand deltas!
         losses = self._training_loss(samples, labels, y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses

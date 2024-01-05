@@ -63,20 +63,22 @@ class MLPResNetBackboneModel(torch.nn.Module):
         self,
         time_encoder: torch.nn.Module,
         bps_dim: int,
+        choir_dim: int,
         temporal_dim: int,
         hidden_dim: int = 2048,
         y_dim: Optional[int] = None,
     ):
         super().__init__()
-        self.choir_dim = 1
+        self.choir_dim = choir_dim
         self.time_encoder = time_encoder
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
-        y_dim = y_dim if y_dim is not None else 0
-        self.input_layer = torch.nn.Linear(bps_dim * self.choir_dim + y_dim, hidden_dim)
+        self.input_layer = torch.nn.Linear(
+            bps_dim * self.choir_dim + (y_dim if y_dim is not None else 0), hidden_dim
+        )
         self.block_1 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
         self.block_2 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
         self.block_3 = ResBlock(hidden_dim, hidden_dim, temporal_dim, y_dim=y_dim)
@@ -84,7 +86,11 @@ class MLPResNetBackboneModel(torch.nn.Module):
         self.output_layer = torch.nn.Linear(hidden_dim, bps_dim * self.choir_dim)
 
     def forward(
-        self, x: torch.Tensor, t: torch.Tensor, y: Optional[torch.Tensor] = None, debug = False
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        y: Optional[torch.Tensor] = None,
+        debug=False,
     ) -> torch.Tensor:
         input_shape = x.shape
         x = x.view(x.shape[0], -1)

@@ -91,6 +91,7 @@ def compute_choir(
     anchor_indices: torch.Tensor,
     remap_bps_distances: bool,
     exponential_map_w: float,
+    use_deltas: bool,
 ) -> torch.Tensor:
     """
     Args:
@@ -117,8 +118,6 @@ def compute_choir(
         feature_type=["dists", "deltas"],
     )
     rescaled_ref_pts = bps + object_bps["deltas"]  # A subset of rescaled_obj_pointcloud
-    # Compute the distances between the BPS points and the MANO anchors:
-    anchor_distances = torch.cdist(bps, rescaled_anchors)  # Shape: (BPS_LEN, N_ANCHORS)
     # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
     # batches. The number of batches is determined by the number of BPS points, and the latter
     # must be a multiple of 32.
@@ -126,22 +125,44 @@ def compute_choir(
         bps.shape[1] % 32 == 0
     ), f"The number of BPS points ({bps.shape[1]}) must be a multiple of 32."
     anchor_ids = anchor_indices.unsqueeze(0).repeat((B, 1))
-    distances = torch.gather(anchor_distances, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
-    choir = torch.cat(
-        [
-            object_bps["dists"]
-            .unsqueeze(-1)
-            .repeat(
-                (B, 1, 1)
-            ),  # O(len(BPS)) because the anchor distances don't involve KNN.
-            distances.unsqueeze(-1),
-        ],
-        dim=-1,
-    )
-    if remap_bps_distances:
-        # Remap the BPS distances to [0, 1] using the exponential map from the GOAL paper. 1 is
-        # very close to the BPS point, 0 is very far away.
-        choir = torch.exp(-exponential_map_w * choir)
+    if use_deltas:
+        assert (
+            not remap_bps_distances
+        ), "Remapping BPS distances is not supported with deltas."
+        anchor_deltas = bps[:, :, None, :] - rescaled_anchors[:, None, :, :]
+        anchor_deltas = torch.gather(
+            anchor_deltas, 2, anchor_ids[..., None, None].repeat(1, 1, 1, 3)
+        ).squeeze(-2)
+        choir = torch.cat(
+            (
+                object_bps["deltas"],
+                anchor_deltas,
+            ),
+            dim=-1,
+        )
+    else:
+        # Compute the distances between the BPS points and the MANO anchors:
+        anchor_distances = torch.cdist(
+            bps, rescaled_anchors
+        )  # Shape: (BPS_LEN, N_ANCHORS)
+        anchor_distances = torch.gather(
+            anchor_distances, 2, anchor_ids.unsqueeze(-1)
+        ).squeeze(-1)
+        choir = torch.cat(
+            [
+                object_bps["dists"]
+                .unsqueeze(-1)
+                .repeat(
+                    (B, 1, 1)
+                ),  # O(len(BPS)) because the anchor distances don't involve KNN.
+                anchor_distances.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
+        if remap_bps_distances:
+            # Remap the BPS distances to [0, 1] using the exponential map from the GOAL paper. 1 is
+            # very close to the BPS point, 0 is very far away.
+            choir = torch.exp(-exponential_map_w * choir)
     return choir, rescaled_ref_pts  # , anchor_deltas
 
 

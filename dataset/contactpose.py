@@ -24,13 +24,18 @@ from open3d import io as o3dio
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
+from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda_
 from utils.dataset import augment_hand_object_pose, compute_choir, get_scalar
-from utils.visualization import visualize_CHOIR
+from utils.visualization import (
+    visualize_CHOIR,
+    visualize_CHOIR_prediction,
+    visualize_MANO,
+)
 
 
 class ContactPoseDataset(BaseDataset):
@@ -68,6 +73,7 @@ class ContactPoseDataset(BaseDataset):
         random_anchor_assignment: bool = False,
         eval_observations_plateau: bool = False,
         eval_anchor_assignment: bool = False,
+        use_deltas: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -117,6 +123,7 @@ class ContactPoseDataset(BaseDataset):
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
             random_anchor_assignment=random_anchor_assignment,
+            use_deltas=use_deltas,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -361,6 +368,7 @@ class ContactPoseDataset(BaseDataset):
             + f"{'_exponential_mapped' if self._remap_bps_distances else ''}"
             + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
             + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
+            + f"_{'deltas' if self._use_deltas else ''}"
             + f"_{split}{'-augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
@@ -468,6 +476,7 @@ class ContactPoseDataset(BaseDataset):
                         anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
+                        use_deltas=self._use_deltas,
                     )
 
                     sample_paths = []
@@ -527,6 +536,7 @@ class ContactPoseDataset(BaseDataset):
                             anchor_indices=self._anchor_indices.cuda(),  # type: ignore
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
+                            use_deltas=self._use_deltas,
                         )
                         sample, label = (
                             choir.squeeze().cpu().numpy(),
@@ -572,35 +582,37 @@ class ContactPoseDataset(BaseDataset):
                                 obj_ptcld,
                                 gt_rescaled_ref_pts.squeeze(0),
                                 affine_mano,
+                                use_deltas=self._use_deltas,
                             )
-                            # faces = affine_mano.faces
-                            # gt_MANO_mesh = Trimesh(
-                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # pred_MANO_mesh = Trimesh(
-                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # visualize_MANO(
-                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            # )
-                            # visualize_CHOIR_prediction(
-                            # gt_choir,
-                            # gt_choir,
-                            # self._bps,
-                            # self._anchor_indices,
-                            # scalar,
-                            # gt_scalar,
-                            # rescaled_ref_pts,
-                            # gt_rescaled_ref_pts,
-                            # gt_verts,
-                            # gt_joints,
-                            # gt_anchors,
-                            # is_rhand=(hand_idx == "right"),
-                            # use_smplx=False,
-                            # dataset="ContactPose",
-                            # remap_bps_distances=self._remap_bps_distances,
-                            # exponential_map_w=self._exponential_map_w,
-                            # )
+                            faces = affine_mano.faces
+                            gt_MANO_mesh = Trimesh(
+                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            pred_MANO_mesh = Trimesh(
+                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            visualize_MANO(
+                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            )
+                            visualize_CHOIR_prediction(
+                                gt_choir,
+                                gt_choir,
+                                self._bps,
+                                self._anchor_indices,
+                                scalar,
+                                gt_scalar,
+                                rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                is_rhand=(hand_idx == "right"),
+                                use_smplx=False,
+                                dataset="ContactPose",
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                                use_deltas=self._use_deltas,
+                            )
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()

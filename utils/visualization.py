@@ -370,12 +370,22 @@ def visualize_ddpm_generation(
     anchor_indices: torch.Tensor,
     bps_dim: int,
     dataset: str,
+    use_deltas: bool,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
     samples, labels, _ = batch
     if not project_conf.HEADLESS:
         choir_pred = model.generate(1)
+        if use_deltas:
+            choir_pred = torch.cat(
+                (
+                    torch.linalg.norm(choir_pred[..., :3], dim=-1).unsqueeze(-1),
+                    torch.linalg.norm(choir_pred[..., 3:], dim=-1).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        choir_pred = torch.cat((torch.zeros_like(choir_pred), choir_pred), dim=-1)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -413,6 +423,8 @@ def visualize_ddpm_generation(
             dataset=dataset,
             remap_bps_distances=kwargs["remap_bps_distances"],
             exponential_map_w=kwargs["exponential_map_w"],
+            plot_choir=False,
+            use_deltas=use_deltas,
         )
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
@@ -440,6 +452,8 @@ def visualize_CHOIR_prediction(
     dataset: str,
     remap_bps_distances: bool,
     exponential_map_w: Optional[float] = None,
+    plot_choir: bool = True,
+    use_deltas: bool = False,
 ):
     # ============ Get the first element of the batch ============
     if len(choir_pred.shape) > 2:
@@ -461,7 +475,26 @@ def visualize_CHOIR_prediction(
     if len(gt_anchors.shape) > 2:
         gt_anchors = gt_anchors[0].unsqueeze(0)
     # =============================================================
-    pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
+    if use_deltas:
+        # TODO: directly plot the delta vectors?
+        print("Converting deltas to distances...")
+        _choir_pred = torch.cat(
+            (
+                torch.linalg.norm(choir_pred[..., :3], dim=-1).unsqueeze(-1),
+                torch.linalg.norm(choir_pred[..., 3:], dim=-1).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+        _choir_gt = torch.cat(
+            (
+                torch.linalg.norm(choir_gt[..., :3], dim=-1).unsqueeze(-1),
+                torch.linalg.norm(choir_gt[..., 3:], dim=-1).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+    else:
+        _choir_pred = choir_pred
+        _choir_gt = choir_gt
 
     affine_mano = to_cuda_(AffineMANO())
     faces = affine_mano.faces
@@ -478,7 +511,7 @@ def visualize_CHOIR_prediction(
             verts_pred,
             joints_pred,
         ) = optimize_pose_pca_from_choir(
-            choir_pred,
+            _choir_pred,
             bps=bps,
             anchor_indices=anchor_indices.int(),
             scalar=input_scalar,
@@ -547,30 +580,32 @@ def visualize_CHOIR_prediction(
         tmesh, obj_ptcld=input_ref_pts[0] / input_scalar[0], gt_hand=gt_hand_mesh
     )
     # ===================================================================================
-    pl.subplot(0, 0)
-    add_choir_to_plot(
-        pl,
-        bps / input_scalar,
-        choir_pred / input_scalar,
-        input_ref_pts / input_scalar,
-        anchors_pred,
-        hand_mesh,
-    )
-    # ===================================================================================
-    # ============ Display the ground truth CHOIR field with the GT MANO ================
-    pl.subplot(0, 1)
-    add_choir_to_plot(
-        pl,
-        bps / gt_scalar,
-        choir_gt / gt_scalar,
-        gt_ref_pts / gt_scalar,
-        gt_anchors,
-        gt_hand_mesh,
-    )
-    pl.link_views()
-    pl.set_background("white")  # type: ignore
-    pl.add_camera_orientation_widget()
-    pl.show(interactive=True)
+    if plot_choir:
+        pl = pv.Plotter(shape=(1, 2), border=False, off_screen=False)
+        pl.subplot(0, 0)
+        add_choir_to_plot(
+            pl,
+            bps / input_scalar,
+            _choir_pred / input_scalar,
+            input_ref_pts / input_scalar,
+            anchors_pred,
+            hand_mesh,
+        )
+        # ===================================================================================
+        # ============ Display the ground truth CHOIR field with the GT MANO ================
+        pl.subplot(0, 1)
+        add_choir_to_plot(
+            pl,
+            bps / gt_scalar,
+            _choir_gt / gt_scalar,
+            gt_ref_pts / gt_scalar,
+            gt_anchors,
+            gt_hand_mesh,
+        )
+        pl.link_views()
+        pl.set_background("white")  # type: ignore
+        pl.add_camera_orientation_widget()
+        pl.show(interactive=True)
 
 
 def visualize_CHOIR(
@@ -586,6 +621,7 @@ def visualize_CHOIR(
     obj_pointcloud,
     reference_obj_points: torch.Tensor,
     affine_mano: AffineMANO,
+    use_deltas: bool = False,
 ):
     assert len(anchors.shape) == 2
     assert len(choir.shape) == 2
@@ -593,6 +629,18 @@ def visualize_CHOIR(
     assert len(verts.shape) == 2
     if torch.is_tensor(scalar):
         scalar = scalar.item()
+
+    if use_deltas:
+        # TODO: directly plot the delta vectors?
+        _choir = torch.cat(
+            (
+                torch.linalg.norm(choir[:, :3], dim=1).unsqueeze(-1),
+                torch.linalg.norm(choir[:, 3:], dim=1).unsqueeze(-1),
+            ),
+            dim=1,
+        )
+    else:
+        _choir = choir
     n_anchors = anchors.shape[0]
     faces = affine_mano.faces
     V = scalar * verts.cpu().numpy()
@@ -656,13 +704,13 @@ def visualize_CHOIR(
         # It is obtained from min-max normalization of the distance in the choir field,
         # without known range. The color range is 0 to 16777215.
         obj_color = int(
-            (choir[i, 0] - choir[:, 0].min())
-            / (choir[:, 0].max() - choir[:, 0].min())
+            (_choir[i, 0] - _choir[:, 0].min())
+            / (_choir[:, 0].max() - _choir[:, 0].min())
             * 16777215
         )
         anchor_color = int(
-            (choir[i, 1] - choir[:, 1].min())
-            / (choir[:, 1].max() - choir[:, 1].min())
+            (_choir[i, 1] - _choir[:, 1].min())
+            / (_choir[:, 1].max() - _choir[:, 1].min())
             * 16777215
         )
         # This is to check that the delta vectors are correct: (should be the same visual
@@ -674,7 +722,7 @@ def visualize_CHOIR(
         # reference_obj_points[i, :].cpu().numpy(),
         # (
         # reference_obj_points[i, :].cpu()
-        # + (choir[i, 4] * anchor_orientations[i, :])
+        # + (_choir[i, 4] * anchor_orientations[i, :])
         # ).numpy(),
         # ]
         # ),
@@ -728,8 +776,8 @@ def visualize_CHOIR(
         # It is obtained from min-max normalization of the distance in the choir field,
         # without known range. The color range is 0 to 16777215.
         obj_color = int(
-            (choir[i, 0] - choir[:, 0].min())
-            / (choir[:, 0].max() - choir[:, 0].min())
+            (_choir[i, 0] - _choir[:, 0].min())
+            / (_choir[:, 0].max() - _choir[:, 0].min())
             * 16777215
         )
         pl.add_lines(
@@ -749,8 +797,8 @@ def visualize_CHOIR(
         index = anchor_indices[i]
         anchor = rescaled_anchors[index, :]
         anchor_color = int(
-            (choir[i, 1] - choir[:, 1].min())
-            / (choir[:, 1].max() - choir[:, 1].min())
+            (_choir[i, 1] - _choir[:, 1].min())
+            / (_choir[:, 1].max() - _choir[:, 1].min())
             * 16777215
         )
         pl.add_lines(

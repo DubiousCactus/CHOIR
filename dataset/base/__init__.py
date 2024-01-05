@@ -52,6 +52,7 @@ class BaseDataset(TaskSet, abc.ABC):
         exponential_map_w: float,
         random_anchor_assignment: bool,
         dataset_name: str,
+        use_deltas: bool,
         noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
         # For GRAB, noisy_samples_per_grasp is actually the number of frames in the sequence. At
@@ -136,6 +137,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._rescale = rescale
         self._remap_bps_distances = remap_bps_distances
         self._exponential_map_w = exponential_map_w
+        self._use_deltas = use_deltas
         self._observations_number = None
         self._n_combinations = None
         self._combinations = None
@@ -150,6 +152,10 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+
+    @property
+    def use_deltas(self):
+        return self._use_deltas
 
     @property
     def eval_anchor_assignment(self):

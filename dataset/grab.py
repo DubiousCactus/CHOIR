@@ -68,6 +68,7 @@ class GRABDataset(BaseDataset):
         rescale: str = "none",
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
+        use_deltas: bool = False,
         use_affine_mano: bool = False,
         use_official_splits: bool = True,
         random_anchor_assignment: bool = False,
@@ -119,6 +120,7 @@ class GRABDataset(BaseDataset):
             center_on_object_com=center_on_object_com,
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
+            use_deltas=use_deltas,
             random_anchor_assignment=random_anchor_assignment,
             augment=augment,
             n_augs=n_augs,
@@ -341,6 +343,7 @@ class GRABDataset(BaseDataset):
             + f"{'affine_mano' if self._use_affine_mano else 'smplx'}_"
             + f"{'static' if self._static_grasps_only else 'dynamic'}_"
             + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
+            + f"_{'deltas' if self._use_deltas else ''}"
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"{'right-hand' if self._right_hand_only else 'both-hands'}"
             + f"_{split}",

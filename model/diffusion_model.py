@@ -26,7 +26,9 @@ class DiffusionModel(torch.nn.Module):
         beta_1: float,
         beta_T: float,
         bps_dim: int,
+        choir_dim: int,
         temporal_dim: int,
+        rescale_input: bool,
         y_dim: Optional[int] = None,
         y_embed_dim: Optional[int] = None,
     ):
@@ -34,6 +36,7 @@ class DiffusionModel(torch.nn.Module):
         self.backbone = MLPResNetBackboneModel(
             SinusoidalTimeEncoder(time_steps, temporal_dim),
             bps_dim,
+            choir_dim,
             temporal_dim,
             hidden_dim=4096,
             y_dim=y_embed_dim,
@@ -42,13 +45,13 @@ class DiffusionModel(torch.nn.Module):
             assert y_dim is not None and y_embed_dim is not None
         self.embedder = (
             torch.nn.Sequential(
-                torch.nn.Linear(y_dim, 2*y_dim),
-                torch.nn.BatchNorm1d(2*y_dim),
+                torch.nn.Linear(y_dim, 2 * y_dim),
+                torch.nn.BatchNorm1d(2 * y_dim),
                 torch.nn.GELU(),
-                torch.nn.Linear(2*y_dim, 2*y_dim),
-                torch.nn.BatchNorm1d(2*y_dim),
+                torch.nn.Linear(2 * y_dim, 2 * y_dim),
+                torch.nn.BatchNorm1d(2 * y_dim),
                 torch.nn.GELU(),
-                torch.nn.Linear(2*y_dim, y_embed_dim),
+                torch.nn.Linear(2 * y_dim, y_embed_dim),
             )
             if y_dim is not None
             else None
@@ -68,6 +71,7 @@ class DiffusionModel(torch.nn.Module):
         assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
         assert not (self.alpha < 0).any(), "Alphas contain neg"
         self._input_shape = None
+        self._rescale_input = rescale_input
 
     def forward(
         self,
@@ -78,7 +82,8 @@ class DiffusionModel(torch.nn.Module):
             self._input_shape = x.shape[1:]
         # print(f"Input range: [{x.min()}, {x.max()}]")
         # From [0, 1] to [-1, 1]:
-        x = 2 * x - 1
+        if self._rescale_input:
+            x = 2 * x - 1
         # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
@@ -132,9 +137,11 @@ class DiffusionModel(torch.nn.Module):
             pbar.update()
             pbar.close()
             output = x_hat.view(n, *self._input_shape)
-            # Back to [0, 1]:
+            if self._rescale_input:
+                # Back to [0, 1]:
+                output = (output + 1) / 2
             print(f"Output range: [{output.min()}, {output.max()}]")
-            output = torch.clamp((output + 1) / 2, 0 + 1e-5, 1 - 1e-5)
+            output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
             print(f"Output range after stdization: [{output.min()}, {output.max()}]")
             return output
 
