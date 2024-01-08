@@ -90,7 +90,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._perturbation_level = perturbation_level
         self._augment = augment and split == "train"
         self._n_augs = n_augs
-        self._bps_dim = bps_dim if not use_bps_grid else 32**3
+        self._bps_dim = bps_dim
         self._seq_len = noisy_samples_per_grasp
         self._random_anchor_assignment = random_anchor_assignment
         self._seq_lengths = []  # For variable length sequences (GRAB)
@@ -102,10 +102,14 @@ class BaseDataset(TaskSet, abc.ABC):
         )
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
+        grid_len = int(round(self._bps_dim ** (1 / 3))) if use_bps_grid else None
+        assert (
+            grid_len % 2 == 0
+        ), f"Grid length must be even. Got {grid_len} for bps_dim={self._bps_dim}."
         bps_path = osp.join(
             get_original_cwd(),
             "data",
-            f"bps_{'32-grid' if use_bps_grid else self._bps_dim}_{rescale}-rescaled.pkl",
+            f"bps_{f'{grid_len}-grid' if use_bps_grid else self._bps_dim}_{rescale}-rescaled.pkl",
         )
         anchor_indices_path = osp.join(
             get_original_cwd(),
@@ -118,10 +122,10 @@ class BaseDataset(TaskSet, abc.ABC):
         else:
             if use_bps_grid:
                 bps = sample_grid_cube(
-                    grid_size=32,
+                    grid_size=grid_len,
                     n_dims=3,
-                    minv=-1.0,
-                    maxv=1.0,
+                    minv=-0.2 if rescale == "none" else -0.6,
+                    maxv=0.2 if rescale == "none" else 0.6,
                 ).cpu()
             else:
                 bps = sample_sphere_uniform(

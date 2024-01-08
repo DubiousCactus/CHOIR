@@ -439,6 +439,7 @@ experiment_store(
             remap_bps_distances=False,
             use_deltas=True,
             use_bps_grid=True,
+            bps_dim=16**3,  # 32**3 should give much better results
         ),
         data_loader=dict(batch_size=64),
         model=dict(
