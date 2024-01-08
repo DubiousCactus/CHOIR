@@ -36,15 +36,31 @@ class DiffusionModel(torch.nn.Module):
     ):
         super().__init__()
         backbones = {
-            "mlp_resnet": partial(
-                MLPResNetBackboneModel, hidden_dim=4096, bps_dim=bps_dim
+            "mlp_resnet": (
+                partial(MLPResNetBackboneModel, hidden_dim=4096, bps_dim=bps_dim),
+                torch.nn.Sequential(
+                    torch.nn.Linear(y_dim, 2 * y_dim),
+                    torch.nn.BatchNorm1d(2 * y_dim),
+                    torch.nn.GELU(),
+                    torch.nn.Linear(2 * y_dim, 2 * y_dim),
+                    torch.nn.BatchNorm1d(2 * y_dim),
+                    torch.nn.GELU(),
+                    torch.nn.Linear(2 * y_dim, y_embed_dim),
+                )
+                if y_dim is not None
+                else None,
             ),
-            "3d_unet": partial(
-                UNetBackboneModel, bps_grid_len=32, normalization="batch"
+            "3d_unet": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=round(bps_dim ** (1 / 3)),
+                    normalization="batch",
+                ),
+                None if y_dim is not None else None,
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
-        self.backbone = backbones[backbone](
+        self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
             choir_dim=choir_dim,
             temporal_dim=temporal_dim,
@@ -52,19 +68,7 @@ class DiffusionModel(torch.nn.Module):
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.embedder = (
-            torch.nn.Sequential(
-                torch.nn.Linear(y_dim, 2 * y_dim),
-                torch.nn.BatchNorm1d(2 * y_dim),
-                torch.nn.GELU(),
-                torch.nn.Linear(2 * y_dim, 2 * y_dim),
-                torch.nn.BatchNorm1d(2 * y_dim),
-                torch.nn.GELU(),
-                torch.nn.Linear(2 * y_dim, y_embed_dim),
-            )
-            if y_dim is not None
-            else None
-        )
+        self.embedder = backbones[backbone][1]
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
             torch.linspace(beta_1, beta_T, time_steps), requires_grad=False
