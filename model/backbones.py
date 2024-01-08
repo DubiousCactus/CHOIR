@@ -9,11 +9,14 @@
 Backbones for all sorts of things (diffusion hehehehehehehe).
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 
-from model.resnet_1d import TemporalResidualBlock as ResBlock
+from model.resnet_conv import TemporalDownScaleResidualBlock as ConvDownBlock
+from model.resnet_conv import TemporalIdentityResidualBlock as ConvIdentityBlock
+from model.resnet_conv import TemporalUpScaleResidualBlock as ConvUpBlock
+from model.resnet_mlp import TemporalResidualBlock as ResBlock
 
 
 class MLPUNetBackbone(torch.nn.Module):
@@ -24,6 +27,7 @@ class MLPUNetBackbone(torch.nn.Module):
         self.time_embedder = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
+            torch.nn.BatchNorm1d(temporal_dim),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
         self.in_ = torch.nn.Linear(bps_dim * self.choir_dim, 1024)
@@ -74,6 +78,7 @@ class MLPResNetBackboneModel(torch.nn.Module):
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
+            torch.nn.BatchNorm1d(temporal_dim),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
         self.input_layer = torch.nn.Linear(
@@ -101,3 +106,102 @@ class MLPResNetBackboneModel(torch.nn.Module):
         x4 = self.block_3(x3, time_embed, y, debug=debug)
         x5 = self.block_4(x4, time_embed, y, debug=debug)
         return self.output_layer(x5).view(input_shape)
+
+
+class UNetBackboneModel(torch.nn.Module):
+    def __init__(
+        self,
+        time_encoder: torch.nn.Module,
+        bps_grid_len: int,
+        choir_dim: int,
+        temporal_dim: int,
+        normalization: str = "batch",
+        output_paddings: Tuple[int] = (1, 1, 1, 1),
+        y_dim: Optional[int] = None,
+    ):
+        super().__init__()
+        self.grid_len = bps_grid_len
+        self.choir_dim = choir_dim
+        self.time_encoder = time_encoder
+        self.time_mlp = torch.nn.Sequential(
+            torch.nn.Linear(temporal_dim, temporal_dim),
+            torch.nn.GELU(),
+            torch.nn.BatchNorm1d(temporal_dim),
+            torch.nn.Linear(temporal_dim, temporal_dim),
+        )
+        self.identity1 = ConvIdentityBlock(
+            self.choir_dim, 64, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.down1 = ConvDownBlock(
+            64, 64, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.down2 = ConvDownBlock(
+            64, 128, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.down3 = ConvDownBlock(
+            128, 256, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.tunnel1 = ConvIdentityBlock(
+            256, 256, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.tunnel2 = ConvIdentityBlock(
+            256, 256, temporal_dim, normalization=normalization, conv="3d"
+        )
+        self.up1 = ConvUpBlock(
+            512,
+            128,
+            temporal_dim,
+            output_padding=output_paddings[0],
+            normalization=normalization,
+            conv="3d",
+        )
+        self.up2 = ConvUpBlock(
+            256,
+            64,
+            temporal_dim,
+            output_padding=output_paddings[1],
+            normalization=normalization,
+            conv="3d",
+        )
+        self.up3 = ConvUpBlock(
+            128,
+            32,
+            temporal_dim,
+            output_padding=output_paddings[2],
+            normalization=normalization,
+            conv="3d",
+        )
+        self.identity3 = ConvIdentityBlock(
+            32, 16, temporal_dim, norm_groups=4, normalization=normalization, conv="3d"
+        )
+        self.out_conv = torch.nn.Conv3d(16, self.choir_dim, 1, padding=0, stride=1)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        y: Optional[torch.tensor] = None,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        if y is not None:
+            raise NotImplementedError("y is not implemented for UNetBackboneModel")
+        input_shape = x.shape
+        x = x.reshape(
+            x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
+        ).permute(0, 4, 1, 2, 3)
+        t_embed = self.time_mlp(self.time_encoder(t))
+        x1 = self.identity1(x, t_embed, debug=debug)
+        x2 = self.down1(x1, t_embed, debug=debug)
+        x3 = self.down2(x2, t_embed, debug=debug)
+        x4 = self.down3(x3, t_embed, debug=debug)
+        x5 = self.tunnel1(x4, t_embed, debug=debug)
+        x6 = self.tunnel2(x5, t_embed, debug=debug)
+        # The output of the final downsampling layer is concatenated with the output of the final
+        # tunnel layer because they have the same shape H and W. Then we upscale those features and
+        # conctenate the upscaled features with the output of the previous downsampling layer, and
+        # so on.
+        x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, debug=debug)
+        x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, debug=debug)
+        x10 = self.up3(torch.cat((x8, x2), dim=1), t_embed, debug=debug)
+        x11 = self.identity3(x10, t_embed, debug=debug)
+        return self.out_conv(x11).permute(0, 4, 1, 2, 3).reshape(input_shape)

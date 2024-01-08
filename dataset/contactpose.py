@@ -74,6 +74,7 @@ class ContactPoseDataset(BaseDataset):
         eval_observations_plateau: bool = False,
         eval_anchor_assignment: bool = False,
         use_deltas: bool = False,
+        use_bps_grid: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -124,6 +125,7 @@ class ContactPoseDataset(BaseDataset):
             exponential_map_w=exponential_map_w,
             random_anchor_assignment=random_anchor_assignment,
             use_deltas=use_deltas,
+            use_bps_grid=use_bps_grid,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -362,13 +364,15 @@ class ContactPoseDataset(BaseDataset):
             f"perturbed-{self._perturbation_level}_"
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"_{'right-hand' if self._right_hand_only else 'both-hands'}"
-            + f"_{self._bps_dim}-bps"
+            + f"_{self._bps_dim}-bps_"
+            if self._use_bps_grid
+            else "bps-grid_"
             + f"{'_object-centered' if self._center_on_object_com else ''}"
             + f"_{self._rescale}-rescaled"
             + f"{'_exponential_mapped' if self._remap_bps_distances else ''}"
             + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
             + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
-            + f"_{'deltas' if self._use_deltas else ''}"
+            + f"{'_deltas' if self._use_deltas else ''}"
             + f"_{split}{'-augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):

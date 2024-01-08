@@ -634,10 +634,10 @@ def visualize_CHOIR(
         # TODO: directly plot the delta vectors?
         _choir = torch.cat(
             (
-                torch.linalg.norm(choir[:, :3], dim=1).unsqueeze(-1),
-                torch.linalg.norm(choir[:, 3:], dim=1).unsqueeze(-1),
+                torch.linalg.norm(choir[..., :3], dim=-1).unsqueeze(-1),
+                torch.linalg.norm(choir[..., 3:], dim=-1).unsqueeze(-1),
             ),
-            dim=1,
+            dim=-1,
         )
     else:
         _choir = choir

@@ -72,6 +72,7 @@ class GRABDataset(BaseDataset):
         use_affine_mano: bool = False,
         use_official_splits: bool = True,
         random_anchor_assignment: bool = False,
+        use_bps_grid: bool = False,
     ) -> None:
         self._perturbations = [
             {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
@@ -121,6 +122,7 @@ class GRABDataset(BaseDataset):
             remap_bps_distances=remap_bps_distances,
             exponential_map_w=exponential_map_w,
             use_deltas=use_deltas,
+            use_bps_grid=use_bps_grid,
             random_anchor_assignment=random_anchor_assignment,
             augment=augment,
             n_augs=n_augs,
@@ -334,8 +336,9 @@ class GRABDataset(BaseDataset):
             self._cache_dir,
             "samples_and_labels",
             # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
-            f"perturbed-{self._perturbation_level}_"
-            + f"{self._bps_dim}-bps_"
+            f"perturbed-{self._perturbation_level}_" + f"{self._bps_dim}-bps_"
+            if self._use_bps_grid
+            else "bps-grid_"
             + f"{'object-centered_' if self._center_on_object_com else ''}"
             + f"{self._rescale}_rescaled_"
             + f"{'exponential_mapped' if self._remap_bps_distances else ''}"

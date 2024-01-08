@@ -83,6 +83,7 @@ class GraspingDatasetConf:
     exponential_map_w: float = 5.0
     random_anchor_assignment: bool = True
     use_deltas: bool = False
+    use_bps_grid: bool = False
 
 
 # Pre-set the group for store's dataset entries
@@ -191,6 +192,7 @@ model_store(
 model_store(
     pbuilds(
         DiffusionModel,
+        backbone="mlp_resnet",
         time_steps=1000,
         beta_1=1e-4,
         beta_T=0.02,
@@ -306,7 +308,7 @@ sched_store(
     name="cosine",
 )
 sched_store(
-    pbuilds(torch.optim.lr_scheduler.ExponentialLR, gamma=0.99),
+    pbuilds(torch.optim.lr_scheduler.ExponentialLR, gamma=0.999),
     name="exp",
 )
 
@@ -420,6 +422,36 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="ddpm_deltas",
+)
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm"},
+            {"override /tester": "ddpm"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=0,
+            remap_bps_distances=False,
+            use_deltas=True,
+            use_bps_grid=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            temporal_dim=512,
+            y_dim=None,
+            y_embed_dim=None,
+            choir_dim=3,
+            rescale_input=False,
+            backbone="3d_unet",
+        ),
+        bases=(Experiment,),
+    ),
+    name="ddpm_3d",
 )
 
 experiment_store(

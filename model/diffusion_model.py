@@ -10,18 +10,20 @@ Denoising Diffusion Probabilistic Models (DDPMs) and their variants.
 """
 
 
+from functools import partial
 from typing import Optional, Tuple
 
 import torch
 from tqdm import tqdm
 
-from model.backbones import MLPResNetBackboneModel
+from model.backbones import MLPResNetBackboneModel, UNetBackboneModel
 from model.time_encoding import SinusoidalTimeEncoder
 
 
 class DiffusionModel(torch.nn.Module):
     def __init__(
         self,
+        backbone: str,
         time_steps: int,
         beta_1: float,
         beta_T: float,
@@ -33,12 +35,19 @@ class DiffusionModel(torch.nn.Module):
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
-        self.backbone = MLPResNetBackboneModel(
-            SinusoidalTimeEncoder(time_steps, temporal_dim),
-            bps_dim,
-            choir_dim,
-            temporal_dim,
-            hidden_dim=4096,
+        backbones = {
+            "mlp_resnet": partial(
+                MLPResNetBackboneModel, hidden_dim=4096, bps_dim=bps_dim
+            ),
+            "3d_unet": partial(
+                UNetBackboneModel, bps_grid_len=32, normalization="batch"
+            ),
+        }
+        assert backbone in backbones, f"Unknown backbone {backbone}"
+        self.backbone = backbones[backbone](
+            time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
+            choir_dim=choir_dim,
+            temporal_dim=temporal_dim,
             y_dim=y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
@@ -141,8 +150,8 @@ class DiffusionModel(torch.nn.Module):
                 # Back to [0, 1]:
                 output = (output + 1) / 2
             print(f"Output range: [{output.min()}, {output.max()}]")
-            output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
-            print(f"Output range after stdization: [{output.min()}, {output.max()}]")
+            # output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
+            # print(f"Output range after stdization: [{output.min()}, {output.max()}]")
             return output
 
 

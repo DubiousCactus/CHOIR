@@ -10,7 +10,7 @@
 """
 
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -113,9 +113,14 @@ class TemporalResidualBlock(torch.nn.Module):
         super().__init__()
         kwargs = (
             {"output_padding": output_padding}
-            if conv == torch.nn.ConvTranspose2d
+            if conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d)
             else {}
         )
+        assert normalization in (
+            "group",
+            "batch",
+        ), "Only group and batch normalization are supported"
+        self.is_2d = conv in (torch.nn.Conv2d, torch.nn.ConvTranspose2d)
         self.conv1 = conv(
             channels_in,
             channels_out,
@@ -126,7 +131,11 @@ class TemporalResidualBlock(torch.nn.Module):
         self.norm1 = (
             torch.nn.GroupNorm(norm_groups, channels_out)
             if normalization == "group"
-            else torch.nn.BatchNorm2d(channels_out)
+            else (
+                torch.nn.BatchNorm2d(channels_out)
+                if self.is_2d
+                else torch.nn.BatchNorm3d(channels_out)
+            )
         )
         self.nonlin = torch.nn.GELU()
         self.conv2 = conv(
@@ -140,7 +149,11 @@ class TemporalResidualBlock(torch.nn.Module):
         self.norm2 = (
             torch.nn.GroupNorm(norm_groups, channels_out)
             if normalization == "group"
-            else torch.nn.BatchNorm2d(channels_out)
+            else (
+                torch.nn.BatchNorm2d(channels_out)
+                if self.is_2d
+                else torch.nn.BatchNorm3d(channels_out)
+            )
         )
         self.out_activation = torch.nn.GELU()
         self.temporal_projection = torch.nn.Linear(
@@ -162,7 +175,11 @@ class TemporalResidualBlock(torch.nn.Module):
         )
 
     def forward(
-        self, x: torch.Tensor, t_emb: torch.Tensor, debug: bool = False
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        y_emb: Optional[torch.Tensor] = None,
+        debug: bool = False,
     ) -> torch.Tensor:
         def print_debug(str):
             nonlocal debug
@@ -171,20 +188,30 @@ class TemporalResidualBlock(torch.nn.Module):
 
         _x = x
         scale, shift = (
-            self.temporal_projection(t_emb).unsqueeze(-1).unsqueeze(-1).chunk(2, dim=1)
+            self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
+            if self.is_2d
+            else self.temporal_projection(t_emb)[..., None, None, None].chunk(2, dim=1)
         )
         print_debug(f"Starting with x.shape = {x.shape}")
+        print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
+        if y_emb is not None:
+            raise NotImplementedError("Cross-attention not implemented yet")
+        # x = (
+        # torch.cat((x, self.cross_attention(q=x, k=y_emb, v=y_emb)), dim=1)
+        # if y_emb is not None
+        # else x
+        # )
         x = self.conv1(x)
         print_debug(f"After conv1, x.shape = {x.shape}")
         x = self.norm1(x)
-        x *= (scale + 1) + shift
+        x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
         x = self.nonlin(x)
         print_debug(f"Temb is {t_emb.shape}")
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
         x = self.conv2(x)
         print_debug(f"After conv2, x.shape = {x.shape}")
         x = self.norm2(x)
-        x *= (scale + 1) + shift
+        x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
         print_debug(
             f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
         )
@@ -199,9 +226,16 @@ class TemporalIdentityResidualBlock(TemporalResidualBlock):
         temporal_channels: int,
         norm_groups: int = 8,
         normalization: str = "group",
+        conv: str = "2d",
     ):
+        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
-            channels_in, channels_out, temporal_channels, norm_groups, normalization
+            channels_in,
+            channels_out,
+            temporal_channels,
+            norm_groups,
+            normalization,
+            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
         )
 
 
@@ -214,7 +248,9 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
         pooling: bool = False,  # TODO
         norm_groups: int = 8,
         normalization: str = "group",
+        conv: str = "2d",
     ):
+        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
             channels_in,
             channels_out,
@@ -224,7 +260,7 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
             strides=(2, 1, 2),
             paddings=(1, 1, 0),
             kernels=(3, 3, 1),
-            conv=torch.nn.Conv2d,
+            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
         )
 
 
@@ -238,7 +274,9 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
         output_padding: int = 0,
         norm_groups: int = 8,
         normalization: str = "group",
+        conv: str = "2d",
     ):
+        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
             channels_in,
             channels_out,
@@ -249,7 +287,7 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
             paddings=(1, 1, 0),
             kernels=(3, 3, 1),
             output_padding=output_padding,
-            conv=torch.nn.ConvTranspose2d,
+            conv=torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d,
         )
 
 

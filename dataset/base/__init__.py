@@ -24,7 +24,7 @@ from typing import Any, List, Optional, Tuple
 import blosc
 import numpy as np
 import torch
-from bps_torch.tools import sample_sphere_uniform
+from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
 from hydra.utils import get_original_cwd
 from metabatch import TaskSet
 
@@ -53,6 +53,7 @@ class BaseDataset(TaskSet, abc.ABC):
         random_anchor_assignment: bool,
         dataset_name: str,
         use_deltas: bool,
+        use_bps_grid: bool,
         noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
         # For GRAB, noisy_samples_per_grasp is actually the number of frames in the sequence. At
@@ -89,11 +90,12 @@ class BaseDataset(TaskSet, abc.ABC):
         self._perturbation_level = perturbation_level
         self._augment = augment and split == "train"
         self._n_augs = n_augs
-        self._bps_dim = bps_dim
+        self._bps_dim = bps_dim if not use_bps_grid else 32**3
         self._seq_len = noisy_samples_per_grasp
         self._random_anchor_assignment = random_anchor_assignment
         self._seq_lengths = []  # For variable length sequences (GRAB)
         self._dataset_name = dataset_name
+        self._use_bps_grid = use_bps_grid
         # self._perturbations = [] # TODO: Implement
         self._cache_dir = osp.join(
             get_original_cwd(), "data", f"{dataset_name}_preprocessed"
@@ -101,7 +103,9 @@ class BaseDataset(TaskSet, abc.ABC):
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
         bps_path = osp.join(
-            get_original_cwd(), "data", f"bps_{self._bps_dim}_{rescale}-rescaled.pkl"
+            get_original_cwd(),
+            "data",
+            f"bps_{'32-grid' if use_bps_grid else self._bps_dim}_{rescale}-rescaled.pkl",
         )
         anchor_indices_path = osp.join(
             get_original_cwd(),
@@ -112,12 +116,21 @@ class BaseDataset(TaskSet, abc.ABC):
             with open(bps_path, "rb") as f:
                 bps = pickle.load(f)
         else:
-            bps = sample_sphere_uniform(
-                n_points=self._bps_dim,
-                n_dims=3,
-                radius=0.2 if rescale == "none" else 0.6,
-                random_seed=1995,
-            ).cpu()
+            if use_bps_grid:
+                bps = sample_grid_cube(
+                    grid_size=32,
+                    n_dims=3,
+                    minv=-1.0,
+                    maxv=1.0,
+                    random_seed=1995,
+                ).cpu()
+            else:
+                bps = sample_sphere_uniform(
+                    n_points=self._bps_dim,
+                    n_dims=3,
+                    radius=0.2 if rescale == "none" else 0.6,
+                    random_seed=1995,
+                ).cpu()
             with open(bps_path, "wb") as f:
                 pickle.dump(bps, f)
         if osp.isfile(anchor_indices_path):
@@ -152,6 +165,10 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+
+    @property
+    def use_bps_grid(self):
+        return self._use_bps_grid
 
     @property
     def use_deltas(self):
