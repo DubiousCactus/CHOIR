@@ -94,8 +94,8 @@ class DiffusionModel(torch.nn.Module):
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
         # print(f"Input range: [{x.min()}, {x.max()}]")
-        # From [0, 1] to [-1, 1]:
         if self._rescale_input:
+            # From [0, 1] to [-1, 1]:
             x = 2 * x - 1
         # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
         # ===== Training =========

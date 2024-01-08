@@ -211,8 +211,11 @@ class UNetBackboneModel(torch.nn.Module):
         x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, debug=debug)
         x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, debug=debug)
         x10 = self.up3(torch.cat((x8, x2), dim=1), t_embed, debug=debug)
+        # x7 = self.up1(x6, t_embed, debug=debug)
+        # x8 = self.up2(x7, t_embed, debug=debug)
+        # x10 = self.up3(x8, t_embed, debug=debug)
         x11 = self.identity3(x10, t_embed, debug=debug)
-        return self.out_conv(x11).permute(0, 4, 1, 2, 3).reshape(input_shape)
+        return self.out_conv(x11).permute(0, 2, 3, 4, 1).reshape(input_shape)
 
 
 class ConvObjectEncoderModel(torch.nn.Module):

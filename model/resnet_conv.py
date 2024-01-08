@@ -137,7 +137,7 @@ class TemporalResidualBlock(torch.nn.Module):
                 else torch.nn.BatchNorm3d(channels_out)
             )
         )
-        self.nonlin = torch.nn.GELU()
+        self.nonlin = torch.nn.SiLU()
         self.conv2 = conv(
             channels_out,
             channels_out,
@@ -155,7 +155,7 @@ class TemporalResidualBlock(torch.nn.Module):
                 else torch.nn.BatchNorm3d(channels_out)
             )
         )
-        self.out_activation = torch.nn.GELU()
+        self.out_activation = torch.nn.SiLU()
         self.temporal_projection = torch.nn.Linear(
             temporal_dim,
             channels_out * 2,

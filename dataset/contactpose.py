@@ -356,7 +356,8 @@ class ContactPoseDataset(BaseDataset):
     ) -> List[str]:
         grasp_paths = []
         # TODO: We should just hash all the class properties and use that as the cache key. This is
-        # a bit hacky and not scalable.
+        # a bit hacky and not scalable. But for readability and debugging it's better to
+        # automatically generate the cache key from the class properties in human-readable form.
         samples_labels_pickle_pth = osp.join(
             self._cache_dir,
             "samples_and_labels",
@@ -364,9 +365,8 @@ class ContactPoseDataset(BaseDataset):
             f"perturbed-{self._perturbation_level}_"
             + f"_{self._obj_ptcld_size}-obj-pts"
             + f"_{'right-hand' if self._right_hand_only else 'both-hands'}"
-            + f"_{self._bps_dim}-bps_"
-            if self._use_bps_grid
-            else "bps-grid_"
+            + f"_{self._bps_dim}-bps"
+            + (f"-grid" if self._use_bps_grid else "")
             + f"{'_object-centered' if self._center_on_object_com else ''}"
             + f"_{self._rescale}-rescaled"
             + f"{'_exponential_mapped' if self._remap_bps_distances else ''}"
