@@ -122,7 +122,6 @@ class BaseDataset(TaskSet, abc.ABC):
                     n_dims=3,
                     minv=-1.0,
                     maxv=1.0,
-                    random_seed=1995,
                 ).cpu()
             else:
                 bps = sample_sphere_uniform(
