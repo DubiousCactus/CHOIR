@@ -16,7 +16,11 @@ from typing import Optional, Tuple
 import torch
 from tqdm import tqdm
 
-from model.backbones import MLPResNetBackboneModel, UNetBackboneModel
+from model.backbones import (
+    ConvObjectEncoderModel,
+    MLPResNetBackboneModel,
+    UNetBackboneModel,
+)
 from model.time_encoding import SinusoidalTimeEncoder
 
 
@@ -31,10 +35,11 @@ class DiffusionModel(torch.nn.Module):
         choir_dim: int,
         temporal_dim: int,
         rescale_input: bool,
-        y_dim: Optional[int] = None,
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
+        y_dim = bps_dim * choir_dim
+        bps_grid_len = round(bps_dim ** (1 / 3))
         backbones = {
             "mlp_resnet": (
                 partial(MLPResNetBackboneModel, hidden_dim=4096, bps_dim=bps_dim),
@@ -53,10 +58,16 @@ class DiffusionModel(torch.nn.Module):
             "3d_unet": (
                 partial(
                     UNetBackboneModel,
-                    bps_grid_len=round(bps_dim ** (1 / 3)),
+                    bps_grid_len=bps_grid_len,
                     normalization="group",
                 ),
-                None if y_dim is not None else None,
+                partial(
+                    ConvObjectEncoderModel,
+                    choir_dim=choir_dim,
+                    normalization="group",
+                )
+                if y_embed_dim is not None
+                else None,
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
@@ -64,11 +75,15 @@ class DiffusionModel(torch.nn.Module):
             time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
             choir_dim=choir_dim,
             temporal_dim=temporal_dim,
-            y_dim=y_embed_dim,
+            context_channels=y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.embedder = backbones[backbone][1]
+        self.embedder = backbones[backbone][1](
+            bps_grid_len=bps_grid_len,
+            choir_dim=choir_dim,
+            embed_channels=y_embed_dim,
+        )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
             torch.linspace(beta_1, beta_T, time_steps), requires_grad=False

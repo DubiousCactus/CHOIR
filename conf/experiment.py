@@ -199,8 +199,7 @@ model_store(
         bps_dim=MISSING,
         choir_dim=MISSING,
         rescale_input=MISSING,
-        temporal_dim=512,
-        y_dim=1024,
+        temporal_dim=256,
         y_embed_dim=512,
     ),
     name="ddpm",
@@ -390,7 +389,6 @@ experiment_store(
         data_loader=dict(batch_size=64),
         model=dict(
             temporal_dim=256,
-            y_dim=None,
             y_embed_dim=None,
             choir_dim=1,
             rescale_input=True,
@@ -413,8 +411,6 @@ experiment_store(
         dataset=dict(perturbation_level=0, remap_bps_distances=False, use_deltas=True),
         data_loader=dict(batch_size=64),
         model=dict(
-            temporal_dim=512,
-            y_dim=None,
             y_embed_dim=None,
             choir_dim=3,
             rescale_input=False,
@@ -443,8 +439,6 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            temporal_dim=512,
-            y_dim=None,
             y_embed_dim=None,
             choir_dim=1,
             rescale_input=True,
@@ -474,9 +468,7 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            temporal_dim=512,
-            y_dim=1,
-            y_embed_dim=64,
+            y_embed_dim=128,
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet",
@@ -505,8 +497,6 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            temporal_dim=512,
-            y_dim=None,
             y_embed_dim=None,
             choir_dim=3,
             rescale_input=False,
@@ -531,8 +521,6 @@ experiment_store(
         dataset=dict(perturbation_level=0),
         data_loader=dict(batch_size=64),
         model=dict(
-            temporal_dim=256,
-            y_dim=1024,
             y_embed_dim=512,
             choir_dim=1,
             rescale_input=True,
