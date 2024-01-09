@@ -76,7 +76,7 @@ class GraspingDatasetConf:
     right_hand_only: bool = True
     center_on_object_com: bool = True
     bps_dim: int = 1024
-    obj_ptcld_size: int = 3000
+    obj_ptcld_size: int = 10000
     debug: bool = False
     rescale: str = "none"  # pair, fixed, none
     remap_bps_distances: bool = True
@@ -455,6 +455,37 @@ experiment_store(
     name="ddpm_3d",
 )
 
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm"},
+            {"override /tester": "ddpm"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=0,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 32**3 should give much better results
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            temporal_dim=512,
+            y_dim=1,
+            y_embed_dim=64,
+            choir_dim=1,
+            rescale_input=True,
+            backbone="3d_unet",
+        ),
+        run=dict(conditional=True),
+        bases=(Experiment,),
+    ),
+    name="cddpm_3d",
+)
 experiment_store(
     make_config(
         hydra_defaults=[

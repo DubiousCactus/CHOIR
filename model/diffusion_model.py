@@ -54,7 +54,7 @@ class DiffusionModel(torch.nn.Module):
                 partial(
                     UNetBackboneModel,
                     bps_grid_len=round(bps_dim ** (1 / 3)),
-                    normalization="batch",
+                    normalization="group",
                 ),
                 None if y_dim is not None else None,
             ),
@@ -153,9 +153,18 @@ class DiffusionModel(torch.nn.Module):
             if self._rescale_input:
                 # Back to [0, 1]:
                 output = (output + 1) / 2
-            print(f"Output range: [{output.min()}, {output.max()}]")
-            # output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
-            # print(f"Output range after stdization: [{output.min()}, {output.max()}]")
+                print(f"Output range: [{output.min()}, {output.max()}]")
+                output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
+                print(
+                    f"Output range after stdization: [{output.min()}, {output.max()}]"
+                )
+            else:
+                # Clamp to [-1, 1]:
+                print(f"Output range: [{output.min()}, {output.max()}]")
+                output = torch.clamp(output, -1 + 1e-5, 1 - 1e-5)
+                print(
+                    f"Output range after stdization: [{output.min()}, {output.max()}]"
+                )
             return output
 
 

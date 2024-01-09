@@ -376,7 +376,9 @@ def visualize_ddpm_generation(
     assert bps_dim == bps.shape[0]
     samples, labels, _ = batch
     if not project_conf.HEADLESS:
-        choir_pred = model.generate(1)
+        choir_pred = model.generate(2)[0].unsqueeze(
+            0
+        )  # Problems with batchnorm if batchsize is 1!
         if use_deltas:
             choir_pred = torch.cat(
                 (
@@ -523,14 +525,14 @@ def visualize_CHOIR_prediction(
             max_iterations=1000,
             loss_thresh=1e-6,
             lr=8e-2,
-            beta_w=1e-4,
+            beta_w=1e-1,
             theta_w=1e-7,
             choir_w=1000,
         )
     # ====== Metrics and qualitative comparison ======
     # === Anchor error ===
     print(
-        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0).item() * 1000:.2f}"
     )
     # === MPJPE ===
     if gt_joints.shape[1] == 16 and joints_pred.shape[1] == 21:

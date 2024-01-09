@@ -32,9 +32,15 @@ class DDPMTrainer(BaseTrainer):
             batch: The batch to process.
             epoch: The current epoch.
         """
+        samples, labels, _ = batch
+        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
+        for k, v in samples.items():
+            samples[k] = v[:, 0, ...]
+        for k, v in labels.items():
+            labels[k] = v[:, 0, ...]
         visualize_ddpm_generation(
             self._model,
-            batch,
+            (samples, labels, None),
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
@@ -61,10 +67,8 @@ class DDPMTrainer(BaseTrainer):
         samples, labels, _ = batch
         # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
         for k, v in samples.items():
-            # samples[k] = v.view(-1, *v.shape[2:])
             samples[k] = v[:, 0, ...]
         for k, v in labels.items():
-            # labels[k] = v.view(-1, *v.shape[2:])
             labels[k] = v[:, 0, ...]
         if not self._use_deltas:
             y_hat = self._model(

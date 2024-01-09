@@ -20,7 +20,7 @@ class ResidualBlock(torch.nn.Module):
         self,
         channels_in: int,
         channels_out: int,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
         strides: Tuple[int, int] = (1, 1, 1),
         paddings: Tuple[int, int] = (1, 1, 0),
@@ -102,12 +102,13 @@ class TemporalResidualBlock(torch.nn.Module):
         channels_in: int,
         channels_out: int,
         temporal_dim: int,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
         strides: Tuple[int, int] = (1, 1, 1),
         paddings: Tuple[int, int] = (1, 1, 0),
         kernels: Tuple[int, int] = (3, 3, 1),
         output_padding: int = 0,
+        y_dim: Optional[int] = None,
         conv=torch.nn.Conv2d,
     ):
         super().__init__()
@@ -173,6 +174,13 @@ class TemporalResidualBlock(torch.nn.Module):
             if (channels_in != channels_out or strides[2] != 1 or paddings[2] != 0)
             else torch.nn.Identity()
         )
+        # self.cross_attention = MultiHeadAttention(
+        # q_dim=channels_out * ,
+        # k_dim=y_dim,
+        # v_dim=y_dim,
+        # output_dim=??,
+        # n_heads=4,
+        # )
 
     def forward(
         self,
@@ -194,8 +202,8 @@ class TemporalResidualBlock(torch.nn.Module):
         )
         print_debug(f"Starting with x.shape = {x.shape}")
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
-        if y_emb is not None:
-            raise NotImplementedError("Cross-attention not implemented yet")
+        # if y_emb is not None:
+        # raise NotImplementedError("Cross-attention not implemented yet")
         # x = (
         # torch.cat((x, self.cross_attention(q=x, k=y_emb, v=y_emb)), dim=1)
         # if y_emb is not None
@@ -203,6 +211,7 @@ class TemporalResidualBlock(torch.nn.Module):
         # )
         x = self.conv1(x)
         print_debug(f"After conv1, x.shape = {x.shape}")
+        # x = x + (self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0)
         x = self.norm1(x)
         x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
         x = self.nonlin(x)
@@ -210,6 +219,7 @@ class TemporalResidualBlock(torch.nn.Module):
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
         x = self.conv2(x)
         print_debug(f"After conv2, x.shape = {x.shape}")
+        # x = x + (self.cross_attention(q=x, k=y_emb, v=y_emb) if y_emb is not None else 0)
         x = self.norm2(x)
         x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
         print_debug(
@@ -224,9 +234,10 @@ class TemporalIdentityResidualBlock(TemporalResidualBlock):
         channels_in: int,
         channels_out: int,
         temporal_channels: int,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
+        y_dim: Optional[int] = None,
     ):
         assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
@@ -246,9 +257,10 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
         channels_out: int,
         temporal_channels: int,
         pooling: bool = False,  # TODO
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
+        y_dim: Optional[int] = None,
     ):
         assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
@@ -272,9 +284,10 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
         temporal_channels: int,
         upsampling: bool = False,  # TODO
         output_padding: int = 0,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
+        y_dim: Optional[int] = None,
     ):
         assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
@@ -296,8 +309,9 @@ class IdentityResidualBlock(ResidualBlock):
         self,
         channels_in: int,
         channels_out: int,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
+        y_dim: Optional[int] = None,
     ):
         super().__init__(channels_in, channels_out, norm_groups, normalization)
 
@@ -308,8 +322,9 @@ class DownScaleResidualBlock(ResidualBlock):
         channels_in: int,
         channels_out: int,
         pooling: bool = False,  # TODO
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
+        y_dim: Optional[int] = None,
     ):
         super().__init__(
             channels_in,
@@ -330,8 +345,9 @@ class UpScaleResidualBlock(ResidualBlock):
         channels_out: int,
         upsampling: bool = False,  # TODO
         output_padding: int = 0,
-        norm_groups: int = 8,
+        norm_groups: int = 16,
         normalization: str = "group",
+        y_dim: Optional[int] = None,
     ):
         super().__init__(
             channels_in,

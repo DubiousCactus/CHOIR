@@ -122,12 +122,20 @@ def optimize_pose_pca_from_choir(
     assert (
         choir.shape[0] == scalar.shape[0]
     ), "Batch size mismatch between CHOIR and scalar."
-    choir = (
-        choir / scalar[:, None, None]
-    )  # CHOIR was computed with scaled up MANO and object pointclouds.
-    bps = (
-        bps[None, :] / scalar[:, None, None]
-    )  # BPS should be scaled down to fit the MANO model in the same scale.
+    if len(scalar.shape) == 1:
+        choir = (
+            choir / scalar[:, None, None]
+        )  # CHOIR was computed with scaled up MANO and object pointclouds.
+        bps = (
+            bps[None, :] / scalar[:, None, None]
+        )  # BPS should be scaled down to fit the MANO model in the same scale.
+    elif len(scalar.shape) == 2:
+        choir = (
+            choir / scalar[:, None, :]
+        )  # CHOIR was computed with scaled up MANO and object pointclouds.
+        bps = (
+            bps[None, :] / scalar[:, None, :]
+        )  # BPS should be scaled down to fit the MANO model in the same scale.
 
     choir_loss = CHOIRFittingLoss().to(choir.device)
 

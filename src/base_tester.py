@@ -20,8 +20,7 @@ from tqdm import tqdm
 
 from conf import project as project_conf
 from src.base_trainer import BaseTrainer
-from utils import update_pbar_str
-from utils.visualization import visualize_model_predictions
+from utils import to_cuda, to_cuda_, update_pbar_str
 
 
 class BaseTester(BaseTrainer):
@@ -46,8 +45,21 @@ class BaseTester(BaseTrainer):
         self._training_loss = training_loss
         self._data_loader = data_loader
         self._running = True
-        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar = tqdm(total=100, desc="Testing")
+        self._bps_dim = data_loader.dataset.bps_dim
+        self._bps = to_cuda_(data_loader.dataset.bps)
+        self._anchor_indices = to_cuda_(data_loader.dataset.anchor_indices)
+        self._remap_bps_distances = data_loader.dataset.remap_bps_distances
+        self._exponential_map_w = data_loader.dataset.exponential_map_w
         signal.signal(signal.SIGINT, self._terminator)
+
+    @to_cuda
+    def _visualize(
+        self,
+        batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
+    ) -> None:
+        pass
 
     def _test_iteration(
         self,
@@ -62,7 +74,7 @@ class BaseTester(BaseTrainer):
         """
         return self._train_val_iteration(batch)
 
-    def test(self, visualize_every: int = 0):
+    def test(self, visualize_every: int = 0, **kwargs):
         """Computes the average loss on the test set.
         Args:
             visualize_every (int, optional): Visualize the model predictions every n batches.
@@ -70,6 +82,7 @@ class BaseTester(BaseTrainer):
         """
         test_loss, test_loss_components = MeanMetric(), defaultdict(MeanMetric)
         self._pbar.reset()
+        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
         self._pbar.set_description("Testing")
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
         " ==================== Training loop for one epoch ==================== "
@@ -88,8 +101,8 @@ class BaseTester(BaseTrainer):
             )
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
-                visualize_model_predictions(
-                    self._model, batch, i
+                self._visualize(
+                    batch, i
                 )  # User implementation goes here (utils/training.py)
             self._pbar.update()
         self._pbar.close()
