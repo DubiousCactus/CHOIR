@@ -27,7 +27,6 @@ class MLPUNetBackbone(torch.nn.Module):
         self.time_embedder = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
-            torch.nn.BatchNorm1d(temporal_dim),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
         self.in_ = torch.nn.Linear(bps_dim * self.choir_dim, 1024)
@@ -78,7 +77,6 @@ class MLPResNetBackboneModel(torch.nn.Module):
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
-            torch.nn.BatchNorm1d(temporal_dim),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
         self.input_layer = torch.nn.Linear(
@@ -134,7 +132,6 @@ class UNetBackboneModel(torch.nn.Module):
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
-            torch.nn.BatchNorm1d(temporal_dim),
             torch.nn.Linear(temporal_dim, temporal_dim),
         )
         self.identity1 = TemporalConvIdentityBlock(
