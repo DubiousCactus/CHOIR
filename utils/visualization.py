@@ -15,7 +15,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import open3d
 import pyvista as pv
-import scenepic as sp
+
+try:
+    import scenepic as sp
+except:
+    print(
+        "scenepic not installed. Some visualization functions will not work. (I know it's not available on Apple Silicon :("
+    )
 import torch
 from trimesh import Trimesh
 

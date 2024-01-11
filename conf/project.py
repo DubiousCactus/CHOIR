@@ -29,6 +29,7 @@ class TerminationBehavior(Enum):
 REPRODUCIBLE = str_to_bool(env.get("REPRODUCIBLE", "True"))
 CKPT_PATH = "ckpt"
 USE_CUDA_IF_AVAILABLE = str_to_bool(env.get("USE_CUDA_IF_AVAILABLE", "True"))
+USE_MPS_IF_AVAILABLE = str_to_bool(env.get("USE_MPS_IF_AVAILABLE", "True"))
 SIGINT_BEHAVIOR = TerminationBehavior.WAIT_FOR_EPOCH_END
 PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH = str_to_bool(
     env.get("PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH", "t")

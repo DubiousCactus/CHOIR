@@ -59,9 +59,7 @@ def compute_hand_object_pair_scalar(
             torch.cat([object_point_cloud, hand_anchors.squeeze(0).cpu()], dim=0)
             if not scale_by_object_only
             else object_point_cloud
-        )
-        .unsqueeze(0)
-        .cuda()
+        ).unsqueeze(0)
     )
     # Now scale the pointcloud to unit sphere. First, find the scalar to apply. We can
     # get the bounding boxes and find the min and max of the diagonal of the bounding
@@ -259,11 +257,7 @@ def pack_and_pad_sample_label(
                 value=0.0,
             ).repeat((bps_dim, 1)),
             torch.nn.functional.pad(
-                (
-                    torch.ones((1, 1)).cuda()
-                    if hand_idx == "right"
-                    else torch.zeros((1, 1)).cuda()
-                ),
+                (torch.ones((1, 1)) if hand_idx == "right" else torch.zeros((1, 1))),
                 (0, max_sample_dim - 1),
                 value=0.0,
             ).repeat((bps_dim, 1)),
@@ -327,9 +321,9 @@ def pack_and_pad_sample_label(
                     choir.squeeze(0),  # (N, 2)
                     rescaled_ref_pts.squeeze(0),  # (N, 3)
                     scalar.unsqueeze(0),  # (1, 1)
-                    torch.ones((1, 1)).cuda()
+                    torch.ones((1, 1))
                     if hand_idx == "right"
-                    else torch.zeros((1, 1)).cuda(),  # (1, 1)
+                    else torch.zeros((1, 1)),  # (1, 1)
                     theta,  # (1, 18)
                     beta,  # (1, 10)
                     rot_6d,  # (1, 6)
@@ -387,9 +381,9 @@ def get_scalar(anchors, obj_ptcld, scaling) -> torch.Tensor:
             deepcopy(anchors), deepcopy(obj_ptcld), scale_by_object_only=True
         )
     elif scaling == "fixed":
-        scalar = torch.tensor([10.0]).cuda()
+        scalar = torch.tensor([10.0])
     elif scaling == "none":
-        scalar = torch.tensor([1.0]).cuda()
+        scalar = torch.tensor([1.0])
     else:
         raise ValueError(f"Unknown rescale type {scaling}")
     return scalar
@@ -419,7 +413,7 @@ def augment_hand_object_pose(
     # 4x4 homogeneous matrix so we can apply it to the 4x4 pose matrix:
     R4 = torch.eye(4)
     R4[:3, :3] = torch.from_numpy(R).float()
-    hTm[:, :3, 3] -= torch.from_numpy(rotate_origin).to(hTm.device).float()
+    hTm[:, :3, 3] -= torch.from_numpy(rotate_origin).to(hTm.device, dtype=hTm.dtype)
     r_hTm = R4.to(hTm.device) @ hTm
     hTm = r_hTm
     return obj_mesh, hTm
@@ -451,15 +445,14 @@ def augment_hand_object_pose_grab(
     # had extra time but I don't. It might just be because the "rot" parameters are already the
     # inverse of the rotation applied to the object mesh when the hand is brought to the object
     # frame...
-    rot_transform = Transform3d().rotate(torch.from_numpy(R).float()).inverse().cuda()
+    rot_transform = Transform3d().rotate(torch.from_numpy(R).float()).inverse()
     if use_affine_mano:
         transform = (
             Transform3d()
             .rotate(rotation_6d_to_matrix(params["rot"]))
             .translate(params["trans"])
-            .cuda()
         )
-        full_transform = Transform3d().compose(transform, rot_transform).cuda()
+        full_transform = Transform3d().compose(transform, rot_transform)
         params["trans"] = full_transform.get_matrix()[:, 3, :3]
         params["rot"] = matrix_to_rotation_6d(full_transform.get_matrix()[:, :3, :3])
     else:
