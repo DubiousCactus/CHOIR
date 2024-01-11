@@ -44,15 +44,23 @@ def seed_everything(seed: int):
 
 
 def to_cuda_(x: Any) -> Union[Tuple, List, torch.Tensor, torch.nn.Module]:
+    device = "cpu"
+    dtype = x.dtype if isinstance(x, torch.Tensor) else None
     if project_conf.USE_CUDA_IF_AVAILABLE and torch.cuda.is_available():
-        if isinstance(x, torch.Tensor) or isinstance(x, torch.nn.Module):
-            x = x.cuda().float()
-        elif isinstance(x, tuple):
-            x = tuple(to_cuda_(t) for t in x)
-        elif isinstance(x, list):
-            x = [to_cuda_(t) for t in x]
-        elif isinstance(x, dict):
-            x = {key: to_cuda_(value) for key, value in x.items()}
+        device = "cuda"
+    elif project_conf.USE_MPS_IF_AVAILABLE and torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32 if dtype is torch.float64 else dtype
+    else:
+        return x
+    if isinstance(x, torch.Tensor) or isinstance(x, torch.nn.Module):
+        x = x.to(device, dtype=dtype)
+    elif isinstance(x, tuple):
+        x = tuple(to_cuda_(t) for t in x)
+    elif isinstance(x, list):
+        x = [to_cuda_(t) for t in x]
+    elif isinstance(x, dict):
+        x = {key: to_cuda_(value) for key, value in x.items()}
     return x
 
 
