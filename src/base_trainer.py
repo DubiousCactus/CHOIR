@@ -167,8 +167,8 @@ class BaseTrainer:
             loss, loss_components = self._train_val_iteration(
                 batch
             )  # User implementation goes here (train.py)
-            loss.backward()
-            self._opt.step()
+            # loss.backward()
+            # self._opt.step()
             epoch_loss.update(loss.item())
             for k, v in loss_components.items():
                 epoch_loss_components[k].update(v.item())

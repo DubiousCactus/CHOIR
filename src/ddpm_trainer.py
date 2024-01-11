@@ -33,7 +33,7 @@ class DDPMTrainer(BaseTrainer):
             epoch: The current epoch.
         """
         samples, labels, _ = batch
-        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
+        # For this baseline, we onl want one batch dimension so we can drop the observations dimension:
         for k, v in samples.items():
             samples[k] = v[:, 0, ...]
         for k, v in labels.items():
@@ -65,7 +65,7 @@ class DDPMTrainer(BaseTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, _ = batch
-        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
+        # For this baseline, we onl want one batch dimension so we can drop the observations dimension:
         for k, v in samples.items():
             samples[k] = v[:, 0, ...]
         for k, v in labels.items():

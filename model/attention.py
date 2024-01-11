@@ -88,9 +88,9 @@ class MultiHeadAttention(torch.nn.Module):
         k_ = k.view(bs, k_c, -1).permute(0, 2, 1)  # (B, A*B*C, K)
         v_ = v.view(bs, v_c, -1).permute(0, 2, 1)  # (B, A*B*C, K)
 
-        q_ = self.heads_q(q_)
-        k_ = self.heads_k(k_)
-        v_ = self.heads_v(v_)
+        q_ = self.heads_q(q_)  # (B, D*H*W, heads*head_dim)
+        k_ = self.heads_k(k_)  # (B, A*B*C, heads*head_dim)
+        v_ = self.heads_v(v_)  # (B, A*B*C, heads*head_dim)
 
         def rearrange(x: torch.Tensor) -> torch.Tensor:
             b, d, inner_dim = x.shape  # inner_dim = heads * head_dim
@@ -113,8 +113,8 @@ class MultiHeadAttention(torch.nn.Module):
         b_h, n, head_dim = out.shape
         inner_dim = head_dim * self.heads
         out = (
-            out.reshape(bs, self.heads, n, head_dim)
-            .permute(0, 2, 1, 3)
-            .reshape(bs, n, inner_dim)
+            out.reshape(bs, self.heads, n, head_dim)  # (B, heads, D*H*W, head_dim)
+            .permute(0, 2, 1, 3)  # (B, D*H*W, heads, head_dim)
+            .reshape(bs, n, inner_dim)  # (B, D*H*W, heads*head_dim)
         )  # (B, D*H*W, heads*head_dim)
         return self.out_proj(out).view(bs, q_c, d, h, w)  # (B, C, D, H, W)

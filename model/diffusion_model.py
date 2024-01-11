@@ -38,7 +38,7 @@ class DiffusionModel(torch.nn.Module):
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
-        y_dim = bps_dim * choir_dim
+        y_dim = (bps_dim * choir_dim) if y_embed_dim is not None else None
         bps_grid_len = round(bps_dim ** (1 / 3))
         backbones = {
             "mlp_resnet": (
@@ -52,7 +52,7 @@ class DiffusionModel(torch.nn.Module):
                     torch.nn.GELU(),
                     torch.nn.Linear(2 * y_dim, y_embed_dim),
                 )
-                if y_dim is not None
+                if y_embed_dim is not None
                 else None,
             ),
             "3d_unet": (
@@ -79,10 +79,14 @@ class DiffusionModel(torch.nn.Module):
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.embedder = backbones[backbone][1](
-            bps_grid_len=bps_grid_len,
-            choir_dim=choir_dim,
-            embed_channels=y_embed_dim,
+        self.embedder = (
+            backbones[backbone][1](
+                bps_grid_len=bps_grid_len,
+                choir_dim=choir_dim,
+                embed_channels=y_embed_dim,
+            )
+            if y_embed_dim is not None
+            else None
         )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(

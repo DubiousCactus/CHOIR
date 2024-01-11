@@ -106,16 +106,23 @@ class TemporalResidualBlock(torch.nn.Module):
         temporal_dim: int,
         norm_groups: int = 16,
         normalization: str = "group",
-        strides: Tuple[int, int] = (1, 1, 1),
-        paddings: Tuple[int, int] = (1, 1, 0),
-        kernels: Tuple[int, int] = (3, 3, 1),
+        strides: Tuple[int, int] = (1, 1, 1, 1),
+        paddings: Tuple[int, int] = (0, 0, 0, 0),
+        kernels: Tuple[int, int] = (3, 3, 3, 1),
         output_padding: int = 0,
         context_channels: Optional[int] = None,
         x_attn_heads: int = 8,
         x_attn_head_dim: int = 64,
+        pooling: bool = False,
+        upsampling: bool = False,
+        p_dropout: float = 0.0,
         conv=torch.nn.Conv2d,
+        pool=torch.nn.AvgPool2d,
+        upsample=torch.nn.Upsample,
+        drop=torch.nn.Dropout2d,
     ):
         super().__init__()
+        assert not (pooling and upsampling), "Cannot have both pooling and upsampling"
         kwargs = (
             {"output_padding": output_padding}
             if conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d)
@@ -126,14 +133,9 @@ class TemporalResidualBlock(torch.nn.Module):
             "batch",
         ), "Only group and batch normalization are supported"
         self.is_2d = conv in (torch.nn.Conv2d, torch.nn.ConvTranspose2d)
-        self.conv1 = conv(
-            channels_in,
-            channels_out,
-            kernels[0],
-            padding=paddings[0],
-            stride=strides[0],
-        )
-        self.norm1 = (
+
+        # ================== INPUT CONVOLUTION =====================
+        norm1 = (
             torch.nn.GroupNorm(norm_groups, channels_out)
             if normalization == "group"
             else (
@@ -142,42 +144,95 @@ class TemporalResidualBlock(torch.nn.Module):
                 else torch.nn.BatchNorm3d(channels_out)
             )
         )
-        self.nonlin = torch.nn.SiLU()
-        self.conv2 = conv(
-            channels_out,
-            channels_out,
-            kernels[1],
-            padding=paddings[1],
-            stride=strides[1],
-            **kwargs,
-        )
-        self.norm2 = (
-            torch.nn.GroupNorm(norm_groups, channels_out)
-            if normalization == "group"
-            else (
-                torch.nn.BatchNorm2d(channels_out)
-                if self.is_2d
-                else torch.nn.BatchNorm3d(channels_out)
-            )
-        )
-        self.out_activation = torch.nn.SiLU()
-        self.temporal_projection = torch.nn.Linear(
-            temporal_dim,
-            channels_out * 2,
-        )
-        self.residual_scaling = (
+        self.in_layers = torch.nn.Sequential(
+            norm1,
+            torch.nn.SiLU(),
             conv(
                 channels_in,
+                channels_out,
+                kernels[0],
+                padding=paddings[0],
+                stride=strides[0],
+            ),
+        )
+        # ==========================================================
+        # ================== UP/DOWN/NO SAMPLING ===================
+        upsampling = (
+            conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d) or upsampling
+        )
+        downsampling = not upsampling and (
+            pooling or strides[1] != 1 or paddings[1] != 0
+        )
+        if downsampling:
+            self.up_or_down_sample = (
+                conv(
+                    channels_out,
+                    channels_out,
+                    kernels[1],
+                    padding=paddings[1],
+                    stride=strides[1],
+                    **kwargs,
+                )
+                if not pooling
+                else pool(
+                    kernel_size=2 if self.is_2d else 3,
+                    stride=2 if self.is_2d else 3,
+                )
+            )
+        elif upsampling:
+            self.up_or_down_sample = upsample(scale_factor=2, mode="nearest")
+        else:
+            self.up_or_down_sample = torch.nn.Identity()
+
+        norm2 = (
+            torch.nn.GroupNorm(norm_groups, channels_out)
+            if normalization == "group"
+            else (
+                torch.nn.BatchNorm2d(channels_out)
+                if self.is_2d
+                else torch.nn.BatchNorm3d(channels_out)
+            )
+        )
+        # ==========================================================
+        # ================== OUTPUT CONVOLUTION ====================
+        self.out_layers = torch.nn.Sequential(
+            norm2,
+            torch.nn.SiLU(),
+            drop(p=p_dropout),
+            conv(
+                channels_out,
                 channels_out,
                 kernels[2],
                 padding=paddings[2],
                 stride=strides[2],
+            ),
+        )
+        # ==========================================================
+        # ================== TEMPORAL PROJECTION ===================
+        self.temporal_projection = torch.nn.Sequential(
+            torch.nn.SiLU(),
+            torch.nn.Linear(
+                temporal_dim,
+                channels_out * 2,
+            ),
+        )
+        # ==========================================================
+        # ================== SKIP CONNECTION =======================
+        self.skip_connection = (
+            conv(
+                channels_in,
+                channels_out,
+                kernels[3],
+                padding=paddings[3],
+                stride=strides[3],
                 bias=False,
                 **kwargs,
             )
-            if (channels_in != channels_out or strides[2] != 1 or paddings[2] != 0)
+            if (channels_in != channels_out or strides[3] != 1 or paddings[3] != 0)
             else torch.nn.Identity()
         )
+        # ==========================================================
+        # ================== CROSS-ATTENTION =======================
         self.cross_attention = (
             MultiHeadAttention(
                 q_dim=channels_out,
@@ -190,6 +245,7 @@ class TemporalResidualBlock(torch.nn.Module):
             if context_channels is not None
             else None
         )
+        # ==========================================================
 
     def forward(
         self,
@@ -211,25 +267,23 @@ class TemporalResidualBlock(torch.nn.Module):
         )
         print_debug(f"Starting with x.shape = {x.shape}")
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
-        x = self.conv1(x)
-        print_debug(f"After conv1, x.shape = {x.shape}")
-        # if context is not None:
-        # x = x + self.cross_attention(q=x, k=context, v=context)
-        x = self.norm1(x)
-        x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
-        x = self.nonlin(x)
-        print_debug(f"Temb is {t_emb.shape}")
-        print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
-        x = self.conv2(x)
-        print_debug(f"After conv2, x.shape = {x.shape}")
+        x = self.in_layers(x)
+        print_debug(f"After input layers, x.shape = {x.shape}")
+        x = self.up_or_down_sample(x)
+        print_debug(f"After up_or_down_sample, x.shape = {x.shape}")
+        norm, rest = self.out_layers[0], self.out_layers[1:]
+        x = (
+            norm(x) * (scale + 1) + shift
+        )  # Normalize before scale/shift as in OpenAI's code
+        x = rest(x)
+        print_debug(f"After output layers, x.shape = {x.shape}")
         if context is not None:
             x = x + self.cross_attention(q=x, k=context, v=context)
-        x = self.norm2(x)
         x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
         print_debug(
-            f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
+            f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(_x).shape}) to x of shape {x.shape}"
         )
-        return self.out_activation(x + self.residual_scaling(_x))
+        return x + self.skip_connection(_x)
 
 
 class TemporalIdentityResidualBlock(TemporalResidualBlock):
@@ -261,7 +315,7 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
         channels_in: int,
         channels_out: int,
         temporal_channels: int,
-        pooling: bool = False,  # TODO
+        pooling: bool = False,
         norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
@@ -275,9 +329,10 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
             norm_groups,
             normalization,
             context_channels=context_channels,
-            strides=(2, 1, 2),
-            paddings=(1, 1, 0),
-            kernels=(3, 3, 1),
+            pooling=pooling,
+            strides=(1, 2, 1, 2) if not pooling else (1, 1, 1, 1),
+            paddings=(1, 1, 1, 0) if not pooling else (0, 0, 0, 0),
+            kernels=(3, 3, 3, 1),
             conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
         )
 
@@ -288,7 +343,7 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
         channels_in: int,
         channels_out: int,
         temporal_channels: int,
-        upsampling: bool = False,  # TODO
+        upsampling: bool = False,
         output_padding: int = 0,
         norm_groups: int = 16,
         normalization: str = "group",
@@ -302,12 +357,17 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
             temporal_channels,
             norm_groups,
             normalization,
+            upsampling=upsampling,
             context_channels=context_channels,
-            strides=(1, 2, 2),
-            paddings=(1, 1, 0),
-            kernels=(3, 3, 1),
+            strides=(1, 2, 1, 2),
+            paddings=(1, 1, 1, 0),
+            kernels=(3, 3, 3, 1),
             output_padding=output_padding,
-            conv=torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d,
+            conv=(
+                torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d
+            )
+            if not upsampling
+            else (torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d),
         )
 
 
@@ -335,7 +395,7 @@ class DownScaleResidualBlock(ResidualBlock):
         self,
         channels_in: int,
         channels_out: int,
-        pooling: bool = False,  # TODO
+        pooling: bool = False,
         norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
@@ -346,9 +406,9 @@ class DownScaleResidualBlock(ResidualBlock):
             channels_out,
             norm_groups,
             normalization,
-            strides=(2, 1, 2),
-            paddings=(1, 1, 0),
-            kernels=(3, 3, 1),
+            strides=(1, 2, 1, 2) if not pooling else (1, 1, 1, 1),
+            paddings=(1, 1, 1, 0),
+            kernels=(3, 3, 3, 1),
             conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
         )
 
@@ -370,9 +430,9 @@ class UpScaleResidualBlock(ResidualBlock):
             channels_out,
             norm_groups,
             normalization,
-            strides=(1, 2, 2),
-            paddings=(1, 1, 0),
-            kernels=(3, 3, 1),
+            strides=(1, 2, 1, 2),
+            paddings=(1, 1, 1, 0),
+            kernels=(3, 3, 3, 1),
             output_padding=output_padding,
             conv=torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d,
         )
