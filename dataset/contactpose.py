@@ -29,7 +29,7 @@ from trimesh import Trimesh
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
-from utils import colorize, to_cuda_
+from utils import colorize
 from utils.dataset import augment_hand_object_pose, compute_choir, get_scalar
 from utils.visualization import (
     visualize_CHOIR,
@@ -167,6 +167,7 @@ class ContactPoseDataset(BaseDataset):
                 "webuser",
             )
         )
+        np.int = int  # If using python 3.11
         from vendor.ContactPose.utilities.dataset import ContactPose, get_object_names
 
         # First, build a dictionary of object names to the participant, intent, and hand used. The
@@ -377,7 +378,7 @@ class ContactPoseDataset(BaseDataset):
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
-        affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
+        affine_mano: AffineMANO = AffineMANO(for_contactpose=True)  # type: ignore
 
         n_augs = self._n_augs if self._augment else 0
 
@@ -429,9 +430,7 @@ class ContactPoseDataset(BaseDataset):
                     has_visualized = False
                     # ================== Original Hand-Object Pair ==================
                     mano_params = grasp_data["grasp"][0].copy()
-                    gt_hTm = (
-                        torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0).cuda()
-                    )
+                    gt_hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0)
                     obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
                     # =================== Apply augmentation =========================
                     if self._augment and k > 0:
@@ -442,17 +441,13 @@ class ContactPoseDataset(BaseDataset):
                     gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
                     gt_trans = gt_hTm[:, :3, 3]
                     gt_theta, gt_beta = (
-                        torch.tensor(mano_params["pose"]).unsqueeze(0).cuda(),
-                        torch.tensor(mano_params["betas"]).unsqueeze(0).cuda(),
+                        torch.tensor(mano_params["pose"]).unsqueeze(0),
+                        torch.tensor(mano_params["betas"]).unsqueeze(0),
                     )
-                    obj_ptcld = (
-                        torch.from_numpy(
-                            np.asarray(
-                                obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
-                            )
+                    obj_ptcld = torch.from_numpy(
+                        np.asarray(
+                            obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                         )
-                        .cuda()
-                        .float()
                     )
                     # ============ Shift the pair to the object's center ============
                     # When we augment we necessarily recenter on the object, so we don't need to do
@@ -460,8 +455,10 @@ class ContactPoseDataset(BaseDataset):
                     if self._center_on_object_com and not (self._augment and k > 0):
                         obj_center = torch.from_numpy(obj_mesh.get_center())
                         obj_mesh.translate(-obj_center)
-                        obj_ptcld -= obj_center.to(obj_ptcld.device)
-                        gt_trans -= obj_center.to(gt_trans.device)
+                        obj_ptcld -= obj_center.to(
+                            obj_ptcld.device, dtype=torch.float32
+                        )
+                        gt_trans -= obj_center.to(gt_trans.device, dtype=torch.float32)
                     # ================ Compute GT anchors and verts ==================
                     gt_verts, gt_joints = affine_mano(
                         gt_theta, gt_beta, gt_rot_6d, gt_trans
@@ -473,11 +470,11 @@ class ContactPoseDataset(BaseDataset):
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
                     gt_choir, gt_rescaled_ref_pts = compute_choir(
-                        to_cuda_(obj_ptcld).unsqueeze(0),
-                        to_cuda_(gt_anchors),
+                        obj_ptcld.unsqueeze(0),
+                        gt_anchors,
                         scalar=gt_scalar,
-                        bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                        anchor_indices=self._anchor_indices.cuda(),  # type: ignore
+                        bps=self._bps.unsqueeze(0),  # type: ignore
+                        anchor_indices=self._anchor_indices,  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
                         use_deltas=self._use_deltas,
@@ -533,11 +530,11 @@ class ContactPoseDataset(BaseDataset):
                         # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                         # workers, but bps_torch is forcing my hand here so I might as well help it.
                         choir, rescaled_ref_pts = compute_choir(
-                            to_cuda_(obj_ptcld).unsqueeze(0),
-                            to_cuda_(anchors),
+                            obj_ptcld.unsqueeze(0),
+                            anchors,
                             scalar=scalar,
-                            bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                            anchor_indices=self._anchor_indices.cuda(),  # type: ignore
+                            bps=self._bps.unsqueeze(0),  # type: ignore
+                            anchor_indices=self._anchor_indices,  # type: ignore
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                             use_deltas=self._use_deltas,
