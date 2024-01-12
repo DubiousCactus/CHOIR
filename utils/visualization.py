@@ -15,13 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import open3d
 import pyvista as pv
-
-try:
-    import scenepic as sp
-except:
-    print(
-        "scenepic not installed. Some visualization functions will not work. (I know it's not available on Apple Silicon :("
-    )
 import torch
 from trimesh import Trimesh
 
@@ -918,6 +911,12 @@ class ScenePicAnim:
         height=1600,
     ):
         super().__init__()
+        try:
+            import scenepic as sp
+        except:
+            raise Exception(
+                "scenepic not installed. Some visualization functions will not work. (I know it's not available on Apple Silicon :("
+            )
         self.scene = sp.Scene()
         self.n_frames = 0
         self.main = self.scene.create_canvas_3d(width=width, height=height)

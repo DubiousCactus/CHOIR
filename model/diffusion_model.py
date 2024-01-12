@@ -134,7 +134,7 @@ class DiffusionModel(torch.nn.Module):
         )
         # 4. Predict the noise sample
         y_embed = self.embedder(y.view(y.shape[0], -1)) if y is not None else None
-        eps_hat = self.backbone(diffused_x, t, y_embed, debug=False)
+        eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:

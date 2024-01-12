@@ -141,7 +141,7 @@ class UNetBackboneModel(torch.nn.Module):
         )
         self.identity1 = TemporalConvIdentityBlock(
             self.choir_dim,
-            64,
+            32,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -149,7 +149,7 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
         )
         self.down1 = TemporalConvDownBlock(
-            64,
+            32,
             64,
             temporal_dim,
             normalization=normalization,
@@ -231,14 +231,14 @@ class UNetBackboneModel(torch.nn.Module):
         )
         self.identity3 = TemporalConvIdentityBlock(
             32,
-            16,
+            32,
             temporal_dim,
             norm_groups=8,
             normalization=normalization,
             conv="3d",
             context_channels=context_channels,
         )
-        self.out_conv = torch.nn.Conv3d(16, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(32, self.choir_dim, 1, padding=0, stride=1)
 
     def forward(
         self,
@@ -251,19 +251,13 @@ class UNetBackboneModel(torch.nn.Module):
         x = x.view(
             x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
-        # TODO: Remove parameters with pooling in downscale layers and upsampling in upscale layers
         t_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.identity1(x, t_embed, context=y, debug=debug)
         x2 = self.down1(x1, t_embed, context=y, debug=debug)
-        print(f"Down1: {x2.shape}")
         x3 = self.down2(x2, t_embed, context=y, debug=debug)
-        print(f"Down2: {x3.shape}")
         x4 = self.down3(x3, t_embed, context=y, debug=debug)
-        print(f"Down3: {x4.shape}")
         x5 = self.tunnel1(x4, t_embed, context=y, debug=debug)
-        print(f"Tunnel1: {x5.shape}")
         x6 = self.tunnel2(x5, t_embed, context=y, debug=debug)
-        print(f"Tunnel2: {x6.shape}")
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
         # conctenate the upscaled features with the output of the previous downsampling layer, and
@@ -313,11 +307,11 @@ class ConvObjectEncoderModel(torch.nn.Module):
             x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
         x = self.down1(x, debug=debug)
-        print(f"Down1: {x.shape}")
+        # print(f"Down1: {x.shape}")
         x = self.down2(x, debug=debug)
-        print(f"Down2: {x.shape}")
+        # print(f"Down2: {x.shape}")
         x = self.down3(x, debug=debug)
-        print(f"Down3: {x.shape}")
+        # print(f"Down3: {x.shape}")
         x = self.identity(x, debug=debug)
-        print(f"Identity: {x.shape}")
+        # print(f"Identity: {x.shape}")
         return x
