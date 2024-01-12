@@ -141,16 +141,17 @@ class UNetBackboneModel(torch.nn.Module):
         )
         self.identity1 = TemporalConvIdentityBlock(
             self.choir_dim,
-            32,
+            64,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
+            input_norm=False,
         )
         self.down1 = TemporalConvDownBlock(
-            32,
             64,
+            128,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -159,8 +160,8 @@ class UNetBackboneModel(torch.nn.Module):
             pooling=True,
         )
         self.down2 = TemporalConvDownBlock(
-            64,
             128,
+            256,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -169,8 +170,8 @@ class UNetBackboneModel(torch.nn.Module):
             pooling=True,
         )
         self.down3 = TemporalConvDownBlock(
-            128,
             256,
+            512,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -179,8 +180,8 @@ class UNetBackboneModel(torch.nn.Module):
             pooling=True,
         )
         self.tunnel1 = TemporalConvIdentityBlock(
-            256,
-            256,
+            512,
+            512,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -188,8 +189,8 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
         )
         self.tunnel2 = TemporalConvIdentityBlock(
-            256,
-            256,
+            512,
+            512,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -197,48 +198,48 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
         )
         self.up1 = TemporalConvUpBlock(
-            512,
-            128,
+            1024,
+            256,
             temporal_dim,
             output_padding=output_paddings[0],
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            upsampling=True,
+            interpolate=True,
         )
         self.up2 = TemporalConvUpBlock(
-            256,
-            64,
+            512,
+            128,
             temporal_dim,
             output_padding=output_paddings[1],
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            upsampling=True,
+            interpolate=True,
         )
         self.up3 = TemporalConvUpBlock(
-            128,
-            32,
+            256,
+            64,
             temporal_dim,
             output_padding=output_paddings[2],
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            upsampling=True,
+            interpolate=True,
         )
         self.identity3 = TemporalConvIdentityBlock(
-            32,
-            32,
+            64,
+            64,
             temporal_dim,
             norm_groups=8,
             normalization=normalization,
             conv="3d",
             context_channels=context_channels,
         )
-        self.out_conv = torch.nn.Conv3d(32, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
 
     def forward(
         self,

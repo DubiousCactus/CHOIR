@@ -133,7 +133,7 @@ class DataloaderConf:
     pin_memory: bool = False
     n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
-    persistent_workers: bool = False
+    persistent_workers: bool = True
 
 
 " ================== Model ================== "

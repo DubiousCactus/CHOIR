@@ -60,6 +60,7 @@ class DiffusionModel(torch.nn.Module):
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
+                    norm_groups=16,
                 ),
                 partial(
                     ConvObjectEncoderModel,
