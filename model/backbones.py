@@ -141,7 +141,7 @@ class UNetBackboneModel(torch.nn.Module):
         )
         self.identity1 = TemporalConvIdentityBlock(
             self.choir_dim,
-            64,
+            32,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -150,6 +150,16 @@ class UNetBackboneModel(torch.nn.Module):
             input_norm=False,
         )
         self.down1 = TemporalConvDownBlock(
+            32,
+            64,
+            temporal_dim,
+            normalization=normalization,
+            norm_groups=norm_groups,
+            conv="3d",
+            context_channels=context_channels,
+            pooling=True,
+        )
+        self.down2 = TemporalConvDownBlock(
             64,
             128,
             temporal_dim,
@@ -159,7 +169,7 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
             pooling=True,
         )
-        self.down2 = TemporalConvDownBlock(
+        self.down3 = TemporalConvDownBlock(
             128,
             256,
             temporal_dim,
@@ -169,19 +179,9 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
             pooling=True,
         )
-        self.down3 = TemporalConvDownBlock(
-            256,
-            512,
-            temporal_dim,
-            normalization=normalization,
-            norm_groups=norm_groups,
-            conv="3d",
-            context_channels=context_channels,
-            pooling=True,
-        )
         self.tunnel1 = TemporalConvIdentityBlock(
-            512,
-            512,
+            256,
+            256,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -189,8 +189,8 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
         )
         self.tunnel2 = TemporalConvIdentityBlock(
-            512,
-            512,
+            256,
+            256,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -198,8 +198,8 @@ class UNetBackboneModel(torch.nn.Module):
             context_channels=context_channels,
         )
         self.up1 = TemporalConvUpBlock(
-            1024,
-            256,
+            512,
+            128,
             temporal_dim,
             output_padding=output_paddings[0],
             normalization=normalization,
@@ -209,8 +209,8 @@ class UNetBackboneModel(torch.nn.Module):
             interpolate=True,
         )
         self.up2 = TemporalConvUpBlock(
-            512,
-            128,
+            256,
+            64,
             temporal_dim,
             output_padding=output_paddings[1],
             normalization=normalization,
@@ -220,8 +220,8 @@ class UNetBackboneModel(torch.nn.Module):
             interpolate=True,
         )
         self.up3 = TemporalConvUpBlock(
-            256,
-            64,
+            128,
+            32,
             temporal_dim,
             output_padding=output_paddings[2],
             normalization=normalization,
@@ -231,15 +231,15 @@ class UNetBackboneModel(torch.nn.Module):
             interpolate=True,
         )
         self.identity3 = TemporalConvIdentityBlock(
-            64,
-            64,
+            32,
+            32,
             temporal_dim,
             norm_groups=8,
             normalization=normalization,
             conv="3d",
             context_channels=context_channels,
         )
-        self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(32, self.choir_dim, 1, padding=0, stride=1)
 
     def forward(
         self,
@@ -270,7 +270,7 @@ class UNetBackboneModel(torch.nn.Module):
         return self.out_conv(x11).permute(0, 2, 3, 4, 1).reshape(input_shape)
 
 
-class ConvObjectEncoderModel(torch.nn.Module):
+class ResnetEncoderModel(torch.nn.Module):
     def __init__(
         self,
         bps_grid_len: int,
@@ -282,16 +282,16 @@ class ConvObjectEncoderModel(torch.nn.Module):
         super().__init__()
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
-        self.identity = ConvIdentityBlock(
-            choir_dim,
-            16,
-            normalization=normalization,
-            norm_groups=norm_groups,
-            conv="3d",
-            input_norm=False,
-        )
+        # self.identity = ConvIdentityBlock(
+        # choir_dim,
+        # 16,
+        # normalization=normalization,
+        # norm_groups=norm_groups,
+        # conv="3d",
+        # input_norm=False,
+        # )
         self.down1 = ConvDownBlock(
-            16,
+            choir_dim,
             32,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -330,7 +330,7 @@ class ConvObjectEncoderModel(torch.nn.Module):
         x = x.view(
             x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
-        x = self.identity(x, debug=debug)
+        # x = self.identity(x, debug=debug)
         x = self.down1(x, debug=debug)
         x = self.down2(x, debug=debug)
         x = self.down3(x, debug=debug)

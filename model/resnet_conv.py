@@ -42,6 +42,196 @@ class CrossAttentionBlock(torch.nn.Module):
         return self.out_norm(x + self.cross_attention(q=x, k=context, v=context))
 
 
+class MyTemporalResidualBlock(torch.nn.Module):
+    def __init__(
+        self,
+        channels_in: int,
+        channels_out: int,
+        temporal_dim: Optional[int] = None,
+        norm_groups: int = 16,
+        normalization: str = "group",
+        input_norm: bool = True,
+        strides: Tuple[int, int] = (1, 1, 1, 1),
+        paddings: Tuple[int, int] = (1, 0, 1, 0),
+        kernels: Tuple[int, int] = (3, 0, 3, 1),
+        output_padding: int = 0,
+        context_channels: Optional[int] = None,
+        x_attn_heads: int = 8,
+        x_attn_head_dim: int = 64,
+        pooling: bool = False,
+        interpolate: bool = False,
+        p_dropout: float = 0.0,
+        conv=torch.nn.Conv2d,
+        pool=torch.nn.AvgPool2d,
+        drop=torch.nn.Dropout2d,
+    ):
+        super().__init__()
+        assert not (
+            pooling and interpolate
+        ), "Cannot have both pooling and interpolating"
+        kwargs = (
+            {"output_padding": output_padding}
+            if conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d)
+            else {}
+        )
+        assert normalization in (
+            "group",
+            "batch",
+        ), "Only group and batch normalization are supported"
+        self.is_2d = conv in (torch.nn.Conv2d, torch.nn.ConvTranspose2d)
+
+        # ================== INPUT CONVOLUTION =====================
+        self.norm1 = (
+            torch.nn.GroupNorm(min(norm_groups, channels_out), channels_out)
+            if normalization == "group"
+            else (
+                torch.nn.BatchNorm2d(channels_out)
+                if self.is_2d
+                else torch.nn.BatchNorm3d(channels_out)
+            )
+        )
+        self.conv1 = conv(
+            channels_in,
+            channels_out,
+            kernels[0],
+            padding=paddings[0],
+            stride=strides[0],
+        )
+        self.nonlin = torch.nn.SiLU()
+        # ==========================================================
+        # ================== UP/DOWN/NO SAMPLING ===================
+        upsampling = (
+            conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d) or interpolate
+        )
+        downsampling = not interpolate and (
+            pooling or strides[1] > 1 or paddings[1] != 0
+        )
+        if downsampling:
+            self.up_or_down_sample = (
+                conv(
+                    channels_in,
+                    channels_in,
+                    kernels[1],
+                    padding=paddings[1],
+                    stride=strides[1],
+                    **kwargs,
+                )
+                if not pooling
+                else pool(kernel_size=2, stride=2)
+            )
+        elif upsampling:
+            self.up_or_down_sample = (
+                lambda x: torch.nn.functional.interpolate(
+                    x, scale_factor=2, mode="nearest"
+                )
+                if interpolate
+                else conv(
+                    channels_in,
+                    channels_in,
+                    kernels[1],
+                    padding=paddings[1],
+                    stride=strides[1],
+                    **kwargs,
+                )
+            )
+        else:
+            self.up_or_down_sample = torch.nn.Identity()
+
+        self.norm2 = (
+            torch.nn.GroupNorm(norm_groups, channels_out)
+            if normalization == "group"
+            else (
+                torch.nn.BatchNorm2d(channels_out)
+                if self.is_2d
+                else torch.nn.BatchNorm3d(channels_out)
+            )
+        )
+        # ==========================================================
+        self.out_activation = torch.nn.SiLU()
+        # ==========================================================
+        # ================== TEMPORAL PROJECTION ===================
+        self.temporal_projection = (
+            torch.nn.Sequential(
+                torch.nn.SiLU(),
+                torch.nn.Linear(
+                    temporal_dim,
+                    channels_out * 2,
+                ),
+            )
+            if temporal_dim is not None
+            else torch.nn.Identity()
+        )
+        # ==========================================================
+        # ================== SKIP CONNECTION =======================
+        self.skip_connection = (
+            conv(
+                channels_in,
+                channels_out,
+                kernels[3],
+                padding=paddings[3],
+                stride=strides[3],
+                bias=False,
+            )
+            if (channels_in != channels_out or strides[3] != 1 or paddings[3] != 0)
+            else torch.nn.Identity()
+        )
+        # ==========================================================
+        # ================== CROSS-ATTENTION =======================
+        self.cross_attention = (
+            MultiHeadAttention(
+                q_dim=channels_out,
+                k_dim=context_channels,
+                v_dim=context_channels,
+                n_heads=x_attn_heads,
+                dim_head=x_attn_head_dim,
+                p_dropout=p_dropout,
+            )
+            if context_channels is not None
+            else None
+        )
+        # ==========================================================
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        t_emb: Optional[torch.Tensor] = None,
+        context: Optional[torch.Tensor] = None,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        def print_debug(str):
+            nonlocal debug
+            if debug:
+                print(str)
+
+        _x = x
+        if t_emb is not None:
+            scale, shift = (
+                self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
+                if self.is_2d
+                else self.temporal_projection(t_emb)[..., None, None, None].chunk(
+                    2, dim=1
+                )
+            )
+        x = self.conv1(x)
+        x = self.norm1(x)
+        if t_emb is not None:
+            x = x * (scale + 1) + shift
+        x = self.nonlin(x)
+        x = self.up_or_down_sample(x)
+        if context is not None:
+            # TODO: Implement as a separate block like OpenAI
+            x = x + self.cross_attention(q=x, k=context, v=context)
+            x = self.norm2(x)
+            x = (
+                x * (scale + 1) + shift
+            )  # Normalize before scale/shift as in OpenAI's code
+        # print_debug(
+        # f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(self.up_or_down_sample(_x)).shape}) to x of shape {x.shape}"
+        # )
+        # print_debug("=========================================")
+        return self.out_activation(x + self.skip_connection(self.up_or_down_sample(_x)))
+
+
 class TemporalResidualBlock(torch.nn.Module):
     def __init__(
         self,
@@ -257,7 +447,7 @@ class TemporalResidualBlock(torch.nn.Module):
         return x + self.skip_connection(self.up_or_down_sample(_x))
 
 
-class TemporalIdentityResidualBlock(TemporalResidualBlock):
+class TemporalIdentityResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -283,7 +473,7 @@ class TemporalIdentityResidualBlock(TemporalResidualBlock):
         )
 
 
-class TemporalDownScaleResidualBlock(TemporalResidualBlock):
+class TemporalDownScaleResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -313,7 +503,7 @@ class TemporalDownScaleResidualBlock(TemporalResidualBlock):
         )
 
 
-class TemporalUpScaleResidualBlock(TemporalResidualBlock):
+class TemporalUpScaleResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -348,7 +538,7 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
         )
 
 
-class IdentityResidualBlock(TemporalResidualBlock):
+class IdentityResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -370,7 +560,7 @@ class IdentityResidualBlock(TemporalResidualBlock):
         )
 
 
-class DownScaleResidualBlock(TemporalResidualBlock):
+class DownScaleResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -396,7 +586,7 @@ class DownScaleResidualBlock(TemporalResidualBlock):
         )
 
 
-class UpScaleResidualBlock(TemporalResidualBlock):
+class UpScaleResidualBlock(MyTemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,

@@ -17,8 +17,8 @@ import torch
 from tqdm import tqdm
 
 from model.backbones import (
-    ConvObjectEncoderModel,
     MLPResNetBackboneModel,
+    ResnetEncoderModel,
     UNetBackboneModel,
 )
 from model.time_encoding import SinusoidalTimeEncoder
@@ -63,9 +63,10 @@ class DiffusionModel(torch.nn.Module):
                     norm_groups=16,
                 ),
                 partial(
-                    ConvObjectEncoderModel,
+                    ResnetEncoderModel,
                     choir_dim=choir_dim,
                     normalization="group",
+                    norm_groups=16,
                 )
                 if y_embed_dim is not None
                 else None,
