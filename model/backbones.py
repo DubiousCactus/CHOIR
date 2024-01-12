@@ -277,26 +277,49 @@ class ConvObjectEncoderModel(torch.nn.Module):
         choir_dim: int,
         embed_channels: int,
         normalization: str = "batch",
+        norm_groups: int = 16,
     ):
         super().__init__()
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
-        self.down1 = ConvDownBlock(
+        self.identity = ConvIdentityBlock(
             choir_dim,
             16,
             normalization=normalization,
-            norm_groups=8,
+            norm_groups=norm_groups,
+            conv="3d",
+            input_norm=False,
+        )
+        self.down1 = ConvDownBlock(
+            16,
+            32,
+            normalization=normalization,
+            norm_groups=norm_groups,
             conv="3d",
             pooling=True,
         )
         self.down2 = ConvDownBlock(
-            16, 16, normalization=normalization, norm_groups=8, conv="3d", pooling=True
+            32,
+            64,
+            normalization=normalization,
+            norm_groups=norm_groups,
+            conv="3d",
+            pooling=True,
         )
         self.down3 = ConvDownBlock(
-            16, 32, normalization=normalization, norm_groups=8, conv="3d", pooling=True
+            64,
+            128,
+            normalization=normalization,
+            norm_groups=norm_groups,
+            conv="3d",
+            pooling=True,
         )
-        self.identity = ConvIdentityBlock(
-            32, embed_channels, normalization=normalization, norm_groups=8, conv="3d"
+        self.out_identity = ConvIdentityBlock(
+            128,
+            embed_channels,
+            normalization=normalization,
+            norm_groups=norm_groups,
+            conv="3d",
         )
 
     def forward(
@@ -307,12 +330,9 @@ class ConvObjectEncoderModel(torch.nn.Module):
         x = x.view(
             x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
-        x = self.down1(x, debug=debug)
-        # print(f"Down1: {x.shape}")
-        x = self.down2(x, debug=debug)
-        # print(f"Down2: {x.shape}")
-        x = self.down3(x, debug=debug)
-        # print(f"Down3: {x.shape}")
         x = self.identity(x, debug=debug)
-        # print(f"Identity: {x.shape}")
+        x = self.down1(x, debug=debug)
+        x = self.down2(x, debug=debug)
+        x = self.down3(x, debug=debug)
+        x = self.out_identity(x, debug=debug)
         return x

@@ -17,93 +17,12 @@ import torch
 from model.attention import MultiHeadAttention
 
 
-class ResidualBlock(torch.nn.Module):
-    def __init__(
-        self,
-        channels_in: int,
-        channels_out: int,
-        norm_groups: int = 16,
-        normalization: str = "group",
-        strides: Tuple[int, int] = (1, 1, 1),
-        paddings: Tuple[int, int] = (1, 1, 0),
-        kernels: Tuple[int, int] = (3, 3, 1),
-        output_padding: int = 0,
-        conv=torch.nn.Conv2d,
-    ):
-        super().__init__()
-        kwargs = (
-            {"output_padding": output_padding}
-            if conv == torch.nn.ConvTranspose2d
-            else {}
-        )
-        self.conv1 = conv(
-            channels_in,
-            channels_out,
-            kernels[0],
-            padding=paddings[0],
-            stride=strides[0],
-        )
-        self.norm1 = (
-            torch.nn.GroupNorm(norm_groups, channels_out)
-            if normalization == "group"
-            else torch.nn.BatchNorm2d(channels_out)
-        )
-        self.nonlin = torch.nn.SiLU()
-        self.conv2 = conv(
-            channels_out,
-            channels_out,
-            kernels[1],
-            padding=paddings[1],
-            stride=strides[1],
-            **kwargs,
-        )
-        self.norm2 = (
-            torch.nn.GroupNorm(norm_groups, channels_out)
-            if normalization == "group"
-            else torch.nn.BatchNorm2d(channels_out)
-        )
-        self.out_activation = torch.nn.SiLU()
-        self.residual_scaling = (
-            conv(
-                channels_in,
-                channels_out,
-                kernels[2],
-                padding=paddings[2],
-                stride=strides[2],
-                bias=False,
-                **kwargs,
-            )
-            if (channels_in != channels_out or strides[2] != 1 or paddings[2] != 0)
-            else torch.nn.Identity()
-        )
-
-    def forward(self, x: torch.Tensor, debug: bool = False) -> torch.Tensor:
-        def print_debug(str):
-            nonlocal debug
-            if debug:
-                print(str)
-
-        _x = x
-        print_debug(f"Starting with x.shape = {x.shape}")
-        x = self.conv1(x)
-        print_debug(f"After conv1, x.shape = {x.shape}")
-        x = self.norm1(x)
-        x = self.nonlin(x)
-        x = self.conv2(x)
-        print_debug(f"After conv2, x.shape = {x.shape}")
-        x = self.norm2(x)
-        print_debug(
-            f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
-        )
-        return self.out_activation(x + self.residual_scaling(_x))
-
-
 class TemporalResidualBlock(torch.nn.Module):
     def __init__(
         self,
         channels_in: int,
         channels_out: int,
-        temporal_dim: int,
+        temporal_dim: Optional[int] = None,
         norm_groups: int = 16,
         normalization: str = "group",
         input_norm: bool = True,
@@ -221,12 +140,16 @@ class TemporalResidualBlock(torch.nn.Module):
         )
         # ==========================================================
         # ================== TEMPORAL PROJECTION ===================
-        self.temporal_projection = torch.nn.Sequential(
-            torch.nn.SiLU(),
-            torch.nn.Linear(
-                temporal_dim,
-                channels_out * 2,
-            ),
+        self.temporal_projection = (
+            torch.nn.Sequential(
+                torch.nn.SiLU(),
+                torch.nn.Linear(
+                    temporal_dim,
+                    channels_out * 2,
+                ),
+            )
+            if temporal_dim is not None
+            else torch.nn.Identity()
         )
         # ==========================================================
         # ================== SKIP CONNECTION =======================
@@ -261,7 +184,7 @@ class TemporalResidualBlock(torch.nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        t_emb: torch.Tensor,
+        t_emb: Optional[torch.Tensor] = None,
         context: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> torch.Tensor:
@@ -271,11 +194,14 @@ class TemporalResidualBlock(torch.nn.Module):
                 print(str)
 
         _x = x
-        scale, shift = (
-            self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
-            if self.is_2d
-            else self.temporal_projection(t_emb)[..., None, None, None].chunk(2, dim=1)
-        )
+        if t_emb is not None:
+            scale, shift = (
+                self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
+                if self.is_2d
+                else self.temporal_projection(t_emb)[..., None, None, None].chunk(
+                    2, dim=1
+                )
+            )
         # print_debug("=========================================")
         # print_debug(f"Starting with x.shape = {x.shape}")
         # print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
@@ -286,9 +212,11 @@ class TemporalResidualBlock(torch.nn.Module):
         x = conv(x)
         # print_debug(f"After input layers, x.shape = {x.shape}")
         norm, rest = self.out_layers[0], self.out_layers[1:]
-        x = (
-            norm(x) * (scale + 1) + shift
-        )  # Normalize before scale/shift as in OpenAI's code
+        x = norm(x)
+        if t_emb is not None:
+            x = (
+                x * (scale + 1) + shift
+            )  # Normalize before scale/shift as in OpenAI's code
         x = rest(x)
         # print_debug(f"After output layers, x.shape = {x.shape}")
         if context is not None:
@@ -393,7 +321,7 @@ class TemporalUpScaleResidualBlock(TemporalResidualBlock):
         )
 
 
-class IdentityResidualBlock(ResidualBlock):
+class IdentityResidualBlock(TemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -401,18 +329,21 @@ class IdentityResidualBlock(ResidualBlock):
         norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
-        context_channels: Optional[int] = None,
+        input_norm: bool = True,
     ):
         super().__init__(
             channels_in,
             channels_out,
-            norm_groups,
-            normalization,
+            temporal_dim=None,
+            norm_groups=norm_groups,
+            normalization=normalization,
+            input_norm=input_norm,
             conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
+            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
-class DownScaleResidualBlock(ResidualBlock):
+class DownScaleResidualBlock(TemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -421,21 +352,24 @@ class DownScaleResidualBlock(ResidualBlock):
         norm_groups: int = 16,
         normalization: str = "group",
         conv: str = "2d",
-        context_channels: Optional[int] = None,
     ):
         super().__init__(
             channels_in,
             channels_out,
-            norm_groups,
-            normalization,
+            temporal_dim=None,
+            norm_groups=norm_groups,
+            normalization=normalization,
+            pooling=pooling,
             strides=(1, 2, 1, 2) if not pooling else (1, 1, 1, 1),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
             conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
+            pool=torch.nn.AvgPool2d if conv == "2d" else torch.nn.AvgPool3d,
+            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
-class UpScaleResidualBlock(ResidualBlock):
+class UpScaleResidualBlock(TemporalResidualBlock):
     def __init__(
         self,
         channels_in: int,
@@ -450,8 +384,9 @@ class UpScaleResidualBlock(ResidualBlock):
         super().__init__(
             channels_in,
             channels_out,
-            norm_groups,
-            normalization,
+            temporal_dim=None,
+            norm_groups=norm_groups,
+            normalization=normalization,
             strides=(1, 2, 1, 2),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
