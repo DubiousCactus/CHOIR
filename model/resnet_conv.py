@@ -17,6 +17,31 @@ import torch
 from model.attention import MultiHeadAttention
 
 
+class CrossAttentionBlock(torch.nn.Module):
+    def __init__(
+        self,
+        q_channels: int,
+        k_v_channels: int,
+        norm_groups: int,
+        x_attn_heads: int = 8,
+        x_attn_head_dim: int = 64,
+        p_dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.cross_attention = MultiHeadAttention(
+            q_dim=q_channels,
+            k_dim=k_v_channels,
+            v_dim=k_v_channels,
+            n_heads=x_attn_heads,
+            dim_head=x_attn_head_dim,
+            p_dropout=p_dropout,
+        )
+        self.out_norm = torch.nn.GroupNorm(norm_groups, q_channels)
+
+    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        return self.out_norm(x + self.cross_attention(q=x, k=context, v=context))
+
+
 class TemporalResidualBlock(torch.nn.Module):
     def __init__(
         self,
@@ -168,13 +193,13 @@ class TemporalResidualBlock(torch.nn.Module):
         # ==========================================================
         # ================== CROSS-ATTENTION =======================
         self.cross_attention = (
-            MultiHeadAttention(
-                q_dim=channels_out,
-                k_dim=context_channels,
-                v_dim=context_channels,
-                n_heads=x_attn_heads,
-                dim_head=x_attn_head_dim,
-                p_dropout=0.0,
+            CrossAttentionBlock(
+                q_channels=channels_out,
+                k_v_channels=context_channels,
+                norm_groups=norm_groups,
+                x_attn_heads=x_attn_heads,
+                x_attn_head_dim=x_attn_head_dim,
+                p_dropout=p_dropout,
             )
             if context_channels is not None
             else None
@@ -221,8 +246,10 @@ class TemporalResidualBlock(torch.nn.Module):
         # print_debug(f"After output layers, x.shape = {x.shape}")
         if context is not None:
             # TODO: Implement as a separate block like OpenAI
-            x = x + self.cross_attention(q=x, k=context, v=context)
-            # x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
+            x = self.cross_attention(x, context)
+            x = (
+                x * (scale + 1) + shift
+            )  # Normalize before scale/shift as in OpenAI's code
         # print_debug(
         # f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(self.up_or_down_sample(_x)).shape}) to x of shape {x.shape}"
         # )
