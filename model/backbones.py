@@ -306,6 +306,12 @@ class ResnetEncoderModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
         )
+        self.out_conv = torch.nn.Sequential(
+            torch.nn.GroupNorm(norm_groups, embed_channels)
+            if normalization == "group"
+            else torch.nn.BatchNorm3d(embed_channels),
+            torch.nn.Conv3d(embed_channels, embed_channels, 1, padding=0, stride=1),
+        )
 
     def forward(
         self,
@@ -320,4 +326,4 @@ class ResnetEncoderModel(torch.nn.Module):
         x = self.down2(x, debug=debug)
         x = self.down3(x, debug=debug)
         x = self.out_identity(x, debug=debug)
-        return x
+        return self.out_conv(x)

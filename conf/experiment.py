@@ -201,7 +201,7 @@ model_store(
         choir_dim=MISSING,
         rescale_input=MISSING,
         temporal_dim=256,
-        y_embed_dim=512,
+        y_embed_dim=256,
     ),
     name="ddpm",
 )
