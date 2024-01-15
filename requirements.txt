@@ -8,7 +8,7 @@ isort
 black
 autoflake
 pre-commit
-chumpy
+git+https://github.com/mikigom/chumpy
 transforms3d
 pyvista
 trimesh

@@ -10,6 +10,7 @@
 """
 
 
+from functools import partial
 from typing import Optional, Tuple
 
 import torch
@@ -45,12 +46,14 @@ class CrossAttentionBlock(torch.nn.Module):
 class MyTemporalResidualBlock(torch.nn.Module):
     def __init__(
         self,
+        dim: int,
         channels_in: int,
         channels_out: int,
         temporal_dim: Optional[int] = None,
         norm_groups: int = 16,
         normalization: str = "group",
         input_norm: bool = True,
+        rescaling: str = "none",
         strides: Tuple[int, int] = (1, 1, 1, 1),
         paddings: Tuple[int, int] = (1, 0, 1, 0),
         kernels: Tuple[int, int] = (3, 0, 3, 1),
@@ -58,38 +61,44 @@ class MyTemporalResidualBlock(torch.nn.Module):
         context_channels: Optional[int] = None,
         x_attn_heads: int = 8,
         x_attn_head_dim: int = 64,
-        pooling: bool = False,
+        pooling: str = "none",
         interpolate: bool = False,
         p_dropout: float = 0.0,
-        conv=torch.nn.Conv2d,
-        pool=torch.nn.AvgPool2d,
-        drop=torch.nn.Dropout2d,
     ):
         super().__init__()
+        assert dim in (2, 3), "Only 2D and 3D convolutions are supported"
+        assert rescaling in ("none", "down", "up"), "Invalid rescaling"
+        assert pooling in ("none", "avg", "max"), "Invalid pooling"
         assert not (
-            pooling and interpolate
+            pooling != "none" and interpolate
         ), "Cannot have both pooling and interpolating"
         kwargs = (
             {"output_padding": output_padding}
-            if conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d)
+            if interpolate and rescaling == "up"
             else {}
         )
         assert normalization in (
             "group",
             "batch",
         ), "Only group and batch normalization are supported"
-        self.is_2d = conv in (torch.nn.Conv2d, torch.nn.ConvTranspose2d)
+        self.is_2d = dim == 2
+        conv = torch.nn.Conv2d if dim == 2 else torch.nn.Conv3d
+        upconv = torch.nn.ConvTranspose2d if dim == 2 else torch.nn.ConvTranspose3d
+        pool = None
+        if pooling != "none":
+            pool = (
+                (torch.nn.AvgPool2d if dim == 2 else torch.nn.AvgPool3d)
+                if pooling == "avg"
+                else (torch.nn.MaxPool2d if dim == 2 else torch.nn.MaxPool3d)
+            )
+        norm = (
+            partial(torch.nn.GroupNorm, min(norm_groups, channels_out))
+            if normalization == "group"
+            else (torch.nn.BatchNorm2d if dim == 2 else torch.nn.BatchNorm3d)
+        )
 
         # ================== INPUT CONVOLUTION =====================
-        self.norm1 = (
-            torch.nn.GroupNorm(min(norm_groups, channels_out), channels_out)
-            if normalization == "group"
-            else (
-                torch.nn.BatchNorm2d(channels_out)
-                if self.is_2d
-                else torch.nn.BatchNorm3d(channels_out)
-            )
-        )
+        self.norm1 = norm(channels_out)
         self.conv1 = conv(
             channels_in,
             channels_out,
@@ -100,13 +109,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
         self.nonlin = torch.nn.SiLU()
         # ==========================================================
         # ================== UP/DOWN/NO SAMPLING ===================
-        upsampling = (
-            conv in (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d) or interpolate
-        )
-        downsampling = not interpolate and (
-            pooling or strides[1] > 1 or paddings[1] != 0
-        )
-        if downsampling:
+        if rescaling == "down":
             self.up_or_down_sample = (
                 conv(
                     channels_out,
@@ -116,7 +119,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
                     stride=strides[1],
                     **kwargs,
                 )
-                if not pooling
+                if pooling == "none"
                 else pool(kernel_size=2, stride=2)
             )
             self.up_or_down_sample_input = (
@@ -128,16 +131,16 @@ class MyTemporalResidualBlock(torch.nn.Module):
                     stride=strides[1],
                     **kwargs,
                 )
-                if not pooling
+                if pooling == "none"
                 else pool(kernel_size=2, stride=2)
             )
-        elif upsampling:
+        elif rescaling == "up":
             self.up_or_down_sample = (
                 lambda x: torch.nn.functional.interpolate(
                     x, scale_factor=2, mode="nearest"
                 )
                 if interpolate
-                else conv(
+                else upconv(
                     channels_out,
                     channels_out,
                     kernels[1],
@@ -151,7 +154,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
                     x, scale_factor=2, mode="nearest"
                 )
                 if interpolate
-                else conv(
+                else upconv(
                     channels_in,
                     channels_in,
                     kernels[1],
@@ -164,15 +167,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
             self.up_or_down_sample = torch.nn.Identity()
             self.up_or_down_sample_input = torch.nn.Identity()
 
-        self.norm2 = (
-            torch.nn.GroupNorm(norm_groups, channels_out)
-            if normalization == "group"
-            else (
-                torch.nn.BatchNorm2d(channels_out)
-                if self.is_2d
-                else torch.nn.BatchNorm3d(channels_out)
-            )
-        )
+        self.norm2 = norm(channels_out)
         # ==========================================================
         self.out_activation = torch.nn.SiLU()
         # ==========================================================
@@ -490,12 +485,12 @@ class TemporalIdentityResidualBlock(MyTemporalResidualBlock):
         temporal_channels: int,
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
         context_channels: Optional[int] = None,
         input_norm: bool = True,
     ):
-        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_channels,
@@ -503,8 +498,6 @@ class TemporalIdentityResidualBlock(MyTemporalResidualBlock):
             normalization,
             context_channels=context_channels,
             input_norm=input_norm,
-            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
-            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
@@ -514,27 +507,25 @@ class TemporalDownScaleResidualBlock(MyTemporalResidualBlock):
         channels_in: int,
         channels_out: int,
         temporal_channels: int,
-        pooling: bool = True,
+        pooling: str = "avg",
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
         context_channels: Optional[int] = None,
     ):
-        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_channels,
             norm_groups,
             normalization,
+            rescaling="down",
             context_channels=context_channels,
             pooling=pooling,
-            strides=(1, 2, 1, 2) if not pooling else (1, 1, 1, 1),
+            strides=(1, 2, 1, 2) if pooling == "none" else (1, 1, 1, 1),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
-            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
-            pool=torch.nn.AvgPool2d if conv == "2d" else torch.nn.AvgPool3d,
-            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
@@ -548,28 +539,23 @@ class TemporalUpScaleResidualBlock(MyTemporalResidualBlock):
         output_padding: int = 0,
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
         context_channels: Optional[int] = None,
     ):
-        assert conv in ("2d", "3d"), "Only 2D and 3D convolutions are supported"
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_channels,
             norm_groups,
             normalization,
+            rescaling="up",
             interpolate=interpolate,
             context_channels=context_channels,
             strides=(1, 2, 1, 1) if not interpolate else (1, 1, 1, 1),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
             output_padding=output_padding,
-            conv=(
-                torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d
-            )
-            if not interpolate
-            else (torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d),
-            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
@@ -580,18 +566,17 @@ class IdentityResidualBlock(MyTemporalResidualBlock):
         channels_out: int,
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
         input_norm: bool = True,
     ):
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_dim=None,
             norm_groups=norm_groups,
             normalization=normalization,
             input_norm=input_norm,
-            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
-            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
@@ -600,24 +585,23 @@ class DownScaleResidualBlock(MyTemporalResidualBlock):
         self,
         channels_in: int,
         channels_out: int,
-        pooling: bool = False,
+        pooling: str = "avg",
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
     ):
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_dim=None,
             norm_groups=norm_groups,
             normalization=normalization,
+            rescaling="down",
             pooling=pooling,
-            strides=(1, 2, 1, 2) if not pooling else (1, 1, 1, 1),
+            strides=(1, 2, 1, 2) if pooling == "none" else (1, 1, 1, 1),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
-            conv=torch.nn.Conv2d if conv == "2d" else torch.nn.Conv3d,
-            pool=torch.nn.AvgPool2d if conv == "2d" else torch.nn.AvgPool3d,
-            drop=torch.nn.Dropout2d if conv == "2d" else torch.nn.Dropout3d,
         )
 
 
@@ -626,22 +610,24 @@ class UpScaleResidualBlock(MyTemporalResidualBlock):
         self,
         channels_in: int,
         channels_out: int,
-        upsampling: bool = False,  # TODO
+        interpolate: bool = True,
         output_padding: int = 0,
         norm_groups: int = 16,
         normalization: str = "group",
-        conv: str = "2d",
+        dim: int = 3,
         context_channels: Optional[int] = None,
     ):
         super().__init__(
+            dim,
             channels_in,
             channels_out,
             temporal_dim=None,
             norm_groups=norm_groups,
             normalization=normalization,
-            strides=(1, 2, 1, 2),
+            interpolate=interpolate,
+            rescaling="up",
+            strides=(1, 2, 1, 1) if not interpolate else (1, 1, 1, 1),
             paddings=(1, 1, 1, 0),
             kernels=(3, 3, 3, 1),
             output_padding=output_padding,
-            conv=torch.nn.ConvTranspose2d if conv == "2d" else torch.nn.ConvTranspose3d,
         )
