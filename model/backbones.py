@@ -141,16 +141,16 @@ class UNetBackboneModel(torch.nn.Module):
         )
         self.identity1 = TemporalConvIdentityBlock(
             self.choir_dim,
-            32,
+            64,
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            input_norm=False,
+            input_norm=True,
         )
         self.down1 = TemporalConvDownBlock(
-            32,
+            64,
             64,
             temporal_dim,
             normalization=normalization,
@@ -206,7 +206,7 @@ class UNetBackboneModel(torch.nn.Module):
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.up2 = TemporalConvUpBlock(
             256,
@@ -217,29 +217,29 @@ class UNetBackboneModel(torch.nn.Module):
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.up3 = TemporalConvUpBlock(
             128,
-            32,
+            64,
             temporal_dim,
             output_padding=output_paddings[2],
             normalization=normalization,
             norm_groups=norm_groups,
             conv="3d",
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.identity3 = TemporalConvIdentityBlock(
-            32,
-            32,
+            64,
+            64,
             temporal_dim,
-            norm_groups=8,
+            norm_groups=norm_groups,
             normalization=normalization,
             conv="3d",
             context_channels=context_channels,
         )
-        self.out_conv = torch.nn.Conv3d(32, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
 
     def forward(
         self,

@@ -109,6 +109,18 @@ class MyTemporalResidualBlock(torch.nn.Module):
         if downsampling:
             self.up_or_down_sample = (
                 conv(
+                    channels_out,
+                    channels_out,
+                    kernels[1],
+                    padding=paddings[1],
+                    stride=strides[1],
+                    **kwargs,
+                )
+                if not pooling
+                else pool(kernel_size=2, stride=2)
+            )
+            self.up_or_down_sample_input = (
+                conv(
                     channels_in,
                     channels_in,
                     kernels[1],
@@ -126,6 +138,20 @@ class MyTemporalResidualBlock(torch.nn.Module):
                 )
                 if interpolate
                 else conv(
+                    channels_out,
+                    channels_out,
+                    kernels[1],
+                    padding=paddings[1],
+                    stride=strides[1],
+                    **kwargs,
+                )
+            )
+            self.up_or_down_sample_input = (
+                lambda x: torch.nn.functional.interpolate(
+                    x, scale_factor=2, mode="nearest"
+                )
+                if interpolate
+                else conv(
                     channels_in,
                     channels_in,
                     kernels[1],
@@ -136,6 +162,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
             )
         else:
             self.up_or_down_sample = torch.nn.Identity()
+            self.up_or_down_sample_input = torch.nn.Identity()
 
         self.norm2 = (
             torch.nn.GroupNorm(norm_groups, channels_out)
@@ -204,6 +231,8 @@ class MyTemporalResidualBlock(torch.nn.Module):
                 print(str)
 
         _x = x
+        # print_debug("=========================================")
+        # print_debug(f"Starting with x.shape = {_x.shape}")
         if t_emb is not None:
             scale, shift = (
                 self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
@@ -213,11 +242,15 @@ class MyTemporalResidualBlock(torch.nn.Module):
                 )
             )
         x = self.conv1(x)
+        # print_debug(f"After input layers, x.shape = {x.shape}")
         x = self.norm1(x)
+        # print_debug(f"After norm1, x.shape = {x.shape}")
         if t_emb is not None:
             x = x * (scale + 1) + shift
         x = self.nonlin(x)
+        # print_debug(f"After nonlin, x.shape = {x.shape}")
         x = self.up_or_down_sample(x)
+        # print_debug(f"After up_or_down_sample, x.shape = {x.shape}")
         if context is not None:
             # TODO: Implement as a separate block like OpenAI
             x = x + self.cross_attention(q=x, k=context, v=context)
@@ -226,10 +259,12 @@ class MyTemporalResidualBlock(torch.nn.Module):
                 x * (scale + 1) + shift
             )  # Normalize before scale/shift as in OpenAI's code
         # print_debug(
-        # f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(self.up_or_down_sample(_x)).shape}) to x of shape {x.shape}"
+        # f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(self.up_or_down_sample_input(_x)).shape}) to x of shape {x.shape}"
         # )
         # print_debug("=========================================")
-        return self.out_activation(x + self.skip_connection(self.up_or_down_sample(_x)))
+        return self.out_activation(
+            x + self.skip_connection(self.up_or_down_sample_input(_x))
+        )
 
 
 class TemporalResidualBlock(torch.nn.Module):
