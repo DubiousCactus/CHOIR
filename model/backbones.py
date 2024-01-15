@@ -315,12 +315,15 @@ class ResnetEncoderModel(torch.nn.Module):
         x: torch.Tensor,
         debug: bool = False,
     ) -> torch.Tensor:
+        bs, ctx_len = x.shape[0], x.shape[1] if len(x.shape) == 4 else 1
         x = x.view(
-            x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
+            bs * ctx_len, self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
         x = self.identity(x, debug=debug)
         x = self.down1(x, debug=debug)
         x = self.down2(x, debug=debug)
         x = self.down3(x, debug=debug)
         x = self.out_identity(x, debug=debug)
-        return self.out_conv(x)
+        x = self.out_conv(x)
+        x = x.view(bs, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1])
+        return x.squeeze(dim=1)  # For now we'll try with 1 context frame

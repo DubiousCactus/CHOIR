@@ -119,6 +119,8 @@ class DiffusionModel(torch.nn.Module):
             # From [0, 1] to [-1, 1]:
             x = 2 * x - 1
         # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
+        # print(f"Input shape: {x.shape}")
+        # print(f"Y shape: {y.shape if y is not None else None}")
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -135,7 +137,8 @@ class DiffusionModel(torch.nn.Module):
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
         # 4. Predict the noise sample
-        y_embed = self.embedder(y.view(y.shape[0], -1)) if y is not None else None
+        y_embed = self.embedder(y) if y is not None else None
+        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
         return eps_hat, eps
 
