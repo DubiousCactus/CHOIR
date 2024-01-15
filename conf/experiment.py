@@ -353,7 +353,7 @@ Experiment = builds(
         {"dataset": "contactpose"},
         {"model": "baseline"},
         {"optimizer": "adam"},
-        {"scheduler": "plateau"},
+        {"scheduler": "step"},
         {"run": "default"},
         {"training_loss": "choir"},
     ],
