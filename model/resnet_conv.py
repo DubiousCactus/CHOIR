@@ -74,7 +74,7 @@ class MyTemporalResidualBlock(torch.nn.Module):
         ), "Cannot have both pooling and interpolating"
         kwargs = (
             {"output_padding": output_padding}
-            if interpolate and rescaling == "up"
+            if not interpolate and rescaling == "up"
             else {}
         )
         assert normalization in (
@@ -82,8 +82,10 @@ class MyTemporalResidualBlock(torch.nn.Module):
             "batch",
         ), "Only group and batch normalization are supported"
         self.is_2d = dim == 2
-        conv = torch.nn.Conv2d if dim == 2 else torch.nn.Conv3d
-        upconv = torch.nn.ConvTranspose2d if dim == 2 else torch.nn.ConvTranspose3d
+        if rescaling == "up" and not interpolate:
+            conv = torch.nn.ConvTranspose2d if dim == 2 else torch.nn.ConvTranspose3d
+        else:
+            conv = torch.nn.Conv2d if dim == 2 else torch.nn.Conv3d
         pool = None
         if pooling != "none":
             pool = (
@@ -117,7 +119,6 @@ class MyTemporalResidualBlock(torch.nn.Module):
                     kernels[1],
                     padding=paddings[1],
                     stride=strides[1],
-                    **kwargs,
                 )
                 if pooling == "none"
                 else pool(kernel_size=2, stride=2)
@@ -129,18 +130,19 @@ class MyTemporalResidualBlock(torch.nn.Module):
                     kernels[1],
                     padding=paddings[1],
                     stride=strides[1],
-                    **kwargs,
                 )
                 if pooling == "none"
                 else pool(kernel_size=2, stride=2)
             )
         elif rescaling == "up":
             self.up_or_down_sample = (
-                lambda x: torch.nn.functional.interpolate(
-                    x, scale_factor=2, mode="nearest"
+                (
+                    lambda x: torch.nn.functional.interpolate(
+                        x, scale_factor=2, mode="nearest"
+                    )
                 )
                 if interpolate
-                else upconv(
+                else conv(
                     channels_out,
                     channels_out,
                     kernels[1],
@@ -150,11 +152,13 @@ class MyTemporalResidualBlock(torch.nn.Module):
                 )
             )
             self.up_or_down_sample_input = (
-                lambda x: torch.nn.functional.interpolate(
-                    x, scale_factor=2, mode="nearest"
+                (
+                    lambda x: torch.nn.functional.interpolate(
+                        x, scale_factor=2, mode="nearest"
+                    )
                 )
                 if interpolate
-                else upconv(
+                else conv(
                     channels_in,
                     channels_in,
                     kernels[1],
