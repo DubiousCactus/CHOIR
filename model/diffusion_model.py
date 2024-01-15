@@ -64,7 +64,7 @@ class DiffusionModel(torch.nn.Module):
                 ),
                 partial(
                     ResnetEncoderModel,
-                    choir_dim=choir_dim,
+                    choir_dim=choir_dim * 2,
                     normalization="group",
                     norm_groups=16,
                 )
@@ -84,7 +84,6 @@ class DiffusionModel(torch.nn.Module):
         self.embedder = (
             backbones[backbone][1](
                 bps_grid_len=bps_grid_len,
-                choir_dim=choir_dim,
                 embed_channels=y_embed_dim,
             )
             if y_embed_dim is not None

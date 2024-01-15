@@ -88,12 +88,12 @@ class MultiViewDDPMTrainer(BaseTrainer):
         if not self._use_deltas:
             y_hat = self._model(
                 labels["choir"][..., -1].unsqueeze(-1),
-                samples["choir"][..., 0].unsqueeze(-1) if self.conditional else None,
+                samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
             y_hat = self._model(
-                samples["choir"][..., 3:],
-                samples["choir"][..., :3] if self.conditional else None,
+                labels["choir"][..., 3:],
+                samples["choir"] if self.conditional else None,
             )  # Only the hand deltas!
         losses = self._training_loss(samples, labels, y_hat)
         loss = sum([v for v in losses.values()])
