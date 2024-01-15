@@ -199,7 +199,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.up2 = TemporalConvUpBlock(
             256,
@@ -209,7 +209,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.up3 = TemporalConvUpBlock(
             128,
@@ -219,7 +219,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            interpolate=True,
+            interpolate=False,
         )
         self.identity3 = TemporalConvIdentityBlock(
             64,
@@ -272,16 +272,15 @@ class ResnetEncoderModel(torch.nn.Module):
         super().__init__()
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
-        # self.identity = ConvIdentityBlock(
-        # choir_dim,
-        # 16,
-        # normalization=normalization,
-        # norm_groups=norm_groups,
-        # dim=3,
-        # input_norm=False,
-        # )
-        self.down1 = ConvDownBlock(
+        self.identity = ConvIdentityBlock(
             choir_dim,
+            16,
+            normalization=normalization,
+            norm_groups=norm_groups,
+            dim=3,
+        )
+        self.down1 = ConvDownBlock(
+            16,
             32,
             normalization=normalization,
             norm_groups=norm_groups,
@@ -316,7 +315,7 @@ class ResnetEncoderModel(torch.nn.Module):
         x = x.view(
             x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
         ).permute(0, 4, 1, 2, 3)
-        # x = self.identity(x, debug=debug)
+        x = self.identity(x, debug=debug)
         x = self.down1(x, debug=debug)
         x = self.down2(x, debug=debug)
         x = self.down3(x, debug=debug)
