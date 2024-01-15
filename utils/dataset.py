@@ -81,6 +81,7 @@ def compute_hand_object_pair_scalar(
     return hand_object_scalar.float()
 
 
+@to_cuda
 def compute_choir(
     pointcloud: torch.Tensor,
     anchors: torch.Tensor,
