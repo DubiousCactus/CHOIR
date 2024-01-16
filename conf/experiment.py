@@ -39,6 +39,7 @@ from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
+from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
 
@@ -133,6 +134,7 @@ class DataloaderConf:
     pin_memory: bool = False
     n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
+    persistent_workers: bool = True
 
 
 " ================== Model ================== "
@@ -200,7 +202,8 @@ model_store(
         choir_dim=MISSING,
         rescale_input=MISSING,
         temporal_dim=256,
-        y_embed_dim=512,
+        y_embed_dim=256,
+        embed_full_choir=False,
     ),
     name="ddpm",
 )
@@ -336,6 +339,9 @@ trainer_store = store(group="trainer")
 trainer_store(pbuilds(BaseTrainer, populate_full_signature=True), name="base")
 trainer_store(pbuilds(MultiViewTrainer, populate_full_signature=True), name="multiview")
 trainer_store(pbuilds(DDPMTrainer, populate_full_signature=True), name="ddpm")
+trainer_store(
+    pbuilds(MultiViewDDPMTrainer, populate_full_signature=True), name="ddpm_multiview"
+)
 
 tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
@@ -352,7 +358,7 @@ Experiment = builds(
         {"dataset": "contactpose"},
         {"model": "baseline"},
         {"optimizer": "adam"},
-        {"scheduler": "exp"},
+        {"scheduler": "step"},
         {"run": "default"},
         {"training_loss": "choir"},
     ],
@@ -468,7 +474,7 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            y_embed_dim=128,
+            y_embed_dim=256,
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet",
@@ -477,6 +483,41 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="cddpm_3d",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 32**3 should give much better results
+            augment=True,
+            n_augs=20,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=256,
+            choir_dim=1,
+            rescale_input=True,
+            backbone="3d_unet",
+            embed_full_choir=True,
+        ),
+        run=dict(conditional=True),
+        bases=(Experiment,),
+    ),
+    name="cddpm_3d_multiview_contactopt",
 )
 experiment_store(
     make_config(

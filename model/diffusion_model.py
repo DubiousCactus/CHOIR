@@ -17,8 +17,8 @@ import torch
 from tqdm import tqdm
 
 from model.backbones import (
-    ConvObjectEncoderModel,
     MLPResNetBackboneModel,
+    ResnetEncoderModel,
     UNetBackboneModel,
 )
 from model.time_encoding import SinusoidalTimeEncoder
@@ -35,10 +35,11 @@ class DiffusionModel(torch.nn.Module):
         choir_dim: int,
         temporal_dim: int,
         rescale_input: bool,
+        embed_full_choir: bool,
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
-        y_dim = bps_dim * choir_dim
+        y_dim = (bps_dim * choir_dim) if y_embed_dim is not None else None
         bps_grid_len = round(bps_dim ** (1 / 3))
         backbones = {
             "mlp_resnet": (
@@ -52,7 +53,7 @@ class DiffusionModel(torch.nn.Module):
                     torch.nn.GELU(),
                     torch.nn.Linear(2 * y_dim, y_embed_dim),
                 )
-                if y_dim is not None
+                if y_embed_dim is not None
                 else None,
             ),
             "3d_unet": (
@@ -60,11 +61,13 @@ class DiffusionModel(torch.nn.Module):
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
+                    norm_groups=16,
                 ),
                 partial(
-                    ConvObjectEncoderModel,
-                    choir_dim=choir_dim,
+                    ResnetEncoderModel,
+                    choir_dim=choir_dim * (2 if embed_full_choir else 1),
                     normalization="group",
+                    norm_groups=16,
                 )
                 if y_embed_dim is not None
                 else None,
@@ -79,10 +82,13 @@ class DiffusionModel(torch.nn.Module):
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.embedder = backbones[backbone][1](
-            bps_grid_len=bps_grid_len,
-            choir_dim=choir_dim,
-            embed_channels=y_embed_dim,
+        self.embedder = (
+            backbones[backbone][1](
+                bps_grid_len=bps_grid_len,
+                embed_channels=y_embed_dim,
+            )
+            if y_embed_dim is not None
+            else None
         )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
@@ -113,6 +119,8 @@ class DiffusionModel(torch.nn.Module):
             # From [0, 1] to [-1, 1]:
             x = 2 * x - 1
         # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
+        # print(f"Input shape: {x.shape}")
+        # print(f"Y shape: {y.shape if y is not None else None}")
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -129,8 +137,9 @@ class DiffusionModel(torch.nn.Module):
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
         # 4. Predict the noise sample
-        y_embed = self.embedder(y.view(y.shape[0], -1)) if y is not None else None
-        eps_hat = self.backbone(diffused_x, t, y_embed, debug=False)
+        y_embed = self.embedder(y) if y is not None else None
+        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
+        eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
