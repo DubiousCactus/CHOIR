@@ -35,6 +35,7 @@ class DiffusionModel(torch.nn.Module):
         choir_dim: int,
         temporal_dim: int,
         rescale_input: bool,
+        embed_full_choir: bool,
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
@@ -64,7 +65,7 @@ class DiffusionModel(torch.nn.Module):
                 ),
                 partial(
                     ResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
+                    choir_dim=choir_dim * (2 if embed_full_choir else 1),
                     normalization="group",
                     norm_groups=16,
                 )

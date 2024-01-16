@@ -203,6 +203,7 @@ model_store(
         rescale_input=MISSING,
         temporal_dim=256,
         y_embed_dim=256,
+        embed_full_choir=False,
     ),
     name="ddpm",
 )
@@ -473,7 +474,7 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            y_embed_dim=128,
+            y_embed_dim=256,
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet",
@@ -511,6 +512,7 @@ experiment_store(
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet",
+            embed_full_choir=True,
         ),
         run=dict(conditional=True),
         bases=(Experiment,),
