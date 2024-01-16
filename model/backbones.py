@@ -146,7 +146,6 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            input_norm=True,
         )
         self.down1 = TemporalConvDownBlock(
             64,
@@ -266,6 +265,7 @@ class ResnetEncoderModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         embed_channels: int,
+        pooling: str = "avg",
         normalization: str = "batch",
         norm_groups: int = 16,
     ):
@@ -284,21 +284,21 @@ class ResnetEncoderModel(torch.nn.Module):
             32,
             normalization=normalization,
             norm_groups=norm_groups,
-            pooling="max",
+            pooling=pooling,
         )
         self.down2 = ConvDownBlock(
             32,
             64,
             normalization=normalization,
             norm_groups=norm_groups,
-            pooling="max",
+            pooling=pooling,
         )
         self.down3 = ConvDownBlock(
             64,
             128,
             normalization=normalization,
             norm_groups=norm_groups,
-            pooling="max",
+            pooling=pooling,
         )
         self.out_identity = ConvIdentityBlock(
             128,
