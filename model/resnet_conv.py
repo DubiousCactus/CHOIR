@@ -250,7 +250,6 @@ class TemporalIdentityResidualBlock(TemporalResidualBlock):
         normalization: str = "group",
         dim: int = 3,
         context_channels: Optional[int] = None,
-        input_norm: bool = True,
     ):
         super().__init__(
             dim,
@@ -260,7 +259,6 @@ class TemporalIdentityResidualBlock(TemporalResidualBlock):
             norm_groups,
             normalization,
             context_channels=context_channels,
-            input_norm=input_norm,
         )
 
 
@@ -330,7 +328,6 @@ class IdentityResidualBlock(TemporalResidualBlock):
         norm_groups: int = 16,
         normalization: str = "group",
         dim: int = 3,
-        input_norm: bool = True,
     ):
         super().__init__(
             dim,
@@ -339,7 +336,6 @@ class IdentityResidualBlock(TemporalResidualBlock):
             temporal_dim=None,
             norm_groups=norm_groups,
             normalization=normalization,
-            input_norm=input_norm,
         )
 
 
