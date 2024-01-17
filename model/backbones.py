@@ -125,6 +125,7 @@ class UNetBackboneModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         temporal_dim: int,
+        pooling: str = "avg",
         normalization: str = "batch",
         norm_groups: int = 32,
         output_paddings: Tuple[int] = (1, 1, 1, 1),
@@ -154,7 +155,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            pooling="max",
+            pooling=pooling,
         )
         self.down2 = TemporalConvDownBlock(
             64,
@@ -163,7 +164,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            pooling="max",
+            pooling=pooling,
         )
         self.down3 = TemporalConvDownBlock(
             128,
@@ -172,7 +173,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            pooling="max",
+            pooling=pooling,
         )
         self.tunnel1 = TemporalConvIdentityBlock(
             256,
