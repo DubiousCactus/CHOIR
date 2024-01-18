@@ -49,6 +49,7 @@ class DDPMTrainer(BaseTrainer):
             exponential_map_w=self._exponential_map_w,
             dataset=self._train_loader.dataset.name,
             use_deltas=self._use_deltas,
+            conditional=self.conditional,
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda

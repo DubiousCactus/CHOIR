@@ -70,6 +70,7 @@ class BaseTrainer:
         self._exponential_map_w = train_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
         self._viz_n_samples = 1
+        self._disable_grad = kwargs.get("disable_grad", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -167,8 +168,9 @@ class BaseTrainer:
             loss, loss_components = self._train_val_iteration(
                 batch
             )  # User implementation goes here (train.py)
-            loss.backward()
-            self._opt.step()
+            if not self._disable_grad:
+                loss.backward()
+                self._opt.step()
             epoch_loss.update(loss.item())
             for k, v in loss_components.items():
                 epoch_loss_components[k].update(v.item())
@@ -428,14 +430,23 @@ class BaseTrainer:
         """
         print(f"[*] Restoring from checkpoint: {ckpt_path}")
         ckpt = to_cuda_(torch.load(ckpt_path, map_location="cpu"))
+        # If the model was optimized with torch.optimize() we need to remove the "_orig_mod"
+        # prefix:
+        if "_orig_mod" in list(ckpt["model_ckpt"].keys())[0]:
+            ckpt["model_ckpt"] = {
+                k.replace("_orig_mod.", ""): v for k, v in ckpt["model_ckpt"].items()
+            }
         try:
             self._model.load_state_dict(ckpt["model_ckpt"])
-        except Exception:
+            print("[*] Model weights loaded successfully!")
+        except Exception as e:
             if project_conf.PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH:
                 print(
                     "[!] Partially loading model weights (no full match between model and checkpoint)"
                 )
                 self._model.load_state_dict(ckpt["model_ckpt"], strict=False)
+            else:
+                raise e
         if not model_only:
             self._opt.load_state_dict(ckpt["opt_ckpt"])
             self._epoch = ckpt["epoch"]

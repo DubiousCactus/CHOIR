@@ -125,9 +125,9 @@ class UNetBackboneModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         temporal_dim: int,
-        pooling: str = "avg",
+        pooling: str = "max",
         normalization: str = "batch",
-        norm_groups: int = 32,
+        norm_groups: int = 16,
         output_paddings: Tuple[int] = (1, 1, 1, 1),
         context_channels: Optional[int] = None,
     ):
@@ -266,7 +266,7 @@ class ResnetEncoderModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         embed_channels: int,
-        pooling: str = "avg",
+        pooling: str = "max",
         normalization: str = "batch",
         norm_groups: int = 16,
     ):

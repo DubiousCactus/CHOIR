@@ -98,8 +98,6 @@ def visualize_model_predictions_with_multiple_views(
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
-    # x, y, mesh_pths = batch  # type: ignore
-    # samples, labels = get_dict_from_sample_and_label_tensors(x, y, theta_dim=theta_dim)
     samples, labels, _ = batch
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
@@ -119,13 +117,13 @@ def visualize_model_predictions_with_multiple_views(
         # =============================================================
 
         if dataset.lower() == "grab":
-            affine_mano = AffineMANO(
-                ncomps=24, flat_hand_mean=True, for_contactpose=False
-            ).cuda()
+            affine_mano = to_cuda_(
+                AffineMANO(ncomps=24, flat_hand_mean=True, for_contactpose=False)
+            )
         elif dataset.lower() == "contactpose":
-            affine_mano = AffineMANO(
-                ncomps=15, flat_hand_mean=False, for_contactpose=True
-            ).cuda()
+            affine_mano = to_cuda_(
+                AffineMANO(ncomps=15, flat_hand_mean=False, for_contactpose=True)
+            )
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset}")
         faces = affine_mano.faces
@@ -192,7 +190,18 @@ def visualize_model_predictions_with_multiple_views(
         # ===================================================================================
 
         # ================== Optimize MANO on model prediction =========================
-        y_hat = model(samples["choir"], use_mean=True)
+        if kwargs.get("method", "aggved") == "ddpm":
+            conditional = kwargs["conditional"]
+            choir_pred = model.generate(
+                3,
+                y=samples["choir"][0][None, ...].repeat(3, 1, 1, 1)
+                if conditional
+                else None,
+            ).unsqueeze(0)
+            choir_pred = choir_pred[:, 0]  # TODO: Plot all preds
+        elif kwargs.get("method", "aggved") == "aggved":
+            y_hat = model(samples["choir"], use_mean=True)
+            choir_pred = y_hat["choir"][0].unsqueeze(0)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -204,8 +213,6 @@ def visualize_model_predictions_with_multiple_views(
         verts_gt, joints_gt = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         anchors_gt = affine_mano.get_anchors(verts_gt)
         with torch.set_grad_enabled(True):
-            # Use first batch element and views as batch dimension.
-            choir_pred = y_hat["choir"][0].unsqueeze(0)
             print(
                 "Mean scalar: ",
                 torch.mean(input_scalar).unsqueeze(0).to(input_scalar.device),
@@ -270,16 +277,17 @@ def visualize_model_predictions_with_multiple_views(
         # ====== Metrics and qualitative comparison ======
         # === Anchor error ===
         print(
-            f"Anchor error (mm): {torch.norm(anchors_pred - anchors_gt.cuda(), dim=2).mean(dim=1).mean(dim=0) * 1000:.2f}"
+            f"Anchor error (mm): {torch.norm(anchors_pred - anchors_gt.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0).item() * 1000:.2f}"
         )
         # === MPJPE ===
         pjpe = torch.linalg.vector_norm(
-            joints_gt - joints_pred, ord=2, dim=-1
+            joints_gt.to(joints_pred.device) - joints_pred, ord=2, dim=-1
         )  # Per-joint position error (B, N, 21)
         mpjpe = torch.mean(pjpe, dim=-1).item()  # Mean per-joint position error (B, N)
         print(f"MPJPE (mm): {mpjpe * 1000:.2f}")
         root_aligned_pjpe = torch.linalg.vector_norm(
-            (joints_gt - joints_gt[:, 0, :]) - (joints_pred - joints_pred[:, 0, :]),
+            (joints_gt - joints_gt[:, 0, :]).to(joints_pred.device)
+            - (joints_pred - joints_pred[:, 0, :]),
             ord=2,
             dim=-1,
         )  # Per-joint position error (B, N, 21)
@@ -370,14 +378,19 @@ def visualize_ddpm_generation(
     bps_dim: int,
     dataset: str,
     use_deltas: bool,
+    conditional: bool,
+    multi_view: bool = False,
     **kwargs,
 ) -> None:
     assert bps_dim == bps.shape[0]
     samples, labels, _ = batch
     if not project_conf.HEADLESS:
-        choir_pred = model.generate(2)[0].unsqueeze(
-            0
-        )  # Problems with batchnorm if batchsize is 1!
+        choir_pred = model.generate(
+            3,
+            y=samples["choir"][0][None, ...].repeat(3, 1, 1, 1)
+            if conditional
+            else None,
+        )
         if use_deltas:
             choir_pred = torch.cat(
                 (
@@ -407,26 +420,29 @@ def visualize_ddpm_generation(
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         # gt_verts, _ = affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
         gt_verts = to_cuda_(torch.zeros((1, 778, 3)))
-        visualize_CHOIR_prediction(
-            choir_pred,
-            labels["choir"],
-            bps,
-            anchor_indices,
-            samples["scalar"][0].unsqueeze(-1),
-            labels["scalar"][0].unsqueeze(-1),
-            samples["rescaled_ref_pts"],
-            labels["rescaled_ref_pts"],
-            gt_verts,
-            labels["joints"],
-            labels["anchors"],
-            is_rhand=samples["is_rhand"][0][0].bool().item(),
-            use_smplx=False,
-            dataset=dataset,
-            remap_bps_distances=kwargs["remap_bps_distances"],
-            exponential_map_w=kwargs["exponential_map_w"],
-            plot_choir=False,
-            use_deltas=use_deltas,
-        )
+        if not multi_view:
+            visualize_CHOIR_prediction(
+                choir_pred,
+                labels["choir"],
+                bps,
+                anchor_indices,
+                samples["scalar"][0].unsqueeze(-1),
+                labels["scalar"][0].unsqueeze(-1),
+                samples["rescaled_ref_pts"],
+                labels["rescaled_ref_pts"],
+                gt_verts,
+                labels["joints"],
+                labels["anchors"],
+                is_rhand=samples["is_rhand"][0][0].bool().item(),
+                use_smplx=False,
+                dataset=dataset,
+                remap_bps_distances=kwargs["remap_bps_distances"],
+                exponential_map_w=kwargs["exponential_map_w"],
+                plot_choir=False,
+                use_deltas=use_deltas,
+            )
+        else:
+            pass
     if project_conf.USE_WANDB:
         # TODO: Log a few predictions and the ground truth to wandb.
         # wandb.log({"pointcloud": wandb.Object3D(ptcld)}, step=step)

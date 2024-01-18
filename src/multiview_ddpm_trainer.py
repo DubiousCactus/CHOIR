@@ -6,39 +6,18 @@
 # Distributed under terms of the MIT license.
 
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import torch
-from torch.optim import Optimizer
-from torch.utils.data import DataLoader
 
 from src.base_trainer import BaseTrainer
 from utils import to_cuda
-from utils.visualization import visualize_ddpm_generation
+from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
 class MultiViewDDPMTrainer(BaseTrainer):
-    def __init__(
-        self,
-        run_name: str,
-        model: torch.nn.Module,
-        opt: Optimizer,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        training_loss: torch.nn.Module,
-        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            run_name,
-            model,
-            opt,
-            train_loader,
-            val_loader,
-            training_loss,
-            scheduler,
-        )
-        self._fine_tune = kwargs.get("fine_tune", False)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
         self._use_deltas = self._train_loader.dataset.use_deltas
 
@@ -54,7 +33,7 @@ class MultiViewDDPMTrainer(BaseTrainer):
             epoch: The current epoch.
         """
         samples, labels, _ = batch
-        visualize_ddpm_generation(
+        visualize_model_predictions_with_multiple_views(
             self._model,
             (samples, labels, None),
             epoch,
@@ -64,7 +43,10 @@ class MultiViewDDPMTrainer(BaseTrainer):
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
             dataset=self._train_loader.dataset.name,
+            theta_dim=self._train_loader.dataset.theta_dim,
             use_deltas=self._use_deltas,
+            conditional=self.conditional,
+            method="ddpm",
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda
@@ -81,13 +63,10 @@ class MultiViewDDPMTrainer(BaseTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, _ = batch
-        for k, v in labels.items():
-            # Last video frame for GRAB or last observation for ContactOpt (all same)
-            labels[k] = v[:, -1, ...]
 
         if not self._use_deltas:
             y_hat = self._model(
-                labels["choir"][..., -1].unsqueeze(-1),
+                labels["choir"][:, -1][..., -1].unsqueeze(-1),  # Take the last frame
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
@@ -95,6 +74,8 @@ class MultiViewDDPMTrainer(BaseTrainer):
                 labels["choir"][..., 3:],
                 samples["choir"] if self.conditional else None,
             )  # Only the hand deltas!
-        losses = self._training_loss(samples, labels, y_hat)
+        losses = self._training_loss(
+            samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
+        )
         loss = sum([v for v in losses.values()])
         return loss, losses

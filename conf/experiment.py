@@ -39,6 +39,7 @@ from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
+from src.multiview_ddpm_tester import MultiViewDDPMTester
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
@@ -330,6 +331,7 @@ class RunConfig:
     fine_tune: bool = False
     save_predictions: bool = False
     conditional: bool = False
+    disable_grad: bool = False
 
 
 run_store = store(group="run")
@@ -347,6 +349,9 @@ tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
 tester_store(pbuilds(MultiViewTester, populate_full_signature=True), name="multiview")
 tester_store(pbuilds(DDPMTester, populate_full_signature=True), name="ddpm")
+tester_store(
+    pbuilds(MultiViewDDPMTester, populate_full_signature=True), name="ddpm_multiview"
+)
 
 Experiment = builds(
     launch_experiment,
@@ -491,7 +496,7 @@ experiment_store(
             {"override /model": "ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm_multiview"},
-            {"override /tester": "ddpm"},
+            {"override /tester": "ddpm_multiview"},
             {"override /training_loss": "diffusion"},
         ],
         dataset=dict(

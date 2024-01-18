@@ -31,6 +31,7 @@ class BaseTester(BaseTrainer):
         model: torch.nn.Module,
         model_ckpt_path: str,
         training_loss: torch.nn.Module,
+        **kwargs,
     ) -> None:
         """Base trainer class.
         Args:
@@ -42,6 +43,7 @@ class BaseTester(BaseTrainer):
         self._run_name = run_name
         self._model = model
         self._load_checkpoint(model_ckpt_path, model_only=True)
+        self._model.eval()
         self._training_loss = training_loss
         self._data_loader = data_loader
         self._running = True

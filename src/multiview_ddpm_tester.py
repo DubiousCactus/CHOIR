@@ -1,9 +1,10 @@
 #! /usr/bin/env python3
 # vim:fenc=utf-8
 #
-# Copyright © 2023 Théo Morales <theo.morales.fr@gmail.com>
+# Copyright © 2024 Théo Morales <theo.morales.fr@gmail.com>
 #
 # Distributed under terms of the MIT license.
+
 
 from typing import Dict, List, Tuple, Union
 
@@ -11,10 +12,10 @@ import torch
 
 from src.base_tester import BaseTester
 from utils import to_cuda
-from utils.visualization import visualize_ddpm_generation
+from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
-class DDPMTester(BaseTester):
+class MultiViewDDPMTester(BaseTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
@@ -33,12 +34,7 @@ class DDPMTester(BaseTester):
             epoch: The current epoch.
         """
         samples, labels, _ = batch
-        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
-        for k, v in samples.items():
-            samples[k] = v[:, 0, ...]
-        for k, v in labels.items():
-            labels[k] = v[:, 0, ...]
-        visualize_ddpm_generation(
+        visualize_model_predictions_with_multiple_views(
             self._model,
             (samples, labels, None),
             epoch,
@@ -48,8 +44,10 @@ class DDPMTester(BaseTester):
             remap_bps_distances=self._remap_bps_distances,
             exponential_map_w=self._exponential_map_w,
             dataset=self._data_loader.dataset.name,
+            theta_dim=self._data_loader.dataset.theta_dim,
             use_deltas=self._use_deltas,
             conditional=self.conditional,
+            method="ddpm",
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda
@@ -66,21 +64,19 @@ class DDPMTester(BaseTester):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, _ = batch
-        # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
-        for k, v in samples.items():
-            samples[k] = v[:, 0, ...]
-        for k, v in labels.items():
-            labels[k] = v[:, 0, ...]
+
         if not self._use_deltas:
             y_hat = self._model(
-                samples["choir"][..., -1].unsqueeze(-1),
-                samples["choir"][..., 0].unsqueeze(-1) if self.conditional else None,
+                labels["choir"][:, -1][..., -1].unsqueeze(-1),  # Take the last frame
+                samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
             y_hat = self._model(
-                samples["choir"][..., 3:],
-                samples["choir"][..., :3] if self.conditional else None,
+                labels["choir"][..., 3:],
+                samples["choir"] if self.conditional else None,
             )  # Only the hand deltas!
-        losses = self._training_loss(samples, labels, y_hat)
+        losses = self._training_loss(
+            samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
+        )
         loss = sum([v for v in losses.values()])
         return loss, losses

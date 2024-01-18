@@ -155,7 +155,7 @@ def launch_experiment(
             num_workers=1,
         )
 
-    " ============ Training ============ "
+    " ============ Checkpoint loading ============ "
     model_ckpt_path = None
     if run.load_from is not None:
         if run.load_from.endswith(".ckpt"):
@@ -206,7 +206,8 @@ def launch_experiment(
             data_loader=test_loader_inst,
             model_ckpt_path=model_ckpt_path,
             training_loss=training_loss_inst,
+            **asdict(run),
         ).test(
             visualize_every=run.viz_every,
-            **asdict(run),
+            **asdict(run),  # TODO: remove this
         )
