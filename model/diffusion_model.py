@@ -62,12 +62,15 @@ class DiffusionModel(torch.nn.Module):
                     bps_grid_len=bps_grid_len,
                     normalization="group",
                     norm_groups=16,
+                    pooling="avg",
                 ),
                 partial(
                     ResnetEncoderModel,
                     choir_dim=choir_dim * (2 if embed_full_choir else 1),
                     normalization="group",
                     norm_groups=16,
+                    pooling="avg",
+                    pool_all_features="none",
                 )
                 if y_embed_dim is not None
                 else None,

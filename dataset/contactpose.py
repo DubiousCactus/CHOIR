@@ -387,6 +387,7 @@ class ContactPoseDataset(BaseDataset):
         pbar = tqdm(total=len(objects_w_contacts) * (n_augs + 1))
         dataset_mpjpe = MeanMetric()
         dataset_root_aligned_mpjpe = MeanMetric()
+        computed = False
         for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
             """
             grasp_data = {
@@ -428,6 +429,7 @@ class ContactPoseDataset(BaseDataset):
                 else:
                     visualize = self._debug and (random.Random().random() < 0.05)
                     has_visualized = False
+                    computed = True
                     # ================== Original Hand-Object Pair ==================
                     mano_params = grasp_data["grasp"][0].copy()
                     gt_hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0)
@@ -617,10 +619,11 @@ class ContactPoseDataset(BaseDataset):
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()
-        print(
-            f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
-        )
-        print(
-            f"[*] Dataset Root-aligned MPJPE (mm): {dataset_root_aligned_mpjpe.compute().item() * self.base_unit}"
-        )
+        if computed:
+            print(
+                f"[*] Dataset MPJPE (mm): {dataset_mpjpe.compute().item() * self.base_unit}"
+            )
+            print(
+                f"[*] Dataset Root-aligned MPJPE (mm): {dataset_root_aligned_mpjpe.compute().item() * self.base_unit}"
+            )
         return grasp_paths

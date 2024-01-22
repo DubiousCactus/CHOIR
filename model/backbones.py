@@ -125,7 +125,7 @@ class UNetBackboneModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         temporal_dim: int,
-        pooling: str = "max",
+        pooling: str = "avg",
         normalization: str = "batch",
         norm_groups: int = 16,
         output_paddings: Tuple[int] = (1, 1, 1, 1),
@@ -297,47 +297,64 @@ class ResnetEncoderModel(torch.nn.Module):
         pooling: str = "max",
         normalization: str = "batch",
         norm_groups: int = 16,
+        pool_all_features: str = "none",
     ):
         super().__init__()
+        assert pool_all_features in ["none", "spatial", "attention", "adaptive"]
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
         self.identity = ConvIdentityBlock(
             choir_dim,
-            16,
+            32,
             normalization=normalization,
             norm_groups=norm_groups,
-            dim=3,
         )
         self.down1 = ConvDownBlock(
-            16,
             32,
+            64,
             normalization=normalization,
             norm_groups=norm_groups,
             pooling=pooling,
         )
         self.down2 = ConvDownBlock(
-            32,
             64,
+            128,
             normalization=normalization,
             norm_groups=norm_groups,
             pooling=pooling,
         )
         self.down3 = ConvDownBlock(
-            64,
             128,
+            256,
             normalization=normalization,
             norm_groups=norm_groups,
             pooling=pooling,
         )
         self.out_identity = ConvIdentityBlock(
-            128,
+            256,
             embed_channels,
             normalization=normalization,
             norm_groups=norm_groups,
         )
-        self.out_conv = torch.nn.Conv3d(
-            embed_channels, embed_channels, 1, padding=0, stride=1
+        self.out_conv = (
+            torch.nn.Conv3d(embed_channels, embed_channels, 1, padding=0, stride=1)
+            if pool_all_features == "none"
+            else None
         )
+        self.pooling = None
+        self.pooling_method = pool_all_features
+        feature_dim = 32 + 64 + 128 + 256 + embed_channels
+        if pool_all_features == "spatial":
+            self.pooling = torch.nn.Sequential(
+                torch.nn.Linear(feature_dim, 512),
+                torch.nn.GELU(),
+                torch.nn.Linear(512, embed_channels),
+            )
+        elif pool_all_features == "adaptive":
+            self.pooling = torch.nn.Sequential(
+                torch.nn.AdaptiveAvgPool3d(1),
+                torch.nn.Conv3d(embed_channels, embed_channels, 1),
+            )
 
     def forward(
         self,
@@ -350,6 +367,7 @@ class ResnetEncoderModel(torch.nn.Module):
             bs, n, ctx_len = x.shape[0], 1, x.shape[1]
         elif len(x.shape) == 5:
             bs, n, ctx_len = x.shape[0], x.shape[1], x.shape[2]
+        interm_features = []
         x = x.view(
             bs * n * ctx_len,
             self.grid_len,
@@ -358,10 +376,39 @@ class ResnetEncoderModel(torch.nn.Module):
             self.choir_dim,
         ).permute(0, 4, 1, 2, 3)
         x = self.identity(x, debug=debug)
+        if self.pooling_method.startswith("spatial"):
+            interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down1(x, debug=debug)
+        if self.pooling_method.startswith("spatial"):
+            interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down2(x, debug=debug)
+        if self.pooling_method.startswith("spatial"):
+            interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down3(x, debug=debug)
+        if self.pooling_method.startswith("spatial"):
+            interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.out_identity(x, debug=debug)
-        x = self.out_conv(x)
-        x = x.view(bs * n, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1])
-        return x.squeeze(dim=1)  # For now we'll try with 1 context frame
+        if self.pooling_method.startswith("spatial"):
+            interm_features.append(x.mean(dim=(2, 3, 4)))
+
+        if self.pooling_method == "none":
+            x = self.out_conv(x)
+            x = x.view(
+                bs * n, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1]
+            ).squeeze(
+                dim=1
+            )  # For now we'll try with 1 context frame TODO
+        elif self.pooling_method.startswith("spatial"):
+            x = torch.cat(interm_features, dim=-1)
+            x = self.pooling(x)
+            x = x.view(bs * n, ctx_len, -1, 1, 1, 1).squeeze(
+                dim=1
+            )  # For now we'll try with 1 context frame TODO
+        else:
+            x = self.pooling(x)
+            x = x.view(
+                bs * n, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1]
+            ).squeeze(
+                dim=1
+            )  # For now we'll try with 1 context frame TODO
+        return x
