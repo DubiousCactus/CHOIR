@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 
 from src.multiview_tester import MultiViewTester
-from utils import to_cuda
+from utils import to_cuda, to_cuda_
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
@@ -25,7 +25,7 @@ class MultiViewDDPMTester(MultiViewTester):
         # run the model's forward pass once before calling .generate()
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
-            samples, labels, _ = next(iter(self._data_loader))
+            samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
             if not self._use_deltas:
                 self._model(
                     labels["choir"][:, -1][..., -1].unsqueeze(-1),
