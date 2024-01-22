@@ -11,7 +11,7 @@ import os
 import pickle
 import signal
 from collections import defaultdict
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import blosc
 import matplotlib.pyplot as plt
@@ -47,6 +47,7 @@ class MultiViewTester(MultiViewTrainer):
         model: torch.nn.Module,
         model_ckpt_path: str,
         training_loss: torch.nn.Module,
+        **kwargs,
     ) -> None:
         """Base trainer class.
         Args:
@@ -57,6 +58,10 @@ class MultiViewTester(MultiViewTrainer):
         """
         self._run_name = run_name
         self._model = model
+        assert "max_observations" in kwargs, "max_observations must be provided."
+        assert "save_predictions" in kwargs, "save_predictions must be provided."
+        self._max_observations = kwargs["max_observations"]
+        self._save_predictions = kwargs.get("save_predictions", False)
         if model_ckpt_path is None:
             print(
                 colorize(
@@ -68,7 +73,7 @@ class MultiViewTester(MultiViewTrainer):
         self._training_loss = training_loss
         self._data_loader = data_loader
         self._running = True
-        self._pbar = tqdm(total=1, desc="Testing")
+        self._pbar = None
         self._affine_mano = to_cuda_(
             AffineMANO(
                 ncomps=self._data_loader.dataset.theta_dim - 3,
@@ -91,7 +96,7 @@ class MultiViewTester(MultiViewTrainer):
         epoch: int,
     ) -> None:
         """Visualize the model predictions.
-        Args:
+        Args:multiviewtes
             batch: The batch to process.
             epoch: The current epoch.
         """
@@ -108,6 +113,21 @@ class MultiViewTester(MultiViewTrainer):
             theta_dim=self._data_loader.dataset.theta_dim,
         )  # User implementation goes here (utils/visualization.py)
 
+    def _inference(
+        self, samples, labels, max_observations: Optional[int] = None, **kwargs
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Returns: {"choir": torch.Tensor, ?}
+        """
+        max_observations = max_observations or samples["choir"].shape[1]
+        if kwargs["use_prior"]:
+            y_hat = self._model(samples["choir"][:, :max_observations], use_mean=True)
+        else:
+            y_hat = self._model(
+                samples["choir"][:, :max_observations], labels["choir"], use_mean=True
+            )
+        return y_hat
+
     def _test_batch(
         self,
         samples: Dict,
@@ -123,10 +143,7 @@ class MultiViewTester(MultiViewTrainer):
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        if use_prior:
-            y_hat = self._model(samples["choir"], use_mean=True)
-        else:
-            y_hat = self._model(samples["choir"], labels["choir"], use_mean=True)
+        y_hat = self._inference(samples, labels, use_prior=use_prior)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -225,20 +242,23 @@ class MultiViewTester(MultiViewTrainer):
         with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
-                torch.norm(anchors_pred - gt_anchors.cuda(), dim=2)
+                torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2)
                 .mean(dim=1)
                 .mean(dim=0)
+                .item()
                 * self._data_loader.dataset.base_unit
             )
             # === MPJPE ===
-            mpjpe, root_aligned_mpjpe = compute_mpjpe(gt_joints, joints_pred)
+            mpjpe, root_aligned_mpjpe = (
+                x.item() for x in compute_mpjpe(gt_joints, joints_pred)
+            )
             mpjpe *= self._data_loader.dataset.base_unit
             root_aligned_mpjpe *= self._data_loader.dataset.base_unit
             if self._data_loader.dataset.eval_observation_plateau:
                 return (
-                    anchor_error.detach(),
-                    mpjpe.detach(),
-                    root_aligned_mpjpe.detach(),
+                    anchor_error,
+                    mpjpe,
+                    root_aligned_mpjpe,
                     torch.zeros(1),
                     torch.zeros(1),
                     torch.zeros(1),
@@ -252,7 +272,7 @@ class MultiViewTester(MultiViewTrainer):
             mpvpe = torch.mean(pvpe, dim=-1)  # Mean per-vertex position error (B, 1)
             mpvpe = torch.mean(
                 mpvpe, dim=0
-            )  # Mean per-vertex position error avgd across batch (1)
+            ).item()  # Mean per-vertex position error avgd across batch (1)
             mpvpe *= self._data_loader.dataset.base_unit
             # ====== Intersection volume ======
             # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
@@ -286,7 +306,7 @@ class MultiViewTester(MultiViewTrainer):
                     object_meshes[path] = obj_mesh
             # Percentage of hand points within 2mm of the object surface.
             contact_coverage = []
-            N = 3000
+            N = 5000
             for i, path in enumerate(mesh_pths):
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts_pred[i].detach().cpu().numpy(),
@@ -297,21 +317,17 @@ class MultiViewTester(MultiViewTrainer):
                 # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
                 # faces=self._affine_mano.faces.detach().cpu().numpy(),
                 # )
-                obj_points = (
+                obj_points = to_cuda_(
                     torch.from_numpy(
                         np.asarray(
                             object_meshes[path].sample_points_uniformly(N).points
                         )
-                    )
-                    .cuda()
-                    .float()
+                    ).float()
                 )
-                hand_points = (
+                hand_points = to_cuda_(
                     torch.from_numpy(
                         trimesh.sample.sample_surface(pred_hand_mesh, N)[0]
-                    )
-                    .cuda()
-                    .float()
+                    ).float()
                 )
                 dists = torch.cdist(hand_points, obj_points)  # (N, N)
                 dists = dists.min(
@@ -320,15 +336,15 @@ class MultiViewTester(MultiViewTrainer):
                 contact_coverage.append(
                     (dists <= (2 / self._data_loader.dataset.base_unit)).sum() / N * 100
                 )
-            contact_coverage = torch.stack(contact_coverage).mean()
+            contact_coverage = torch.stack(contact_coverage).mean().item()
 
         return (
-            anchor_error.detach(),
-            mpjpe.detach(),
-            root_aligned_mpjpe.detach(),
-            mpvpe.detach(),
+            anchor_error,
+            mpjpe,
+            root_aligned_mpjpe,
+            mpvpe,
             intersection_volume.detach(),
-            contact_coverage.detach(),
+            contact_coverage,
         )
 
     @to_cuda
@@ -417,7 +433,7 @@ class MultiViewTester(MultiViewTrainer):
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        y_hat = self._model(samples["choir"], use_mean=True)
+        y_hat = self._inference(samples, labels, use_prior=True)
         mano_params_gt = {
             "pose": labels["theta"].view(-1, *labels["theta"].shape[2:]),
             "beta": labels["beta"].view(-1, *labels["beta"].shape[2:]),
@@ -566,7 +582,10 @@ class MultiViewTester(MultiViewTrainer):
                 input_scalar = input_scalar.mean(
                     dim=1
                 )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-            y_hat = self._model(samples["choir"][:, :n], use_mean=True)
+            # y_hat = self._model(samples["choir"][:, :n], use_mean=True)
+            y_hat = self._inference(
+                samples, labels, use_prior=True, max_observations=n_observations
+            )
             print(y_hat["choir"].shape)
             mano_params_gt = {
                 "pose": labels["theta"][:, :n],
@@ -668,10 +687,6 @@ class MultiViewTester(MultiViewTrainer):
                             ),
                             "w",
                         ) as f:
-                            print(
-                                mano_params_input["beta"].shape,
-                                mano_params_input["pose"].shape,
-                            )
                             f.write(
                                 json.dumps(
                                     {
@@ -787,7 +802,7 @@ class MultiViewTester(MultiViewTrainer):
         # Use a batch size of 1 cause no clue what happens above that
         """The deadline is in 20h so I'll write this quick and dirty, sorry reader."""
         self._data_loader.dataset.set_observations_number(n_observations)
-        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar = tqdm(total=len(self._data_loader), desc="Exporting predictions")
         self._pbar.refresh()
         scenes = {}
         for i, batch in enumerate(self._data_loader):
@@ -824,7 +839,9 @@ class MultiViewTester(MultiViewTrainer):
         metrics = defaultdict(MeanMetric)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TESTING.value]
         self._data_loader.dataset.set_observations_number(n_observations)
-        self._pbar = tqdm(total=len(self._data_loader), desc="Testing")
+        self._pbar = tqdm(
+            total=len(self._data_loader), desc=f"Testing {n_observations} observations"
+        )
         self._pbar.refresh()
         for i, batch in enumerate(self._data_loader):
             if not self._running:
@@ -832,7 +849,7 @@ class MultiViewTester(MultiViewTrainer):
                 break
             batch_metrics = self._test_iteration(batch, n_observations, i)
             for k, v in batch_metrics.items():
-                metrics[k].update(v.detach().item())
+                metrics[k].update(v)
             del batch_metrics
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
@@ -852,22 +869,24 @@ class MultiViewTester(MultiViewTrainer):
         print("_" * 81)
         return computed_metrics
 
-    def test(self, visualize_every: int = 0, **kwargs):
+    def test(self, visualize_every: int = 0):
         """Computes the average loss on the test set.
         Args:
             visualize_every (int, optional): Visualize the model predictions every n batches.
             Defaults to 0 (no visualization).
         """
         self._model.eval()
-        if kwargs["save_predictions"]:
+        if self._save_predictions:
             with torch.no_grad():
                 self._save_model_predictions(
-                    4 if self._data_loader.dataset.name.lower() == "contactpose" else 7
+                    min(4, self._max_observations)
+                    if self._data_loader.dataset.name.lower() == "contactpose"
+                    else 7
                 )
             return
         test_errors = []
         with torch.no_grad():
-            for i in range(1, 15):
+            for i in range(1, self._max_observations + 1):
                 test_errors.append(
                     self.test_n_observations(
                         i,

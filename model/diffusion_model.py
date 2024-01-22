@@ -143,17 +143,34 @@ class DiffusionModel(torch.nn.Module):
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
+        def make_t_batched(
+            t: int, n: int, y_embed: Optional[torch.Tensor]
+        ) -> torch.Tensor:
+            if y_embed is None:
+                t_batch = torch.tensor(t).view(1, 1).repeat(n, 1).to(device)
+            else:
+                t_batch = (
+                    torch.tensor(t)
+                    .view(1, 1, 1)
+                    .repeat(y_embed.shape[0], n, 1)
+                    .to(device)
+                )
+            return t_batch
+
         # ===== Inference =======
         assert self._input_shape is not None, "Must call forward first"
         with torch.no_grad():
             device = next(self.parameters()).device
             y_embed = self.embedder(y) if y is not None else None
             z_current = torch.randn(n, *self._input_shape).to(device)
+            if y_embed is not None:
+                z_current = z_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
+            _in_shape = z_current.shape
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat = self.backbone(
                     z_current,
-                    torch.tensor(t).view(1, 1).repeat(n, 1).to(device),
+                    make_t_batched(t, n, y_embed),
                     y_embed,
                 )
                 z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
@@ -164,31 +181,29 @@ class DiffusionModel(torch.nn.Module):
                 z_current = z_prev_hat + eps * self.sigma[t]
                 pbar.update()
             # Now for z_0:
-            eps_hat = self.backbone(
-                z_current, torch.tensor(0).view(1, 1).repeat(n, 1).to(device), y_embed
-            )
+            eps_hat = self.backbone(z_current, make_t_batched(t, n, y_embed), y_embed)
             x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
                 self.beta[0]
                 / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
             ) * eps_hat
             pbar.update()
             pbar.close()
-            output = x_hat.view(n, *self._input_shape)
+            output = x_hat.view(*_in_shape)
             if self._rescale_input:
                 # Back to [0, 1]:
                 output = (output + 1) / 2
-                print(f"Output range: [{output.min()}, {output.max()}]")
+                # print(f"Output range: [{output.min()}, {output.max()}]")
                 output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
-                print(
-                    f"Output range after stdization: [{output.min()}, {output.max()}]"
-                )
+                # print(
+                # f"Output range after stdization: [{output.min()}, {output.max()}]"
+                # )
             else:
                 # Clamp to [-1, 1]:
-                print(f"Output range: [{output.min()}, {output.max()}]")
+                # print(f"Output range: [{output.min()}, {output.max()}]")
                 output = torch.clamp(output, -1 + 1e-5, 1 - 1e-5)
-                print(
-                    f"Output range after stdization: [{output.min()}, {output.max()}]"
-                )
+                # print(
+                # f"Output range after stdization: [{output.min()}, {output.max()}]"
+                # )
             return output
 
 

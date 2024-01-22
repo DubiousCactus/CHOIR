@@ -209,5 +209,4 @@ def launch_experiment(
             **asdict(run),
         ).test(
             visualize_every=run.viz_every,
-            **asdict(run),  # TODO: remove this
         )

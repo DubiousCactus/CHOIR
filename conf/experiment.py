@@ -330,6 +330,7 @@ class RunConfig:
     training_mode: bool = True
     fine_tune: bool = False
     save_predictions: bool = False
+    max_observations: int = 1  # For testing
     conditional: bool = False
     disable_grad: bool = False
 

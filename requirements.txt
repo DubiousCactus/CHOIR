@@ -18,6 +18,7 @@ blosc
 rtree
 trame
 trame-vtk
+trame-vuetify
 git+https://github.com/otaheri/chamfer_distance
 git+https://github.com/otaheri/bps_torch
 metabatch

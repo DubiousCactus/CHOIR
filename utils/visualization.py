@@ -192,12 +192,11 @@ def visualize_model_predictions_with_multiple_views(
         # ================== Optimize MANO on model prediction =========================
         if kwargs.get("method", "aggved") == "ddpm":
             conditional = kwargs["conditional"]
+            n = 1
             choir_pred = model.generate(
-                3,
-                y=samples["choir"][0][None, ...].repeat(3, 1, 1, 1)
-                if conditional
-                else None,
-            ).unsqueeze(0)
+                n,
+                y=samples["choir"][0].unsqueeze(0) if conditional else None,
+            )
             choir_pred = choir_pred[:, 0]  # TODO: Plot all preds
         elif kwargs.get("method", "aggved") == "aggved":
             y_hat = model(samples["choir"], use_mean=True)
@@ -387,9 +386,7 @@ def visualize_ddpm_generation(
     if not project_conf.HEADLESS:
         choir_pred = model.generate(
             3,
-            y=samples["choir"][0][None, ...].repeat(3, 1, 1, 1)
-            if conditional
-            else None,
+            y=samples["choir"][0].unsqueeze(0) if conditional else None,
         )
         if use_deltas:
             choir_pred = torch.cat(

@@ -152,7 +152,9 @@ def compute_solid_intersection_volume(
     intersection_volumes = []
     obj_voxels = {}
     obj_meshes = {}
-    for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
+    for i, path in tqdm(
+        enumerate(mesh_pths), total=len(mesh_pths), desc="Computing SIV"
+    ):
         if path not in obj_voxels:
             obj_mesh = o3dio.read_triangle_mesh(path)
             if center_on_object_com:

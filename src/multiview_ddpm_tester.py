@@ -6,21 +6,37 @@
 # Distributed under terms of the MIT license.
 
 
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from src.base_tester import BaseTester
+from src.multiview_tester import MultiViewTester
 from utils import to_cuda
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
-class MultiViewDDPMTester(BaseTester):
+class MultiViewDDPMTester(MultiViewTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
         self._data_loader.dataset.set_observations_number(1)
         self._use_deltas = self._data_loader.dataset.use_deltas
+        # Because I infer the shape of the model from the data, I need to
+        # run the model's forward pass once before calling .generate()
+        print("[*] Running the model's forward pass once...")
+        with torch.no_grad():
+            samples, labels, _ = next(iter(self._data_loader))
+            if not self._use_deltas:
+                self._model(
+                    labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                    samples["choir"] if self.conditional else None,
+                )  # Only the hand distances!
+            else:
+                self._model(
+                    labels["choir"][..., 3:],
+                    samples["choir"] if self.conditional else None,
+                )  # Only the hand deltas!
+        print("[+] Done!")
 
     @to_cuda
     def _visualize(
@@ -33,10 +49,9 @@ class MultiViewDDPMTester(BaseTester):
             batch: The batch to process.
             epoch: The current epoch.
         """
-        samples, labels, _ = batch
         visualize_model_predictions_with_multiple_views(
             self._model,
-            (samples, labels, None),
+            batch,
             epoch,
             bps_dim=self._bps_dim,
             bps=self._bps,
@@ -50,12 +65,14 @@ class MultiViewDDPMTester(BaseTester):
             method="ddpm",
         )  # User implementation goes here (utils/training.py)
 
-    @to_cuda
-    def _train_val_iteration(
+    # @to_cuda
+    def _inference(
         self,
-        batch: Union[Tuple, List, torch.Tensor],
-        validation: bool = False,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        samples,
+        labels,
+        max_observations: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so write this code only once at the cost of many function calls!
         Args:
@@ -63,20 +80,11 @@ class MultiViewDDPMTester(BaseTester):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        samples, labels, _ = batch
-
-        if not self._use_deltas:
-            y_hat = self._model(
-                labels["choir"][:, -1][..., -1].unsqueeze(-1),  # Take the last frame
-                samples["choir"] if self.conditional else None,
-            )  # Only the hand distances!
-        else:
-            y_hat = self._model(
-                labels["choir"][..., 3:],
-                samples["choir"] if self.conditional else None,
-            )  # Only the hand deltas!
-        losses = self._training_loss(
-            samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
-        )
-        loss = sum([v for v in losses.values()])
-        return loss, losses
+        max_observations = max_observations or samples["choir"].shape[1]
+        choir_pred = self._model.generate(
+            1,
+            y=samples["choir"][:, :max_observations] if self.conditional else None,
+        ).squeeze(
+            1
+        )  # Only use 1 sample for now. TODO: use more samples and average?
+        return {"choir": choir_pred}

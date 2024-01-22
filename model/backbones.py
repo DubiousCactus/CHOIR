@@ -239,9 +239,30 @@ class UNetBackboneModel(torch.nn.Module):
         debug: bool = False,
     ) -> torch.Tensor:
         input_shape = x.shape
-        x = x.view(
-            x.shape[0], self.grid_len, self.grid_len, self.grid_len, self.choir_dim
-        ).permute(0, 4, 1, 2, 3)
+        # print(f"Input shape: {input_shape}")
+        bs, ctx_len = x.shape[0], (x.shape[1] if len(x.shape) == 4 else 1)
+        if ctx_len > 1:
+            # Repeat the context N times if generating N samples.
+            y = (
+                y[:, None, ...]
+                .repeat(1, ctx_len, 1, 1, 1, 1)
+                .view(1 * ctx_len, *y.shape[1:])
+            )
+        comp_shape = (
+            bs * ctx_len,
+            self.grid_len,
+            self.grid_len,
+            self.grid_len,
+            self.choir_dim,
+        )
+        t = t.view(bs * ctx_len, -1)
+        x = x.view(*comp_shape).permute(0, 4, 1, 2, 3)
+        # print(f"Comp shape: {comp_shape}")
+        # print(f"New x shape: {x.shape}")
+        # print(f"Time shape: {t.shape}")
+        # print(f"Context shape: {y.shape if y is not None else None}")
+        assert x.shape[0] == t.shape[0], "Batch size mismatch between x and t"
+        assert x.shape[0] == y.shape[0], "Batch size mismatch between x and y"
         t_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.identity1(x, t_embed, context=y, debug=debug)
         x2 = self.down1(x1, t_embed, context=y, debug=debug)
@@ -257,7 +278,14 @@ class UNetBackboneModel(torch.nn.Module):
         x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y, debug=debug)
         x10 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=y, debug=debug)
         x11 = self.identity3(x10, t_embed, context=y, debug=debug)
-        return self.out_conv(x11).permute(0, 2, 3, 4, 1).reshape(input_shape)
+        x = (
+            self.out_conv(x11)
+            .permute(0, 2, 3, 4, 1)
+            .reshape(comp_shape)
+            .view(input_shape)
+        )
+        # print(f"Output shape: {x.shape}")
+        return x
 
 
 class ResnetEncoderModel(torch.nn.Module):
@@ -316,9 +344,18 @@ class ResnetEncoderModel(torch.nn.Module):
         x: torch.Tensor,
         debug: bool = False,
     ) -> torch.Tensor:
-        bs, ctx_len = x.shape[0], x.shape[1] if len(x.shape) == 4 else 1
+        if len(x.shape) == 3:
+            bs, n, ctx_len = x.shape[0], 1, 1
+        elif len(x.shape) == 4:
+            bs, n, ctx_len = x.shape[0], 1, x.shape[1]
+        elif len(x.shape) == 5:
+            bs, n, ctx_len = x.shape[0], x.shape[1], x.shape[2]
         x = x.view(
-            bs * ctx_len, self.grid_len, self.grid_len, self.grid_len, self.choir_dim
+            bs * n * ctx_len,
+            self.grid_len,
+            self.grid_len,
+            self.grid_len,
+            self.choir_dim,
         ).permute(0, 4, 1, 2, 3)
         x = self.identity(x, debug=debug)
         x = self.down1(x, debug=debug)
@@ -326,5 +363,5 @@ class ResnetEncoderModel(torch.nn.Module):
         x = self.down3(x, debug=debug)
         x = self.out_identity(x, debug=debug)
         x = self.out_conv(x)
-        x = x.view(bs, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1])
+        x = x.view(bs * n, ctx_len, -1, x.shape[-3], x.shape[-2], x.shape[-1])
         return x.squeeze(dim=1)  # For now we'll try with 1 context frame
