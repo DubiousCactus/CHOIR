@@ -63,6 +63,7 @@ class DiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
+                    use_spatial_transformer=True,
                 ),
                 partial(
                     ResnetEncoderModel,

@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 
 import torch
 
+from model.attention import SpatialTransformer
 from model.resnet_conv import DownScaleResidualBlock as ConvDownBlock
 from model.resnet_conv import IdentityResidualBlock as ConvIdentityBlock
 from model.resnet_conv import TemporalDownScaleResidualBlock as TemporalConvDownBlock
@@ -130,11 +131,13 @@ class UNetBackboneModel(torch.nn.Module):
         norm_groups: int = 16,
         output_paddings: Tuple[int] = (1, 1, 1, 1),
         context_channels: Optional[int] = None,
+        use_spatial_transformer: bool = False,
     ):
         super().__init__()
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
         self.time_encoder = time_encoder
+        self.use_spatial_transformer = use_spatial_transformer
         self.time_mlp = torch.nn.Sequential(
             torch.nn.Linear(temporal_dim, temporal_dim),
             torch.nn.GELU(),
@@ -146,7 +149,7 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
         )
         self.down1 = TemporalConvDownBlock(
             64,
@@ -154,8 +157,13 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             pooling=pooling,
+        )
+        self.cross_attn1 = (
+            SpatialTransformer(64, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.down2 = TemporalConvDownBlock(
             64,
@@ -163,8 +171,13 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             pooling=pooling,
+        )
+        self.cross_attn2 = (
+            SpatialTransformer(128, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.down3 = TemporalConvDownBlock(
             128,
@@ -172,8 +185,13 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             pooling=pooling,
+        )
+        self.cross_attn3 = (
+            SpatialTransformer(256, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.tunnel1 = TemporalConvIdentityBlock(
             256,
@@ -181,7 +199,12 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
+        )
+        self.cross_attn4 = (
+            SpatialTransformer(256, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.tunnel2 = TemporalConvIdentityBlock(
             256,
@@ -189,7 +212,12 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
+        )
+        self.cross_attn5 = (
+            SpatialTransformer(256, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.up1 = TemporalConvUpBlock(
             512,
@@ -198,8 +226,13 @@ class UNetBackboneModel(torch.nn.Module):
             output_padding=output_paddings[0],
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             interpolate=False,
+        )
+        self.cross_attn6 = (
+            SpatialTransformer(128, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.up2 = TemporalConvUpBlock(
             256,
@@ -208,8 +241,13 @@ class UNetBackboneModel(torch.nn.Module):
             output_padding=output_paddings[1],
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             interpolate=False,
+        )
+        self.cross_attn7 = (
+            SpatialTransformer(64, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.up3 = TemporalConvUpBlock(
             128,
@@ -218,8 +256,13 @@ class UNetBackboneModel(torch.nn.Module):
             output_padding=output_paddings[2],
             normalization=normalization,
             norm_groups=norm_groups,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
             interpolate=False,
+        )
+        self.cross_attn8 = (
+            SpatialTransformer(64, context_dim=context_channels)
+            if use_spatial_transformer
+            else None
         )
         self.identity3 = TemporalConvIdentityBlock(
             64,
@@ -227,7 +270,7 @@ class UNetBackboneModel(torch.nn.Module):
             temporal_dim,
             norm_groups=norm_groups,
             normalization=normalization,
-            context_channels=context_channels,
+            context_channels=context_channels if not use_spatial_transformer else None,
         )
         self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
 
@@ -239,7 +282,6 @@ class UNetBackboneModel(torch.nn.Module):
         debug: bool = False,
     ) -> torch.Tensor:
         input_shape = x.shape
-        # print(f"Input shape: {input_shape}")
         bs, ctx_len = x.shape[0], (x.shape[1] if len(x.shape) == 4 else 1)
         if ctx_len > 1:
             # Repeat the context N times if generating N samples.
@@ -257,34 +299,38 @@ class UNetBackboneModel(torch.nn.Module):
         )
         t = t.view(bs * ctx_len, -1)
         x = x.view(*comp_shape).permute(0, 4, 1, 2, 3)
-        # print(f"Comp shape: {comp_shape}")
-        # print(f"New x shape: {x.shape}")
-        # print(f"Time shape: {t.shape}")
-        # print(f"Context shape: {y.shape if y is not None else None}")
         assert x.shape[0] == t.shape[0], "Batch size mismatch between x and t"
         assert x.shape[0] == y.shape[0], "Batch size mismatch between x and y"
         t_embed = self.time_mlp(self.time_encoder(t))
-        x1 = self.identity1(x, t_embed, context=y, debug=debug)
-        x2 = self.down1(x1, t_embed, context=y, debug=debug)
-        x3 = self.down2(x2, t_embed, context=y, debug=debug)
-        x4 = self.down3(x3, t_embed, context=y, debug=debug)
-        x5 = self.tunnel1(x4, t_embed, context=y, debug=debug)
-        x6 = self.tunnel2(x5, t_embed, context=y, debug=debug)
+        context = y if not self.use_spatial_transformer else None
+        x1 = self.identity1(x, t_embed, context=context, debug=debug)
+        x2 = self.down1(x1, t_embed, context=context, debug=debug)
+        x2 = self.cross_attn1(x2, context=y) if self.use_spatial_transformer else x2
+        x3 = self.down2(x2, t_embed, context=context, debug=debug)
+        x3 = self.cross_attn2(x3, context=y) if self.use_spatial_transformer else x3
+        x4 = self.down3(x3, t_embed, context=context, debug=debug)
+        x4 = self.cross_attn3(x4, context=y) if self.use_spatial_transformer else x4
+        x5 = self.tunnel1(x4, t_embed, context=context, debug=debug)
+        x5 = self.cross_attn4(x5, context=y) if self.use_spatial_transformer else x5
+        x6 = self.tunnel2(x5, t_embed, context=context, debug=debug)
+        x6 = self.cross_attn5(x6, context=y) if self.use_spatial_transformer else x6
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
         # conctenate the upscaled features with the output of the previous downsampling layer, and
         # so on.
-        x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, context=y, debug=debug)
-        x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y, debug=debug)
-        x10 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=y, debug=debug)
-        x11 = self.identity3(x10, t_embed, context=y, debug=debug)
+        x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, context=context, debug=debug)
+        x7 = self.cross_attn6(x7, context=y) if self.use_spatial_transformer else x7
+        x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=context, debug=debug)
+        x8 = self.cross_attn7(x8, context=y) if self.use_spatial_transformer else x8
+        x9 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=context, debug=debug)
+        x9 = self.cross_attn8(x9, context=y) if self.use_spatial_transformer else x9
+        x10 = self.identity3(x9, t_embed, context=context, debug=debug)
         x = (
-            self.out_conv(x11)
+            self.out_conv(x10)
             .permute(0, 2, 3, 4, 1)
             .reshape(comp_shape)
             .view(input_shape)
         )
-        # print(f"Output shape: {x.shape}")
         return x
 
 
