@@ -74,6 +74,9 @@ class MultiViewDDPMTrainer(BaseTrainer):
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
+            raise NotImplementedError(
+                "Have to implement it with embed_full_choir in DiffusionModel!"
+            )
             y_hat = self._model(
                 labels["choir"][:, -1]
                 if self._full_choir

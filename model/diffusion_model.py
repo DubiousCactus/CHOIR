@@ -137,6 +137,7 @@ class DiffusionModel(torch.nn.Module):
         )
         # 2. Sample the noise with shape x.shape
         if self.embed_full_choir:
+            obj_bps = x[..., 0][..., None]
             x = x[..., -1][..., None]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
         # print(f"eps.shape: {eps.shape}")
@@ -148,7 +149,7 @@ class DiffusionModel(torch.nn.Module):
         )
         if self.embed_full_choir:
             # Fuse back the full choir: object_bps + diffused_hand_bps
-            diffused_x = torch.cat([x[..., 0][..., None], diffused_x], dim=-1)
+            diffused_x = torch.cat([obj_bps, diffused_x], dim=-1)
         # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
