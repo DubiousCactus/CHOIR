@@ -20,6 +20,7 @@ class MultiViewDDPMTrainer(BaseTrainer):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
         self._use_deltas = self._train_loader.dataset.use_deltas
+        self._full_choir = kwargs.get("full_choir", False)
 
     @to_cuda
     def _visualize(
@@ -66,12 +67,17 @@ class MultiViewDDPMTrainer(BaseTrainer):
 
         if not self._use_deltas:
             y_hat = self._model(
-                labels["choir"][:, -1][..., -1].unsqueeze(-1),  # Take the last frame
+                # Take the last frame
+                labels["choir"][:, -1]
+                if self._full_choir
+                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
             y_hat = self._model(
-                labels["choir"][..., 3:],
+                labels["choir"][:, -1]
+                if self._full_choir
+                else labels["choir"][:, -1][..., 3:],
                 samples["choir"] if self.conditional else None,
             )  # Only the hand deltas!
         losses = self._training_loss(

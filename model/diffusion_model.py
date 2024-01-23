@@ -80,12 +80,14 @@ class DiffusionModel(torch.nn.Module):
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
-            choir_dim=choir_dim,
+            choir_dim=choir_dim * (2 if embed_full_choir else 1),
+            output_channels=1,
             temporal_dim=temporal_dim,
             context_channels=y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
+        self.embed_full_choir = embed_full_choir
         self.embedder = (
             backbones[backbone][1](
                 bps_grid_len=bps_grid_len,
@@ -118,6 +120,7 @@ class DiffusionModel(torch.nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
+        # print(f"Input shape: {x.shape}")
         # print(f"Input range: [{x.min()}, {x.max()}]")
         if self._rescale_input:
             # From [0, 1] to [-1, 1]:
@@ -133,17 +136,25 @@ class DiffusionModel(torch.nn.Module):
             .requires_grad_(False)
         )
         # 2. Sample the noise with shape x.shape
+        if self.embed_full_choir:
+            x = x[..., -1][..., None]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
+        # print(f"eps.shape: {eps.shape}")
         # 3. Diffuse the image
         batched_alpha = self.alpha[t]
         diffused_x = (
             torch.sqrt(batched_alpha)[..., None] * x
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
+        if self.embed_full_choir:
+            # Fuse back the full choir: object_bps + diffused_hand_bps
+            diffused_x = torch.cat([x[..., 0][..., None], diffused_x], dim=-1)
+        # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
         # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
+        # print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:

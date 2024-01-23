@@ -126,6 +126,7 @@ class UNetBackboneModel(torch.nn.Module):
         time_encoder: torch.nn.Module,
         bps_grid_len: int,
         choir_dim: int,
+        output_channels: int,
         temporal_dim: int,
         pooling: str = "avg",
         normalization: str = "batch",
@@ -242,7 +243,8 @@ class UNetBackboneModel(torch.nn.Module):
         self.identity3 = identity_conv_block(
             channels_in=64, channels_out=64, norm_groups=min(16, norm_groups)
         )
-        self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(64, output_channels, 1, padding=0, stride=1)
+        self.output_channels = output_channels
 
     def forward(
         self,
@@ -295,11 +297,22 @@ class UNetBackboneModel(torch.nn.Module):
         x9 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=context, debug=debug)
         x9 = self.cross_attn8(x9, context=y) if self.use_spatial_transformer else x9
         x10 = self.identity3(x9, t_embed, context=context, debug=debug)
+        comp_output_shape = (
+            bs * ctx_len,
+            self.output_channels,
+            self.grid_len,
+            self.grid_len,
+            self.grid_len,
+        )
+        output_shape = (
+            *input_shape[:-1],
+            self.output_channels,
+        )
         x = (
             self.out_conv(x10)
             .permute(0, 2, 3, 4, 1)
-            .reshape(comp_shape)
-            .view(input_shape)
+            .reshape(comp_output_shape)
+            .view(output_shape)
         )
         return x
 

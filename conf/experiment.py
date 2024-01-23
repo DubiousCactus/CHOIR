@@ -332,6 +332,7 @@ class RunConfig:
     save_predictions: bool = False
     max_observations: int = 1  # For testing
     conditional: bool = False
+    full_choir: bool = False
     disable_grad: bool = False
 
 
@@ -520,7 +521,7 @@ experiment_store(
             backbone="3d_unet",
             embed_full_choir=True,
         ),
-        run=dict(conditional=True),
+        run=dict(conditional=True, full_choir=True),
         bases=(Experiment,),
     ),
     name="cddpm_3d_multiview_contactopt",
