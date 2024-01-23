@@ -61,6 +61,76 @@ class MultiHeadAttention(torch.nn.Module):
     ):
         super().__init__()
         inner_dim = dim_head * n_heads
+        self.scale = (
+            dim_head**-0.5
+        )  # 1 / sqrt(dim_head) so we can just multiply instead of dividing
+        self.heads = n_heads
+        self.heads_k = torch.nn.Linear(k_dim, inner_dim, bias=use_bias)
+        self.heads_q = torch.nn.Linear(q_dim, inner_dim, bias=use_bias)
+        self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
+        self.out_proj = torch.nn.Sequential(
+            torch.nn.Linear(inner_dim, q_dim, bias=use_bias),
+            torch.nn.Dropout(p_dropout),
+        )
+
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        """
+        Implements multi-head cross attention.
+        I have used OpenAI's implementation as reference:
+        https://github.com/CompVis/latent-diffusion/blob/a506df5756472e2ebaf9078affdde2c4f1502cd4/ldm/modules/attention.py#L152
+        Args:
+            q: (B, S, C)
+            k: (B, T, D)
+            v: (B, T, D)
+        Returns:
+            (B, S, C)
+        """
+        bs = q.shape[0]
+        q_ = self.heads_q(q)  # (B, S, heads*head_dim)
+        k_ = self.heads_k(k)  # (B, T, heads*head_dim)
+        v_ = self.heads_v(v)  # (B, T, heads*head_dim)
+
+        def rearrange(x: torch.Tensor) -> torch.Tensor:
+            b, d, inner_dim = x.shape  # inner_dim = heads * head_dim
+            head_dim = inner_dim // self.heads
+            return (
+                x.reshape(b, d, self.heads, head_dim)  # (B, T, heads, head_dim)
+                .permute(0, 2, 1, 3)  # (B, heads, T, head_dim)
+                .reshape(b * self.heads, d, head_dim)  # (B*heads, T, head_dim)
+            )
+
+        q_, k_, v_ = map(rearrange, (q_, k_, v_))
+        # torch.einsum allows to compute matrix multiplications and other multi-dimensional linear
+        # algebra operations using Einstein's notation. It is super convenient to compute
+        # dot-products with multiple dimensions of batches.
+        scaled_dotp = torch.einsum("b i d, b j d -> b i j", q_, k_) * self.scale
+        attn_w = scaled_dotp.softmax(dim=-1)
+        out = torch.einsum(
+            "b i j, b j d -> b i d", attn_w, v_
+        )  # (B*heads, T, head_dim)
+        b_h, n, head_dim = out.shape
+        inner_dim = head_dim * self.heads
+        out = (
+            out.reshape(bs, self.heads, n, head_dim)  # (B, heads, T, head_dim)
+            .permute(0, 2, 1, 3)  # (B, T, heads, head_dim)
+            .reshape(bs, n, inner_dim)  # (B, T, heads*head_dim)
+        )  # (B, T, heads*head_dim)
+        return self.out_proj(out)
+
+
+class MultiHeadSpatialAttention(torch.nn.Module):
+    def __init__(
+        self,
+        q_dim: int,
+        k_dim: int,
+        v_dim: int,
+        n_heads: int = 8,
+        dim_head: int = 64,
+        use_bias: bool = False,
+        p_dropout: float = 0.0,
+    ):
+        super().__init__()
+        inner_dim = dim_head * n_heads
         self.scale = torch.sqrt(torch.tensor(dim_head))
         self.heads = n_heads
         self.heads_k = torch.nn.Linear(k_dim, inner_dim, bias=use_bias)
@@ -153,22 +223,43 @@ class FeedForward(torch.nn.Module):
 
 class SpatialTransformer(torch.nn.Module):
     def __init__(
-        self, channels: int, gated_ff: bool = True, context_dim: Optional[int] = None
+        self,
+        in_channels: int,
+        n_heads: int,
+        dim_heads: int,
+        dropout=0.0,
+        gated_ff: bool = True,
+        context_dim: Optional[int] = None,
+        norm_groups: int = 32,
     ) -> None:
         super().__init__()
-        self.in_channels = channels
-        self.ff = FeedForward(channels, dim_out=channels, glu=gated_ff)
-        # self.norm_1 = torch.nn.LayerNorm()
-        # self.norm_2 = torch.nn.LayerNorm()
-        # self.norm_3 = torch.nn.LayerNorm()
-        self.norm_1 = torch.nn.GroupNorm(16, channels)
-        self.norm_2 = torch.nn.GroupNorm(16, channels)
-        self.norm_3 = torch.nn.LayerNorm(channels)
+        self.in_channels = in_channels
+        inner_dim = n_heads * dim_heads
+        self.x_in_norm = torch.nn.GroupNorm(norm_groups, in_channels)
+        self.cont_in_norm = (
+            torch.nn.GroupNorm(norm_groups, context_dim)
+            if context_dim is not None
+            else None
+        )
+        self.proj_in = torch.nn.Conv3d(
+            in_channels, inner_dim, kernel_size=1, stride=1, padding=0
+        )
+        self.proj_out = torch.nn.Conv3d(
+            inner_dim, in_channels, kernel_size=1, stride=1, padding=0
+        )
+        self.ff = FeedForward(inner_dim, glu=gated_ff, dropout=dropout)
+        self.norm_1 = torch.nn.LayerNorm(inner_dim)
+        self.norm_2 = torch.nn.LayerNorm(inner_dim)
+        self.norm_3 = torch.nn.LayerNorm(inner_dim)
         self.self_attn = MultiHeadAttention(
-            channels, channels, channels, n_heads=8, dim_head=64
+            inner_dim, inner_dim, inner_dim, n_heads=n_heads, dim_head=dim_heads
         )
         self.cross_attn = MultiHeadAttention(
-            channels, context_dim or channels, context_dim, n_heads=8, dim_head=64
+            inner_dim,
+            context_dim or inner_dim,
+            context_dim or inner_dim,
+            n_heads=n_heads,
+            dim_head=dim_heads,
         )
 
     def forward(
@@ -184,18 +275,20 @@ class SpatialTransformer(torch.nn.Module):
             (B, C, D, H, W)
         """
         _x = x
-        # print(f"X shape: {x.shape}")
-        # print(f"context shape: {context.shape if context is not None else None}")
-        # print(f"self shape: {self.self_attn(x, x, x).shape}")
-        # print(self.norm_1)
-        context = context if context is not None else x
+        x = self.x_in_norm(x)
+        x = self.proj_in(x)
+        b, q_c, d, h, w = x.shape
+        x = x.view(b, q_c, -1).permute(
+            0, 2, 1
+        )  # (B, C, D, H, W) -> (B, C, D*H*W) -> (B, D*H*W, C)
+        if context is not None:
+            b_c, kv_c, k, l, m = context.shape
+            context = self.cont_in_norm(context)
+            context = context.view(b_c, kv_c, -1).permute(0, 2, 1)
         x = self.norm_1(self.self_attn(x, x, x) + x)
-        # print(f"After self attn: {x.shape}")
-        x = self.norm_2(self.cross_attn(x, context, context) + x)
-        # print(f"After cross attn: {x.shape}")
-        bs, c, d, h, w = x.shape
-        x = x.view(bs, c, -1).permute(0, 2, 1)  # (B, D*H*W, C)
-        # print(f"ff shape: {self.ff(x).shape}")
+        kv = context if context is not None else x
+        x = self.norm_2(self.cross_attn(x, kv, kv) + x)
         x = self.norm_3(self.ff(x) + x)
-        x = x.permute(0, 2, 1).view(bs, c, d, h, w)  # (B, C, D, H, W)
+        x = x.permute(0, 2, 1).view(b, q_c, d, h, w)
+        x = self.proj_out(x)
         return x + _x

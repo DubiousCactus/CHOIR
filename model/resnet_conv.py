@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 
 import torch
 
-from model.attention import MultiHeadAttention
+from model.attention import MultiHeadSpatialAttention
 
 
 class TemporalResidualBlock(torch.nn.Module):
@@ -178,7 +178,7 @@ class TemporalResidualBlock(torch.nn.Module):
         # ==========================================================
         # ================== CROSS-ATTENTION =======================
         self.cross_attention = (
-            MultiHeadAttention(
+            MultiHeadSpatialAttention(
                 q_dim=channels_out,
                 k_dim=context_channels,
                 v_dim=context_channels,

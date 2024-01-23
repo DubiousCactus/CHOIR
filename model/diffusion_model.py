@@ -61,7 +61,7 @@ class DiffusionModel(torch.nn.Module):
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
-                    norm_groups=16,
+                    norm_groups=32,
                     pooling="avg",
                     use_spatial_transformer=True,
                 ),
@@ -71,7 +71,7 @@ class DiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
-                    pool_all_features="none",
+                    pool_all_features="spatial",
                 )
                 if y_embed_dim is not None
                 else None,
