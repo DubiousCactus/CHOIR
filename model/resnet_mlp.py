@@ -14,57 +14,7 @@ from typing import Optional
 
 import torch
 
-from model.attention import VectorAttentionLayer
-
-
-class ResidualBlock(torch.nn.Module):
-    def __init__(
-        self,
-        dim_in: int,
-        dim_out: int,
-    ):
-        super().__init__()
-        self.lin1 = torch.nn.Linear(
-            dim_in,
-            dim_out,
-        )
-        self.norm1 = torch.nn.LayerNorm(dim_out)
-        self.nonlin = torch.nn.SiLU()
-        self.lin2 = torch.nn.Linear(
-            dim_out,
-            dim_out,
-        )
-        self.norm2 = torch.nn.LayerNorm(dim_out)
-        self.out_activation = torch.nn.SiLU()
-        self.residual_scaling = (
-            torch.nn.Linear(
-                dim_in,
-                dim_out,
-                bias=False,
-            )
-            if (dim_in != dim_out)
-            else torch.nn.Identity()
-        )
-
-    def forward(self, x: torch.Tensor, debug: bool = False) -> torch.Tensor:
-        def print_debug(str):
-            nonlocal debug
-            if debug:
-                print(str)
-
-        _x = x
-        print_debug(f"Starting with x.shape = {x.shape}")
-        x = self.lin1(x)
-        print_debug(f"After lin1, x.shape = {x.shape}")
-        x = self.norm1(x)
-        x = self.nonlin(x)
-        x = self.lin2(x)
-        print_debug(f"After lin2, x.shape = {x.shape}")
-        x = self.norm2(x)
-        print_debug(
-            f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
-        )
-        return self.out_activation(x + self.residual_scaling(_x))
+from model.attention import MultiHeadAttention
 
 
 class TemporalResidualBlock(torch.nn.Module):
@@ -72,30 +22,37 @@ class TemporalResidualBlock(torch.nn.Module):
         self,
         dim_in: int,
         dim_out: int,
-        temporal_dim: int,
         n_norm_groups: int = 32,
+        temporal_dim: Optional[int] = None,
         y_dim: Optional[int] = None,
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(
-            dim_in + (y_dim if y_dim is not None else 0),
+            dim_in,
             dim_out,
         )
         self.norm1 = torch.nn.GroupNorm(n_norm_groups, dim_out)
         self.nonlin = torch.nn.SiLU()
         self.lin2 = torch.nn.Linear(
-            dim_out + (y_dim if y_dim is not None else 0),
+            dim_out,
             dim_out,
         )
         self.norm2 = torch.nn.GroupNorm(n_norm_groups, dim_out)
         self.out_activation = torch.nn.SiLU()
-        self.temporal_projection = torch.nn.Linear(
-            temporal_dim,
-            dim_out * 2,
+        self.temporal_projection = (
+            torch.nn.Sequential(
+                torch.nn.SiLU(),
+                torch.nn.Linear(
+                    temporal_dim,
+                    dim_out * 2,
+                ),
+            )
+            if temporal_dim is not None
+            else None
         )
         self.cross_attention = (
-            VectorAttentionLayer(
-                q_dim=dim_out, k_dim=y_dim, v_dim=y_dim, output_dim=y_dim
+            MultiHeadAttention(
+                q_dim=dim_out, k_dim=y_dim, v_dim=y_dim, n_heads=8, dim_head=64
             )
             if y_dim is not None
             else None
@@ -113,7 +70,7 @@ class TemporalResidualBlock(torch.nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        t_emb: torch.Tensor,
+        t_emb: Optional[torch.Tensor] = None,
         y_emb: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> torch.Tensor:
@@ -123,33 +80,45 @@ class TemporalResidualBlock(torch.nn.Module):
                 print(str)
 
         _x = x
-        scale, shift = self.temporal_projection(t_emb).chunk(2, dim=1)
+        if t_emb is not None:
+            scale, shift = self.temporal_projection(t_emb).chunk(2, dim=1)
         print_debug(f"Starting with x.shape = {x.shape}")
         print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
-        x = (
-            torch.cat((x, self.cross_attention(q=x, k=y_emb, v=y_emb)), dim=1)
-            if y_emb is not None
-            else x
-        )
-        # x = torch.cat((x, y_emb), dim=1) if y_emb is not None else x
         x = self.lin1(x)
         print_debug(f"After lin1, x.shape = {x.shape}")
         x = self.norm1(x)
-        x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
+        if t_emb is not None:
+            x = (
+                x * (scale + 1) + shift
+            )  # Normalize before scale/shift as in OpenAI's code
         x = self.nonlin(x)
         print_debug(f"Temb is {t_emb.shape}")
         print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
-        x = (
-            torch.cat((x, self.cross_attention(q=x, k=y_emb, v=y_emb)), dim=1)
-            if y_emb is not None
-            else x
-        )
-        # x = torch.cat((x, y_emb), dim=1) if y_emb is not None else x
         x = self.lin2(x)
         print_debug(f"After lin2, x.shape = {x.shape}")
-        x = self.norm2(x)
-        x = x * (scale + 1) + shift  # Normalize before scale/shift as in OpenAI's code
-        print_debug(
-            f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
+        if y_emb is not None:
+            assert t_emb is not None
+            x = self.out_activation(self.norm2(x + self.residual_scaling(_x)))
+            x = x + self.cross_attention(q=x, k=y_emb, v=y_emb)
+            return x
+        else:
+            print_debug(
+                f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
+            )
+            return self.out_activation(self.norm2(x + self.residual_scaling(_x)))
+
+
+class ResidualBlock(TemporalResidualBlock):
+    def __init__(
+        self,
+        dim_in: int,
+        dim_out: int,
+        n_norm_groups: int = 32,
+    ):
+        super().__init__(
+            dim_in,
+            dim_out,
+            n_norm_groups=n_norm_groups,
+            temporal_dim=None,
+            context_dim=None,
         )
-        return self.out_activation(x + self.residual_scaling(_x))

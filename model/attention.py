@@ -10,8 +10,6 @@ Attention blocks.
 """
 
 
-from typing import Optional
-
 import torch
 
 
@@ -25,7 +23,7 @@ class VectorAttentionLayer(torch.nn.Module):
         self.w_q = torch.nn.Linear(q_dim, output_dim, bias=False)
         self.w_k = torch.nn.Linear(k_dim, output_dim, bias=False)
         self.w_v = torch.nn.Linear(v_dim, output_dim, bias=False)
-        self.scale = torch.sqrt(torch.tensor(output_dim))
+        self.scale = output_dim**-0.5
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
@@ -43,7 +41,7 @@ class VectorAttentionLayer(torch.nn.Module):
         k_ = self.w_k(k)
         v_ = self.w_v(v)
         dot_p = q_ @ k_.transpose(0, 1)
-        scaled_dotp = torch.nn.functional.softmax(dot_p / self.scale, dim=-1)
+        scaled_dotp = torch.nn.functional.softmax(dot_p * self.scale, dim=-1)
         output = scaled_dotp @ v_
         return output
 
@@ -69,7 +67,9 @@ class MultiHeadAttention(torch.nn.Module):
         self.heads_q = torch.nn.Linear(q_dim, inner_dim, bias=use_bias)
         self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
         self.out_proj = torch.nn.Sequential(
-            torch.nn.Linear(inner_dim, q_dim, bias=use_bias),
+            torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
+            if q_dim != inner_dim
+            else torch.nn.Identity(),
             torch.nn.Dropout(p_dropout),
         )
 
@@ -85,6 +85,9 @@ class MultiHeadAttention(torch.nn.Module):
         Returns:
             (B, S, C)
         """
+        assert (
+            len(q.shape) == 3 and len(k.shape) == 3 and len(v.shape) == 3
+        ), "q, k and v must have 3 dimensions (batch, sequence, channels)"
         bs = q.shape[0]
         q_ = self.heads_q(q)  # (B, S, heads*head_dim)
         k_ = self.heads_k(k)  # (B, T, heads*head_dim)
@@ -118,6 +121,7 @@ class MultiHeadAttention(torch.nn.Module):
         return self.out_proj(out)
 
 
+# TODO: Refactor the two modules
 class MultiHeadSpatialAttention(torch.nn.Module):
     def __init__(
         self,
@@ -137,7 +141,9 @@ class MultiHeadSpatialAttention(torch.nn.Module):
         self.heads_q = torch.nn.Linear(q_dim, inner_dim, bias=use_bias)
         self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
         self.out_proj = torch.nn.Sequential(
-            torch.nn.Linear(inner_dim, q_dim, bias=use_bias),
+            torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
+            if inner_dim != q_dim
+            else torch.nn.Identity(),
             torch.nn.Dropout(p_dropout),
         )
 
@@ -229,18 +235,12 @@ class SpatialTransformer(torch.nn.Module):
         dim_heads: int,
         dropout=0.0,
         gated_ff: bool = True,
-        context_dim: Optional[int] = None,
         norm_groups: int = 32,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
         inner_dim = n_heads * dim_heads
         self.x_in_norm = torch.nn.GroupNorm(norm_groups, in_channels)
-        self.cont_in_norm = (
-            torch.nn.GroupNorm(norm_groups, context_dim)
-            if context_dim is not None
-            else None
-        )
         self.proj_in = torch.nn.Conv3d(
             in_channels, inner_dim, kernel_size=1, stride=1, padding=0
         )
@@ -250,27 +250,17 @@ class SpatialTransformer(torch.nn.Module):
         self.ff = FeedForward(inner_dim, glu=gated_ff, dropout=dropout)
         self.norm_1 = torch.nn.LayerNorm(inner_dim)
         self.norm_2 = torch.nn.LayerNorm(inner_dim)
-        self.norm_3 = torch.nn.LayerNorm(inner_dim)
         self.self_attn = MultiHeadAttention(
             inner_dim, inner_dim, inner_dim, n_heads=n_heads, dim_head=dim_heads
-        )
-        self.cross_attn = MultiHeadAttention(
-            inner_dim,
-            context_dim or inner_dim,
-            context_dim or inner_dim,
-            n_heads=n_heads,
-            dim_head=dim_heads,
         )
 
     def forward(
         self,
         x: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
     ):
         """
         Args:
             x: (B, C, D, H, W)
-            context: (B, C, K, L, M)
         Returns:
             (B, C, D, H, W)
         """
@@ -281,14 +271,8 @@ class SpatialTransformer(torch.nn.Module):
         x = x.view(b, q_c, -1).permute(
             0, 2, 1
         )  # (B, C, D, H, W) -> (B, C, D*H*W) -> (B, D*H*W, C)
-        if context is not None:
-            b_c, kv_c, k, l, m = context.shape
-            context = self.cont_in_norm(context)
-            context = context.view(b_c, kv_c, -1).permute(0, 2, 1)
         x = self.norm_1(self.self_attn(x, x, x) + x)
-        kv = context if context is not None else x
-        x = self.norm_2(self.cross_attn(x, kv, kv) + x)
-        x = self.norm_3(self.ff(x) + x)
+        x = self.norm_2(self.ff(x) + x)
         x = x.permute(0, 2, 1).view(b, q_c, d, h, w)
         x = self.proj_out(x)
         return x + _x

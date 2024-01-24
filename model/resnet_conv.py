@@ -198,14 +198,7 @@ class TemporalResidualBlock(torch.nn.Module):
         context: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> torch.Tensor:
-        def print_debug(str):
-            nonlocal debug
-            if debug:
-                print(str)
-
         _x = x
-        # print_debug("=========================================")
-        # print_debug(f"Starting with x.shape = {_x.shape}")
         if t_emb is not None:
             scale, shift = (
                 self.temporal_projection(t_emb)[..., None, None].chunk(2, dim=1)
@@ -215,29 +208,23 @@ class TemporalResidualBlock(torch.nn.Module):
                 )
             )
         x = self.conv1(x)
-        # print_debug(f"After input layers, x.shape = {x.shape}")
         x = self.norm1(x)
-        # print_debug(f"After norm1, x.shape = {x.shape}")
         if t_emb is not None:
             x = x * (scale + 1) + shift
         x = self.nonlin(x)
-        # print_debug(f"After nonlin, x.shape = {x.shape}")
         x = self.up_or_down_sample(x)
-        # print_debug(f"After up_or_down_sample, x.shape = {x.shape}")
         if context is not None:
-            # TODO: Implement as a separate block like OpenAI
+            assert t_emb is not None
+            x = self.out_activation(
+                self.norm2(x + self.skip_connection(self.up_or_down_sample_input(_x)))
+            )
+            # TODO: Move the following OUTSIDE this module, into its own module.
             x = x + self.cross_attention(q=x, k=context, v=context)
-            x = self.norm2(x)
-            x = (
-                x * (scale + 1) + shift
-            )  # Normalize before scale/shift as in OpenAI's code
-        # print_debug(
-        # f"Adding _x of shape {_x.shape} (rescaled to {self.skip_connection(self.up_or_down_sample_input(_x)).shape}) to x of shape {x.shape}"
-        # )
-        # print_debug("=========================================")
-        return self.out_activation(
-            x + self.skip_connection(self.up_or_down_sample_input(_x))
-        )
+        else:
+            x = self.out_activation(
+                self.norm2(x + self.skip_connection(self.up_or_down_sample_input(_x)))
+            )
+        return x
 
 
 class TemporalIdentityResidualBlock(TemporalResidualBlock):

@@ -32,7 +32,7 @@ from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
-from model.diffusion_model import DiffusionModel
+from model.diffusion_model import BPSDiffusionModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
@@ -194,7 +194,7 @@ model_store(
 
 model_store(
     pbuilds(
-        DiffusionModel,
+        BPSDiffusionModel,
         backbone="mlp_resnet",
         time_steps=1000,
         beta_1=1e-4,

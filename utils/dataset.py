@@ -91,6 +91,7 @@ def compute_choir(
     remap_bps_distances: bool,
     exponential_map_w: float,
     use_deltas: bool,
+    compute_hand_object_distances: bool,
 ) -> torch.Tensor:
     """
     Args:
@@ -132,6 +133,8 @@ def compute_choir(
         anchor_deltas = torch.gather(
             anchor_deltas, 2, anchor_ids[..., None, None].repeat(1, 1, 1, 3)
         ).squeeze(-2)
+        if compute_hand_object_distances:
+            raise NotImplementedError
         choir = torch.cat(
             (
                 object_bps["deltas"],
@@ -147,6 +150,13 @@ def compute_choir(
         anchor_distances = torch.gather(
             anchor_distances, 2, anchor_ids.unsqueeze(-1)
         ).squeeze(-1)
+        if compute_hand_object_distances:
+            raise NotImplementedError
+            # Compute the distances between the BPS points and the MANO anchors:
+            ho_dist = torch.cdist(
+                rescaled_ref_pts, rescaled_anchors
+            )  # Shape: (BPS_LEN, N_ANCHORS)
+            ho_dist = torch.gather(ho_dist, 2, anchor_ids.unsqueeze(-1)).squeeze(-1)
         choir = torch.cat(
             [
                 object_bps["dists"]

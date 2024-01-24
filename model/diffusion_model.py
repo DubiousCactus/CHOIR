@@ -18,13 +18,14 @@ from tqdm import tqdm
 
 from model.backbones import (
     MLPResNetBackboneModel,
+    MLPResNetEncoderModel,
     ResnetEncoderModel,
     UNetBackboneModel,
 )
 from model.time_encoding import SinusoidalTimeEncoder
 
 
-class DiffusionModel(torch.nn.Module):
+class BPSDiffusionModel(torch.nn.Module):
     def __init__(
         self,
         backbone: str,
@@ -41,18 +42,11 @@ class DiffusionModel(torch.nn.Module):
         super().__init__()
         y_dim = (bps_dim * choir_dim) if y_embed_dim is not None else None
         bps_grid_len = round(bps_dim ** (1 / 3))
+        # TODO: Move all this crap to config (god I'm lazy to do that)
         backbones = {
             "mlp_resnet": (
-                partial(MLPResNetBackboneModel, hidden_dim=4096, bps_dim=bps_dim),
-                torch.nn.Sequential(
-                    torch.nn.Linear(y_dim, 2 * y_dim),
-                    torch.nn.BatchNorm1d(2 * y_dim),
-                    torch.nn.GELU(),
-                    torch.nn.Linear(2 * y_dim, 2 * y_dim),
-                    torch.nn.BatchNorm1d(2 * y_dim),
-                    torch.nn.GELU(),
-                    torch.nn.Linear(2 * y_dim, y_embed_dim),
-                )
+                partial(MLPResNetBackboneModel, hidden_dim=1024, bps_dim=bps_dim),
+                partial(MLPResNetEncoderModel, hidden_dim=512, embed_dim=y_embed_dim)
                 if y_embed_dim is not None
                 else None,
             ),
@@ -61,9 +55,9 @@ class DiffusionModel(torch.nn.Module):
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
-                    norm_groups=32,
+                    norm_groups=16,
                     pooling="avg",
-                    use_spatial_transformer=True,
+                    use_self_attention=True,
                 ),
                 partial(
                     ResnetEncoderModel,
@@ -71,7 +65,7 @@ class DiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
-                    pool_all_features="spatial",
+                    pool_all_features="none",
                 )
                 if y_embed_dim is not None
                 else None,
@@ -237,7 +231,7 @@ class LatentDiffusionModel(torch.nn.Module):
         self.encoder.requires_grad_(False)
         self.decoder = autoencoder.decoder
         self.decoder.requires_grad_(False)
-        self.diffusion_model = DiffusionModel(backbone, time_steps, beta_1, beta_T)
+        self.diffusion_model = BPSDiffusionModel(backbone, time_steps, beta_1, beta_T)
 
     def forward(
         self,
