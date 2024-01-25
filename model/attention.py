@@ -241,11 +241,15 @@ class SpatialTransformer(torch.nn.Module):
         self.in_channels = in_channels
         inner_dim = n_heads * dim_heads
         self.x_in_norm = torch.nn.GroupNorm(norm_groups, in_channels)
-        self.proj_in = torch.nn.Conv3d(
-            in_channels, inner_dim, kernel_size=1, stride=1, padding=0
+        self.proj_in = (
+            torch.nn.Conv3d(in_channels, inner_dim, kernel_size=1, stride=1, padding=0)
+            if in_channels != inner_dim
+            else torch.nn.Identity()
         )
-        self.proj_out = torch.nn.Conv3d(
-            inner_dim, in_channels, kernel_size=1, stride=1, padding=0
+        self.proj_out = (
+            torch.nn.Conv3d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0)
+            if in_channels != inner_dim
+            else torch.nn.Identity()
         )
         self.ff = FeedForward(inner_dim, glu=gated_ff, dropout=dropout)
         self.norm_1 = torch.nn.LayerNorm(inner_dim)

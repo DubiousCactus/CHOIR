@@ -331,7 +331,7 @@ class UNetBackboneModel(torch.nn.Module):
             n_heads=8,
             dim_heads=32,
             dropout=0.0,
-            gated_ff=True,
+            gated_ff=False,
             norm_groups=norm_groups,
         )
         # ========= Layers =========
