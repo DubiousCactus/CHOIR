@@ -344,13 +344,13 @@ class UNetBackboneModel(torch.nn.Module):
         self.down1 = down_conv_block(
             channels_in=64, channels_out=64, norm_groups=min(16, norm_groups)
         )
-        self.self_attn_1 = (
-            spatial_transformer(
-                in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
-            )
-            if use_self_attention
-            else None
-        )
+        # self.self_attn_1 = (
+        # spatial_transformer(
+        # in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
+        # )
+        # if use_self_attention
+        # else None
+        # )
         self.down2 = down_conv_block(channels_in=64, channels_out=128)
         self.self_attn_2 = (
             spatial_transformer(
@@ -399,13 +399,13 @@ class UNetBackboneModel(torch.nn.Module):
         self.up3 = up_conv_block(
             channels_in=128, channels_out=64, output_padding=output_paddings[2]
         )
-        self.self_attn_7 = (
-            spatial_transformer(
-                in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
-            )
-            if use_self_attention
-            else None
-        )
+        # self.self_attn_7 = (
+        # spatial_transformer(
+        # in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
+        # )
+        # if use_self_attention
+        # else None
+        # )
         self.identity3 = identity_conv_block(
             channels_in=64, channels_out=64, norm_groups=min(16, norm_groups)
         )
@@ -442,7 +442,7 @@ class UNetBackboneModel(torch.nn.Module):
         t_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.identity1(x, t_embed, context=y, debug=debug)
         x2 = self.down1(x1, t_embed, context=y, debug=debug)
-        x2 = self.self_attn_1(x2) if self.use_self_attn else x2
+        # x2 = self.self_attn_1(x2) if self.use_self_attn else x2
         x3 = self.down2(x2, t_embed, context=y, debug=debug)
         x3 = self.self_attn_2(x3) if self.use_self_attn else x3
         x4 = self.down3(x3, t_embed, context=y, debug=debug)
@@ -460,7 +460,7 @@ class UNetBackboneModel(torch.nn.Module):
         x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y, debug=debug)
         x8 = self.self_attn_6(x8) if self.use_self_attn else x8
         x9 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=y, debug=debug)
-        x9 = self.self_attn_7(x9) if self.use_self_attn else x9
+        # x9 = self.self_attn_7(x9) if self.use_self_attn else x9
         x10 = self.identity3(x9, t_embed, context=y, debug=debug)
         comp_output_shape = (
             bs * ctx_len,
@@ -492,23 +492,41 @@ class ResnetEncoderModel(torch.nn.Module):
         normalization: str = "batch",
         norm_groups: int = 16,
         pool_all_features: str = "none",
+        use_self_attention: bool = False,
     ):
         super().__init__()
         assert pool_all_features in ["none", "spatial", "attention", "adaptive"]
         self.grid_len = bps_grid_len
         self.choir_dim = choir_dim
-        self.identity = ConvIdentityBlock(
-            choir_dim,
-            32,
-            normalization=normalization,
+        self.use_self_attn = use_self_attention
+        spatial_transformer = partial(
+            SpatialTransformer,
+            n_heads=8,
+            dim_heads=32,
+            dropout=0.0,
+            gated_ff=False,
             norm_groups=norm_groups,
         )
+        dim_heads = 32
+        # self.identity = ConvIdentityBlock(
+        # choir_dim,
+        # 32,
+        # normalization=normalization,
+        # norm_groups=norm_groups,
+        # )
         self.down1 = ConvDownBlock(
-            32,
+            choir_dim,
             64,
             normalization=normalization,
             norm_groups=norm_groups,
             pooling=pooling,
+        )
+        self.self_attn_1 = (
+            spatial_transformer(
+                in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
+            )
+            if use_self_attention
+            else None
         )
         self.down2 = ConvDownBlock(
             64,
@@ -524,11 +542,27 @@ class ResnetEncoderModel(torch.nn.Module):
             norm_groups=norm_groups,
             pooling=pooling,
         )
+        # self.self_attn_3 = (
+        #    spatial_transformer(
+        #        in_channels=256, n_heads=256 // dim_heads, dim_heads=dim_heads
+        #    )
+        #    if use_self_attention
+        #    else None
+        # )
         self.out_identity = ConvIdentityBlock(
             256,
             embed_channels,
             normalization=normalization,
             norm_groups=norm_groups,
+        )
+        self.self_attn_out = (
+            spatial_transformer(
+                in_channels=embed_channels,
+                n_heads=embed_channels // dim_heads,
+                dim_heads=dim_heads,
+            )
+            if use_self_attention
+            else None
         )
         self.out_conv = (
             torch.nn.Conv3d(embed_channels, embed_channels, 1, padding=0, stride=1)
@@ -537,7 +571,7 @@ class ResnetEncoderModel(torch.nn.Module):
         )
         self.pooling = None
         self.pooling_method = pool_all_features
-        feature_dim = 32 + 64 + 128 + 256 + embed_channels
+        feature_dim = 64 + 128 + 256 + embed_channels
         if pool_all_features == "spatial":
             self.pooling = torch.nn.Sequential(
                 torch.nn.Linear(feature_dim, 1024),
@@ -569,19 +603,25 @@ class ResnetEncoderModel(torch.nn.Module):
             self.grid_len,
             self.choir_dim,
         ).permute(0, 4, 1, 2, 3)
-        x = self.identity(x, debug=debug)
-        if self.pooling_method.startswith("spatial"):
-            interm_features.append(x.mean(dim=(2, 3, 4)))
+        # x = self.identity(x, debug=debug)
+        # if self.pooling_method.startswith("spatial"):
+        # interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down1(x, debug=debug)
+        if self.use_self_attn:
+            x = self.self_attn_1(x)
         if self.pooling_method.startswith("spatial"):
             interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down2(x, debug=debug)
         if self.pooling_method.startswith("spatial"):
             interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down3(x, debug=debug)
+        # if self.use_self_attn:
+        # x = self.self_attn_3(x)
         if self.pooling_method.startswith("spatial"):
             interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.out_identity(x, debug=debug)
+        if self.use_self_attn:
+            x = self.self_attn_out(x)
         if self.pooling_method.startswith("spatial"):
             interm_features.append(x.mean(dim=(2, 3, 4)))
 

@@ -553,7 +553,43 @@ experiment_store(
     ),
     name="baseline_cddpm_3d_multiview_contactopt",
 )
-
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "bps_ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            augment=True,
+            n_augs=20,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=256,
+            choir_dim=1,
+            rescale_input=True,
+            backbone="3d_unet",
+            embed_full_choir=True,
+            use_unet_self_attention=True,
+            use_backbone_self_attention=True,
+        ),
+        run=dict(conditional=True, full_choir=True),
+        bases=(Experiment,),
+    ),
+    name="cddpm_3d_multiview_contactopt",
+)
 experiment_store(
     make_config(
         hydra_defaults=[

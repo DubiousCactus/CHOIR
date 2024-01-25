@@ -38,6 +38,8 @@ class BPSDiffusionModel(torch.nn.Module):
         temporal_dim: int,
         rescale_input: bool,
         embed_full_choir: bool,
+        use_backbone_self_attn: bool = False,
+        use_encoder_self_attn: bool = False,
         y_embed_dim: Optional[int] = None,
     ):
         super().__init__()
@@ -58,7 +60,7 @@ class BPSDiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
-                    use_self_attention=True,
+                    use_self_attention=use_backbone_self_attn,
                 ),
                 partial(
                     ResnetEncoderModel,
@@ -66,7 +68,8 @@ class BPSDiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
-                    pool_all_features="none",
+                    pool_all_features="spatial",
+                    use_self_attention=use_encoder_self_attn,
                 )
                 if y_embed_dim is not None
                 else None,
