@@ -102,10 +102,13 @@ class BaseDataset(TaskSet, abc.ABC):
         )
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
-        grid_len = int(round(self._bps_dim ** (1 / 3))) if use_bps_grid else None
-        assert (
-            grid_len % 2 == 0
-        ), f"Grid length must be even. Got {grid_len} for bps_dim={self._bps_dim}."
+        grid_len = None
+        if use_bps_grid:
+            grid_len = int(round(self._bps_dim ** (1 / 3)))
+            assert (
+                grid_len % 2 == 0
+            ), f"Grid length must be even. Got {grid_len} for bps_dim={self._bps_dim}."
+
         bps_path = osp.join(
             get_original_cwd(),
             "data",
@@ -368,6 +371,8 @@ class BaseDataset(TaskSet, abc.ABC):
             beta,
             rot_6d,
             trans,
+            joints,
+            anchors,
             gt_choir,
             gt_rescaled_ref_pts,
             gt_scalar,
@@ -378,7 +383,28 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_rot_6d,
             gt_trans,
             mesh_pths,
-        ) = ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
+        ) = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
 
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
@@ -392,6 +418,11 @@ class BaseDataset(TaskSet, abc.ABC):
             beta.append(sample[5])
             rot_6d.append(sample[6])
             trans.append(sample[7])
+            if len(sample) > 8:
+                # To avoid recomputing the dataset for experiments that don't need sample
+                # joints/anchors
+                joints.append(sample[8])
+                anchors.append(sample[9])
             gt_choir.append(label[0])
             gt_rescaled_ref_pts.append(label[1])
             gt_scalar.append(label[2])
@@ -414,6 +445,8 @@ class BaseDataset(TaskSet, abc.ABC):
             "beta": torch.from_numpy(np.array([a for a in beta])),
             "rot": torch.from_numpy(np.array([a for a in rot_6d])),
             "trans": torch.from_numpy(np.array([a for a in trans])),
+            "joints": torch.from_numpy(np.array([a for a in joints])),
+            "anchors": torch.from_numpy(np.array([a for a in anchors])),
         }
         label = {
             "choir": torch.from_numpy(np.array([a for a in gt_choir])),

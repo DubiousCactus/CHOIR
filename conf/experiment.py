@@ -32,13 +32,14 @@ from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
-from model.diffusion_model import BPSDiffusionModel
+from model.diffusion_model import BPSDiffusionModel, KPDiffusionModel
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
+from src.multiview_ddpm_baseline_trainer import MultiViewDDPMBaselineTrainer
 from src.multiview_ddpm_tester import MultiViewDDPMTester
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
@@ -206,7 +207,25 @@ model_store(
         y_embed_dim=256,
         embed_full_choir=False,
     ),
-    name="ddpm",
+    name="bps_ddpm",
+)
+
+model_store(
+    pbuilds(
+        KPDiffusionModel,
+        backbone="mlp_resnet",
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        n_hand_keypoints=21 + 32,  # 21 MANO joints + 32 contact anchors
+        n_obj_keypoints=MISSING,
+        rescale_input=MISSING,
+        temporal_dim=256,
+        y_embed_dim=256,
+        y_input_keypoints=MISSING,
+        embed_full_pair=True,
+    ),
+    name="kp_ddpm",
 )
 
 " ================== Losses ================== "
@@ -346,6 +365,10 @@ trainer_store(pbuilds(DDPMTrainer, populate_full_signature=True), name="ddpm")
 trainer_store(
     pbuilds(MultiViewDDPMTrainer, populate_full_signature=True), name="ddpm_multiview"
 )
+trainer_store(
+    pbuilds(MultiViewDDPMBaselineTrainer, populate_full_signature=True),
+    name="ddpm_baseline_multiview",
+)
 
 tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
@@ -392,7 +415,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},
@@ -415,7 +438,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},
@@ -437,7 +460,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},
@@ -466,7 +489,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},
@@ -495,9 +518,9 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "kp_ddpm"},
             {"override /dataset": "contactpose"},
-            {"override /trainer": "ddpm_multiview"},
+            {"override /trainer": "ddpm_baseline_multiview"},
             {"override /tester": "ddpm_multiview"},
             {"override /training_loss": "diffusion"},
         ],
@@ -508,29 +531,34 @@ experiment_store(
             use_improved_contactopt_splits=True,
             remap_bps_distances=True,
             use_deltas=False,
-            use_bps_grid=True,
-            bps_dim=16**3,  # 32**3 should give much better results
+            use_bps_grid=False,  # We won't exploit it but then it's a fairer comparison
+            bps_dim=1024,  # 4096 points, as used in the PointNet++ paper
             augment=True,
             n_augs=20,
         ),
         data_loader=dict(batch_size=64),
         model=dict(
+            n_obj_keypoints=1024,  # 1024 points taken from the object point cloud's target points of the BPS representation
+            y_input_keypoints=1024
+            + 21
+            + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
             y_embed_dim=256,
-            choir_dim=1,
-            rescale_input=True,
-            backbone="3d_unet",
-            embed_full_choir=True,
+            rescale_input=False,  # Should already be around [-1, 1]... Could be outside?
+            embed_full_pair=False,
         ),
-        run=dict(conditional=True, full_choir=True),
+        run=dict(
+            conditional=True, full_choir=False  # Must be equal to embed_full_pair!
+        ),  # We can reuse the "full_choir" flag for "hand_object_pair"
         bases=(Experiment,),
     ),
-    name="cddpm_3d_multiview_contactopt",
+    name="baseline_cddpm_3d_multiview_contactopt",
 )
+
 experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},
@@ -560,7 +588,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "ddpm"},
+            {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm"},
             {"override /tester": "ddpm"},

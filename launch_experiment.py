@@ -82,6 +82,8 @@ def launch_experiment(
         )  # Use just() to get the config out of the Zen-Partial
     elif model.func is BPSDiffusionModel:
         model_inst = model(bps_dim=just(dataset).bps_dim)
+    else:
+        model_inst = model()
     print(model_inst)
     print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
     print(

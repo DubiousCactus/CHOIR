@@ -550,6 +550,8 @@ class ContactPoseDataset(BaseDataset):
                             beta.squeeze().cpu().numpy(),
                             rot_6d.squeeze().cpu().numpy(),
                             trans.squeeze().cpu().numpy(),
+                            joints.squeeze().cpu().numpy(),
+                            anchors.squeeze().cpu().numpy(),
                         ), (
                             gt_choir.squeeze().cpu().numpy(),
                             gt_rescaled_ref_pts.squeeze().cpu().numpy(),

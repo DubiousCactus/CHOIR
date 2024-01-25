@@ -10,7 +10,7 @@ Dataset-related functions.
 """
 
 from copy import deepcopy
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import open3d
@@ -91,7 +91,7 @@ def compute_choir(
     remap_bps_distances: bool,
     exponential_map_w: float,
     use_deltas: bool,
-    compute_hand_object_distances: bool,
+    compute_hand_object_distances: Optional[bool] = False,
 ) -> torch.Tensor:
     """
     Args:
@@ -117,6 +117,8 @@ def compute_choir(
         rescaled_obj_pointcloud,
         feature_type=["dists", "deltas"],
     )
+    object_bps["deltas"] = object_bps["deltas"].to(bps.device)
+    object_bps["dists"] = object_bps["dists"].to(bps.device)
     rescaled_ref_pts = bps + object_bps["deltas"]  # A subset of rescaled_obj_pointcloud
     # Assign all ordered 32 rescaled_anchors to a batch of BPS points and repeat for all available
     # batches. The number of batches is determined by the number of BPS points, and the latter
