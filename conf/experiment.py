@@ -582,7 +582,7 @@ experiment_store(
             rescale_input=True,
             backbone="3d_unet",
             embed_full_choir=True,
-            use_unet_self_attention=True,
+            use_encoder_self_attention=True,
             use_backbone_self_attention=True,
         ),
         run=dict(conditional=True, full_choir=True),
