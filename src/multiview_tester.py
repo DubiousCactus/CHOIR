@@ -31,8 +31,11 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
-from utils.testing import compute_mpjpe, compute_solid_intersection_volume
-from utils.training import optimize_pose_pca_from_choir
+from utils.testing import compute_mpjpe
+from utils.training import (
+    optimize_mesh_from_joints_and_anchors,
+    optimize_pose_pca_from_choir,
+)
 from utils.visualization import (
     ScenePicAnim,
     visualize_model_predictions_with_multiple_views,
@@ -56,6 +59,7 @@ class MultiViewTester(MultiViewTrainer):
             data_loader (torch.utils.data.DataLoader): Training dataloader.
             val_loader (torch.utils.data.DataLoader): Validation dataloader.
         """
+        self._is_baseline = False
         self._run_name = run_name
         self._model = model
         assert "max_observations" in kwargs, "max_observations must be provided."
@@ -206,39 +210,77 @@ class MultiViewTester(MultiViewTrainer):
         else:
             use_smplx = False  # TODO: I don't use it for now
             with torch.set_grad_enabled(True):
-                (
-                    _,
-                    _,
-                    _,
-                    _,
-                    anchors_pred,
-                    verts_pred,
-                    joints_pred,
-                ) = optimize_pose_pca_from_choir(
-                    y_hat["choir"],
-                    bps=self._bps,
-                    anchor_indices=self._anchor_indices,
-                    scalar=input_scalar,
-                    max_iterations=2000,
-                    loss_thresh=1e-6,
-                    lr=8e-2,
-                    is_rhand=samples["is_rhand"],
-                    use_smplx=use_smplx,
-                    dataset=self._data_loader.dataset.name,
-                    remap_bps_distances=self._remap_bps_distances,
-                    exponential_map_w=self._exponential_map_w,
-                    initial_params={
-                        k: (
-                            v[:, -1] if multiple_obs else v
-                        )  # Initial pose is the last observation
-                        for k, v in samples.items()
-                        if k
-                        in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
-                    },
-                    beta_w=1e-4,
-                    theta_w=1e-7,
-                    choir_w=1000,
-                )
+                if self._is_baseline:
+                    joints_pred, anchors_pred = (
+                        y_hat["hand_keypoints"][:, :21],
+                        y_hat["hand_keypoints"][:, 21:],
+                    )
+                    verts_pred = optimize_mesh_from_joints_and_anchors(
+                        y_hat["hand_keypoints"],
+                        scalar=torch.mean(input_scalar)
+                        .unsqueeze(0)
+                        .to(input_scalar.device),  # TODO: What should I do here?
+                        is_rhand=samples["is_rhand"][0],
+                        max_iterations=400,
+                        loss_thresh=1e-7,
+                        lr=8e-2,
+                        dataset=self._data_loader.dataset.name,
+                        use_smplx=use_smplx,
+                        initial_params={
+                            k: (
+                                v[:, -1] if multiple_obs else v
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-8,
+                    )
+                else:
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(
+                        y_hat["choir"],
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=2000,
+                        loss_thresh=1e-6,
+                        lr=8e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=use_smplx,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params={
+                            k: (
+                                v[:, -1] if multiple_obs else v
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
         with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
@@ -287,15 +329,15 @@ class MultiViewTester(MultiViewTrainer):
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             object_meshes = None
             intersection_volume = torch.zeros(1)
-            intersection_volume, object_meshes = compute_solid_intersection_volume(
-                pitch,
-                radius,
-                mesh_pths,
-                verts_pred,
-                mano_faces,
-                self._data_loader.dataset.center_on_object_com,
-                return_meshes=True,
-            )
+            # intersection_volume, object_meshes = compute_solid_intersection_volume(
+            # pitch,
+            # radius,
+            # mesh_pths,
+            # verts_pred,
+            # mano_faces,
+            # self._data_loader.dataset.center_on_object_com,
+            # return_meshes=True,
+            # )
             # ======= Contact Coverage =======
             if object_meshes is None:
                 object_meshes = {}

@@ -188,6 +188,142 @@ def optimize_pose_pca_from_choir(
     )
 
 
+@to_cuda
+def optimize_mesh_from_joints_and_anchors(
+    joints_and_anchors: torch.Tensor,
+    scalar: torch.Tensor,
+    is_rhand: bool,
+    use_smplx: bool,
+    dataset: str,
+    loss_thresh: float = 1e-11,
+    lr: float = 5e-2,
+    max_iterations=8000,
+    initial_params=None,
+    beta_w: float = 0.05,
+    theta_w: float = 0.01,
+    choir_w: float = 1.0,
+) -> torch.Tensor:
+    B = joints_and_anchors.shape[0]
+    affine_mano, smplx_model = None, None
+    if use_smplx:
+        with redirect_stdout(None):
+            smplx_model = to_cuda_(
+                smplx.create(
+                    model_path=project_conf.SMPLX_MODEL_PATH,
+                    model_type="mano",
+                    is_rhand=is_rhand,
+                    num_pca_comps=24,
+                    flat_hand_mean=False,
+                    batch_size=B,
+                )
+            )
+    if dataset.lower() == "contactpose":
+        affine_mano = to_cuda_(
+            AffineMANO(15, flat_hand_mean=False, for_contactpose=True)
+        )
+        ncomps = 15
+    elif dataset.lower() == "grab":
+        affine_mano = to_cuda_(
+            AffineMANO(24, flat_hand_mean=True, for_contactpose=False)
+        )
+        ncomps = 24
+    else:
+        raise ValueError(f"Unknown dataset '{dataset}'.")
+    if initial_params is None:
+        theta = torch.rand((B, ncomps + (3 if not use_smplx else 0))) * 0.01
+        beta = torch.rand((B, 10)) * 0.01
+        if use_smplx:
+            rot = torch.rand((B, 3)) * 0.01  # axis-angle for SMPL-X
+        else:
+            rot = torch.rand((B, 6)) * 0.01  # 6D for AffineMANO
+        trans = torch.rand((B, 3)) * 0.001
+    else:
+        theta = initial_params["theta"].detach().clone()
+        beta = initial_params["beta"].detach().clone()
+        rot = initial_params["rot"].detach().clone()
+        trans = initial_params["trans"].detach().clone()
+        theta_reg = initial_params["theta"].detach().clone()
+        # If we have more than 1 observation, we average the parameters:
+        with torch.no_grad():
+            if len(theta.shape) > 2:
+                theta = theta.mean(dim=1)
+                theta_reg = theta_reg.mean(dim=1)
+            if len(beta.shape) > 2:
+                beta = beta.mean(dim=1)
+            if len(rot.shape) > 2:
+                rot = rot.mean(dim=1)
+            if len(trans.shape) > 2:
+                trans = trans.mean(dim=1)
+        assert theta.shape[0] == B, (
+            "optimize_mesh_from_joints_and_anchors(): batch size mismatch between"
+            + f" initial parameters and keypoints. theta.shape: {theta.shape}, B: {B}"
+        )
+    rot, trans, theta, beta = to_cuda_((rot, trans, theta, beta))
+    for p in (rot, trans, theta, beta):
+        p.requires_grad = True
+    optimizer = torch.optim.Adam([rot, trans, theta, beta], lr=lr)
+
+    if initial_params is not None:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+    else:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
+    proc_bar = tqdm.tqdm(range(max_iterations))
+
+    prev_loss = float("inf")
+
+    # ============== Rescale the joints/anchors to fit the MANO model ==============
+    if len(scalar.shape) == 1:
+        joints_and_anchors = (
+            joints_and_anchors / scalar[:, None, None]
+        )  # CHOIR (and so joints and anchors) was computed with scaled up MANO and object pointclouds.
+    elif len(scalar.shape) == 2:
+        joints_and_anchors = (
+            joints_and_anchors / scalar[:, None, :]
+        )  # CHOIR was computed with scaled up MANO and object pointclouds.
+
+    plateau_cnt = 0
+    pose_regularizer = to_cuda_(torch.tensor(0.0))
+    for _ in proc_bar:
+        optimizer.zero_grad()
+        if use_smplx:
+            output = smplx_model(
+                hand_pose=theta, betas=beta, global_orient=rot, transl=trans
+            )
+            verts, joints = output.vertices, output.joints
+        else:
+            verts, joints = affine_mano(theta, beta, rot, trans)
+        anchors = affine_mano.get_anchors(verts)
+        if anchors.isnan().any():
+            raise ValueError("NaNs in anchors.")
+        loss = torch.nn.functional.mse_loss(
+            joints_and_anchors, torch.cat((joints, anchors), dim=-2)
+        )
+        shape_regularizer = (
+            beta_w * torch.norm(beta) ** 2
+        )  # Encourage the shape parameters to remain close to 0
+        if initial_params is not None:
+            pose_regularizer = (
+                theta_w * torch.norm(theta - theta_reg) ** 2
+            )  # Shape prior
+
+        proc_bar.set_description(
+            f"Anchors loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+        )
+        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
+            plateau_cnt += 1
+        else:
+            plateau_cnt = 0
+        prev_loss = loss.detach().type(torch.float64)
+        loss = loss + shape_regularizer + pose_regularizer
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if plateau_cnt >= 10:
+            break
+
+    return verts.detach()
+
+
 def get_dict_from_sample_and_label_tensors(
     sample: torch.Tensor, label: torch.Tensor, theta_dim: int = 18, beta_dim: int = 10
 ) -> Tuple[Dict]:

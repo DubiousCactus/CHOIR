@@ -39,6 +39,7 @@ from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.hoi import CHOIRLoss
+from src.multiview_ddpm_baseline_tester import MultiViewDDPMBaselineTester
 from src.multiview_ddpm_baseline_trainer import MultiViewDDPMBaselineTrainer
 from src.multiview_ddpm_tester import MultiViewDDPMTester
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
@@ -379,6 +380,10 @@ tester_store(pbuilds(DDPMTester, populate_full_signature=True), name="ddpm")
 tester_store(
     pbuilds(MultiViewDDPMTester, populate_full_signature=True), name="ddpm_multiview"
 )
+tester_store(
+    pbuilds(MultiViewDDPMBaselineTester, populate_full_signature=True),
+    name="ddpm_baseline_multiview",
+)
 
 Experiment = builds(
     launch_experiment,
@@ -523,7 +528,7 @@ experiment_store(
             {"override /model": "kp_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm_baseline_multiview"},
-            {"override /tester": "ddpm_multiview"},
+            {"override /tester": "ddpm_baseline_multiview"},
             {"override /training_loss": "diffusion"},
         ],
         dataset=dict(
@@ -584,7 +589,7 @@ experiment_store(
             rescale_input=True,
             backbone="3d_unet",
             embed_full_choir=True,
-            use_encoder_self_attn=True,
+            use_encoder_self_attn=False,
             use_backbone_self_attn=True,
         ),
         run=dict(conditional=True, full_choir=True),

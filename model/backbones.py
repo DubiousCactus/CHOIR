@@ -119,6 +119,8 @@ class MLPResNetBackboneModel(torch.nn.Module):
         debug=False,
     ) -> torch.Tensor:
         input_shape = x.shape
+        bs, ctx_len = x.shape[0], (x.shape[1] if len(x.shape) == 4 else 1)
+        t = t.view(bs * ctx_len, -1)
         x = x.view(x.shape[0], -1)
         time_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.input_layer(x)

@@ -44,7 +44,7 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
             theta_dim=self._train_loader.dataset.theta_dim,
             use_deltas=self._use_deltas,
             conditional=self.conditional,
-            method="ddpm",
+            method="baseline",
         )  # User implementation goes here (utils/training.py)
 
     @to_cuda

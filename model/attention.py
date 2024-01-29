@@ -234,7 +234,7 @@ class SpatialTransformer(torch.nn.Module):
         n_heads: int,
         dim_heads: int,
         dropout=0.0,
-        gated_ff: bool = True,
+        gated_ff: bool = False,
         norm_groups: int = 32,
     ) -> None:
         super().__init__()
