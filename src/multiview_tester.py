@@ -31,7 +31,7 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
-from utils.testing import compute_mpjpe, compute_solid_intersection_volume
+from utils.testing import compute_mpjpe
 from utils.training import optimize_pose_pca_from_choir
 from utils.visualization import (
     ScenePicAnim,
@@ -287,15 +287,15 @@ class MultiViewTester(MultiViewTrainer):
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             object_meshes = None
             intersection_volume = torch.zeros(1)
-            intersection_volume, object_meshes = compute_solid_intersection_volume(
-                pitch,
-                radius,
-                mesh_pths,
-                verts_pred,
-                mano_faces,
-                self._data_loader.dataset.center_on_object_com,
-                return_meshes=True,
-            )
+            # intersection_volume, object_meshes = compute_solid_intersection_volume(
+            # pitch,
+            # radius,
+            # mesh_pths,
+            # verts_pred,
+            # mano_faces,
+            # self._data_loader.dataset.center_on_object_com,
+            # return_meshes=True,
+            # )
             # ======= Contact Coverage =======
             if object_meshes is None:
                 object_meshes = {}

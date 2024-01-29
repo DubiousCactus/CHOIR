@@ -65,7 +65,7 @@ class BPSDiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
-                    pool_all_features="none",
+                    pool_all_features="spatial",
                 )
                 if y_embed_dim is not None
                 else None,
@@ -147,9 +147,9 @@ class BPSDiffusionModel(torch.nn.Module):
         # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
-        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
+        print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
-        # print(f"eps_hat.shape: {eps_hat.shape}")
+        print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -169,12 +169,16 @@ class BPSDiffusionModel(torch.nn.Module):
 
         # ===== Inference =======
         assert self._input_shape is not None, "Must call forward first"
+        if self.embed_full_choir:
+            assert y is not None, "Must provide y when embed_full_choir is True"
         with torch.no_grad():
             device = next(self.parameters()).device
             y_embed = self.embedder(y) if y is not None else None
             z_current = torch.randn(n, *self._input_shape).to(device)
             if y_embed is not None:
                 z_current = z_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
+            if self.embed_full_choir:
+                z_current[..., 0] = y[..., 0]
             _in_shape = z_current.shape
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
@@ -183,19 +187,40 @@ class BPSDiffusionModel(torch.nn.Module):
                     make_t_batched(t, n, y_embed),
                     y_embed,
                 )
-                z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
-                    self.beta[t]
-                    / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
-                ) * eps_hat
-                eps = torch.randn_like(z_current)
-                z_current = z_prev_hat + eps * self.sigma[t]
+                if self.embed_full_choir:
+                    z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current[
+                        ..., -1
+                    ][..., None] - (
+                        self.beta[t]
+                        / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                    ) * eps_hat
+                    eps = torch.randn_like(z_current[..., -1][..., None])
+                    z_current = torch.cat(
+                        (y[..., 0][..., None], z_prev_hat + eps * self.sigma[t]), dim=-1
+                    )
+                else:
+                    z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
+                        self.beta[t]
+                        / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                    ) * eps_hat
+                    eps = torch.randn_like(z_current)
+                    z_current = z_prev_hat + eps * self.sigma[t]
                 pbar.update()
             # Now for z_0:
             eps_hat = self.backbone(z_current, make_t_batched(t, n, y_embed), y_embed)
-            x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
-                self.beta[0]
-                / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
-            ) * eps_hat
+            if self.embed_full_choir:
+                x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current[..., -1][
+                    ..., None
+                ] - (
+                    self.beta[0]
+                    / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+                ) * eps_hat
+                x_hat = torch.cat((y[..., 0][..., None], x_hat), dim=-1)
+            else:
+                x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
+                    self.beta[0]
+                    / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+                ) * eps_hat
             pbar.update()
             pbar.close()
             output = x_hat.view(*_in_shape)
