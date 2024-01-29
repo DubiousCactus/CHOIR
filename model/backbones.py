@@ -236,10 +236,8 @@ class PointNet2EncoderModel_old(torch.nn.Module):
         x = self.drop1(
             torch.nn.functional.relu(self.bn1(self.conv1(l0_points)))
         )  # (batch_size, c, num_points)
-        print(f"Output shape before FF = {x.shape}")
         x = x.view(b, t, -1)
         x = self.ff(x)
-        print(f"Output shape after FF = {x.shape}")
         return x
 
 
@@ -319,7 +317,7 @@ class UNetBackboneModel(torch.nn.Module):
             normalization=normalization,
             norm_groups=norm_groups,
             context_channels=context_channels,
-            interpolate=False,
+            interpolate=True,
         )
         identity_conv_block = partial(
             TemporalConvIdentityBlock,
@@ -523,13 +521,13 @@ class ResnetEncoderModel(torch.nn.Module):
             norm_groups=norm_groups,
             pooling=pooling,
         )
-        self.self_attn_1 = (
-            spatial_transformer(
-                in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
-            )
-            if use_self_attention
-            else None
-        )
+        # self.self_attn_1 = (
+        # spatial_transformer(
+        # in_channels=64, n_heads=64 // dim_heads, dim_heads=dim_heads
+        # )
+        # if use_self_attention
+        # else None
+        # )
         self.down2 = ConvDownBlock(
             64,
             128,
@@ -609,8 +607,8 @@ class ResnetEncoderModel(torch.nn.Module):
         # if self.pooling_method.startswith("spatial"):
         # interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down1(x, debug=debug)
-        if self.use_self_attn:
-            x = self.self_attn_1(x)
+        # if self.use_self_attn:
+        # x = self.self_attn_1(x)
         if self.pooling_method.startswith("spatial"):
             interm_features.append(x.mean(dim=(2, 3, 4)))
         x = self.down2(x, debug=debug)

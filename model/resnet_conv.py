@@ -18,6 +18,34 @@ import torch
 from model.attention import MultiHeadSpatialAttention
 
 
+class InterpolateUpsampleLayer(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        scale_factor: int = 2,
+        mode: str = "nearest",
+        conv_kernel: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self.conv = (
+            torch.nn.Conv3d(
+                in_channels, out_channels, kernel_size=conv_kernel, padding=1
+            )
+            if conv_kernel is not None
+            else torch.nn.Identity()
+        )
+        self.scale_factor = scale_factor
+        self.mode = mode
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.nn.functional.interpolate(
+            x, scale_factor=self.scale_factor, mode=self.mode
+        )
+        x = self.conv(x)
+        return x
+
+
 class TemporalResidualBlock(torch.nn.Module):
     def __init__(
         self,
@@ -110,11 +138,7 @@ class TemporalResidualBlock(torch.nn.Module):
             )
         elif rescaling == "up":
             self.up_or_down_sample = (
-                (
-                    lambda x: torch.nn.functional.interpolate(
-                        x, scale_factor=2, mode="nearest"
-                    )
-                )
+                InterpolateUpsampleLayer(channels_out, channels_out, conv_kernel=None)
                 if interpolate
                 else conv(
                     channels_out,
@@ -126,11 +150,7 @@ class TemporalResidualBlock(torch.nn.Module):
                 )
             )
             self.up_or_down_sample_input = (
-                (
-                    lambda x: torch.nn.functional.interpolate(
-                        x, scale_factor=2, mode="nearest"
-                    )
-                )
+                InterpolateUpsampleLayer(channels_in, channels_in, conv_kernel=None)
                 if interpolate
                 else conv(
                     channels_in,
@@ -145,9 +165,11 @@ class TemporalResidualBlock(torch.nn.Module):
             self.up_or_down_sample = torch.nn.Identity()
             self.up_or_down_sample_input = torch.nn.Identity()
 
+        # ================= OUTPUT CONVOLUTION =====================
         self.norm2 = norm(channels_out)
-        # ==========================================================
+        self.conv2 = conv(channels_out, channels_out, kernels[0], padding=paddings[0])
         self.out_activation = torch.nn.SiLU()
+        self.out_norm = norm(channels_out)
         # ==========================================================
         # ================== TEMPORAL PROJECTION ===================
         self.temporal_projection = (
@@ -213,16 +235,24 @@ class TemporalResidualBlock(torch.nn.Module):
             x = x * (scale + 1) + shift
         x = self.nonlin(x)
         x = self.up_or_down_sample(x)
+        x = self.norm2(x)
+        x = self.conv2(x)
+        if t_emb is not None:
+            x = x * (scale + 1) + shift
         if context is not None:
             assert t_emb is not None
             x = self.out_activation(
-                self.norm2(x + self.skip_connection(self.up_or_down_sample_input(_x)))
+                self.out_norm(
+                    x + self.skip_connection(self.up_or_down_sample_input(_x))
+                )
             )
             # TODO: Move the following OUTSIDE this module, into its own module.
             x = x + self.cross_attention(q=x, k=context, v=context)
         else:
             x = self.out_activation(
-                self.norm2(x + self.skip_connection(self.up_or_down_sample_input(_x)))
+                self.out_norm(
+                    x + self.skip_connection(self.up_or_down_sample_input(_x))
+                )
             )
         return x
 

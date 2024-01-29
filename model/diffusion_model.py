@@ -34,7 +34,7 @@ class BPSDiffusionModel(torch.nn.Module):
         beta_1: float,
         beta_T: float,
         bps_dim: int,
-        choir_dim: int,
+        choir_dim: int,  # TODO: Rename this because it's confusing since not reflecting the actual CHOIR but just the part used (object + hand or just hand)
         temporal_dim: int,
         rescale_input: bool,
         embed_full_choir: bool,
@@ -64,7 +64,7 @@ class BPSDiffusionModel(torch.nn.Module):
                 ),
                 partial(
                     ResnetEncoderModel,
-                    choir_dim=choir_dim * (2 if embed_full_choir else 1),
+                    choir_dim=choir_dim * 2,
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
@@ -151,9 +151,9 @@ class BPSDiffusionModel(torch.nn.Module):
         # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
-        print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
+        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
-        print(f"eps_hat.shape: {eps_hat.shape}")
+        # print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
