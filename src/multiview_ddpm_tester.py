@@ -28,10 +28,13 @@ class MultiViewDDPMTester(MultiViewTester):
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
             if not self._use_deltas:
                 self._model(
-                    labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                    labels["choir"][:, -1]
+                    if self._model.embed_full_choir
+                    else labels["choir"][:, -1][..., -1].unsqueeze(-1),
                     samples["choir"] if self.conditional else None,
                 )  # Only the hand distances!
             else:
+                raise NotImplementedError
                 self._model(
                     labels["choir"][..., 3:],
                     samples["choir"] if self.conditional else None,
