@@ -21,9 +21,10 @@ from model.backbones import (
     MLPResNetEncoderModel,
     PointNet2EncoderModel,
     ResnetEncoderModel,
+    TransformerEncoderModel,
     UNetBackboneModel,
 )
-from model.time_encoding import SinusoidalTimeEncoder
+from model.pos_encoding import SinusoidalPosEncoder
 
 
 class BPSDiffusionModel(torch.nn.Module):
@@ -74,10 +75,26 @@ class BPSDiffusionModel(torch.nn.Module):
                 if y_embed_dim is not None
                 else None,
             ),
+            "3d_unet_w_transformer": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                ),
+                partial(
+                    TransformerEncoderModel,
+                    choir_dim=choir_dim * 2,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
-            time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
+            time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             choir_dim=choir_dim * (2 if embed_full_choir else 1),
             output_channels=1,
             temporal_dim=temporal_dim,
@@ -310,7 +327,7 @@ class KPDiffusionModel(torch.nn.Module):
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
-            time_encoder=SinusoidalTimeEncoder(time_steps, temporal_dim),
+            time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             temporal_dim=temporal_dim,
         )
         self.embedder = (

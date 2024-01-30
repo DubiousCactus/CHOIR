@@ -15,6 +15,7 @@ from typing import Optional, Tuple
 import torch
 
 from model.attention import SpatialTransformer
+from model.pos_encoding import SinusoidalPosEncoder
 from model.resnet_conv import DownScaleResidualBlock as ConvDownBlock
 from model.resnet_conv import IdentityResidualBlock as ConvIdentityBlock
 from model.resnet_conv import TemporalDownScaleResidualBlock as TemporalConvDownBlock
@@ -646,3 +647,153 @@ class ResnetEncoderModel(torch.nn.Module):
                 dim=1
             )  # For now we'll try with 1 context frame TODO
         return x
+
+
+class TransformerEncoderModel(torch.nn.Module):
+    def __init__(
+        self,
+        bps_grid_len: int,
+        choir_dim: int,
+        embed_channels: int,
+        num_layers: int = 5,
+        patch_size: int = 4,
+        d_model: int = 256,
+        n_heads: int = 8,
+        dim_feedforward: int = 2048,
+        dropout: float = 0.1,
+        global_pooling: bool = False,
+    ):
+        super().__init__()
+        self.grid_len = bps_grid_len
+        self.choir_dim = choir_dim
+        self.patch_size = patch_size
+        self.transformer_encoder = torch.nn.TransformerEncoder(
+            torch.nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,  # (batch, seq, feature) where seq is basis points and feature is choir_dim
+            ),
+            num_layers=num_layers,
+        )
+        n_patches = (self.grid_len // self.patch_size) ** 3
+        self.pos_encoder = SinusoidalPosEncoder(
+            max_positions=n_patches, model_dim=d_model
+        )
+        self.pooling = (
+            torch.nn.Sequential(
+                torch.nn.Linear(d_model * n_patches, 2048),
+                torch.nn.GELU(),
+                torch.nn.Linear(2048, embed_channels),
+            )
+            if global_pooling
+            else None
+        )
+        self.linear_projection = torch.nn.Linear(
+            choir_dim * self.patch_size**3, d_model
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        if len(x.shape) == 3:
+            bs, n, ctx_len = x.shape[0], 1, 1
+        elif len(x.shape) == 4:
+            bs, n, ctx_len = x.shape[0], 1, x.shape[1]
+        elif len(x.shape) == 5:
+            bs, n, ctx_len = x.shape[0], x.shape[1], x.shape[2]
+        if debug:
+            print(f"Input shape: {x.shape}")
+        n_patches = (self.grid_len // self.patch_size) ** 3
+        if debug:
+            print(f"Patch indices: {torch.arange(n_patches)})")
+        if debug:
+            print(
+                f"Pos indices shape: {torch.arange(n_patches).unsqueeze(0).repeat(bs * n * ctx_len, 1).to(x.device).shape}"
+            )
+        pos_embed = self.pos_encoder(
+            torch.arange(n_patches)
+            .unsqueeze(0)
+            .repeat(bs * n * ctx_len, 1)
+            .to(x.device),
+            flatten_output=False,
+        )
+        if debug:
+            print(f"Positional embedding shape: {pos_embed.shape}")
+        x = x.view(
+            bs * n * ctx_len,
+            self.grid_len,
+            self.grid_len,
+            self.grid_len,
+            self.choir_dim,
+        ).permute(0, 4, 1, 2, 3)
+        if debug:
+            print(f"Reshaped shape: {x.shape}")
+        # Make patches of size self.patch_size x self.patch_size x self.patch_size:
+        # (Output should be (bs * n * ctx_len, choir_dim, self.patch_size, self.patch_size,
+        # self.patch_size, n_patches)).
+        x = (
+            x.unfold(
+                2, self.patch_size, self.patch_size
+            )  # Along the 2nd dimension (x-axis): square patch
+            .unfold(
+                3, self.patch_size, self.patch_size
+            )  # Along the 3rd dimension (y-axis): square patch
+            .unfold(
+                4, self.patch_size, self.patch_size
+            )  # Along the 4th dimension (z-axis): square patch
+        )
+        if debug:
+            print(f"Unfolded shape: {x.shape}")
+        x = x.reshape(
+            bs * n * ctx_len,
+            self.choir_dim,
+            self.patch_size,
+            self.patch_size,
+            self.patch_size,
+            n_patches,
+        )
+        if debug:
+            print(f"Patches shape: {x.shape}")
+        # Flatten the patches:
+        x = x.permute(0, 5, 1, 2, 3, 4).flatten(
+            start_dim=2
+        )  # (bs * n * ctx_len, n_patches, choir_dim * self.patch_size ** 3)
+        if debug:
+            print(f"Flattened shape: {x.shape}")
+        x = self.linear_projection(x)
+        if debug:
+            print(f"Projected shape: {x.shape}")
+        x = x + pos_embed
+        x = self.transformer_encoder(x)
+        if debug:
+            print(f"Transformer encoded shape: {x.shape}")
+        if self.pooling is not None:
+            x = self.pooling(
+                x.flatten(start_dim=1)
+            )  # Concatenate all patches and pool them
+            if debug:
+                print(f"Pooled shape: {x.shape}")
+            return x.view(bs * n, ctx_len, -1, 1, 1, 1).squeeze(
+                dim=1
+            )  # For now we'll try with 1 context frame TODO
+        else:
+            x = (
+                x.permute(0, 2, 1)
+                .view(
+                    bs * n,
+                    ctx_len,
+                    x.shape[2],
+                    self.patch_size,
+                    self.patch_size,
+                    self.patch_size,
+                )
+                .squeeze(dim=1)
+            )
+            if debug:
+                print(f"Output shape: {x.shape}")
+            return x
