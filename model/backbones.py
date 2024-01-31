@@ -9,6 +9,7 @@
 Backbones for all sorts of things (diffusion hehehehehehehe).
 """
 
+import math
 from functools import partial
 from typing import Optional, Tuple
 
@@ -655,13 +656,14 @@ class TransformerEncoderModel(torch.nn.Module):
         bps_grid_len: int,
         choir_dim: int,
         embed_channels: int,
-        num_layers: int = 5,
+        num_layers: int = 4,
         patch_size: int = 4,
-        d_model: int = 256,
         n_heads: int = 8,
-        dim_feedforward: int = 2048,
+        dim_feedforward: int = 1024,
         dropout: float = 0.1,
         global_pooling: bool = False,
+        non_linear_projection: bool = False,
+        spatialize_patches: bool = False,
     ):
         super().__init__()
         self.grid_len = bps_grid_len
@@ -669,7 +671,7 @@ class TransformerEncoderModel(torch.nn.Module):
         self.patch_size = patch_size
         self.transformer_encoder = torch.nn.TransformerEncoder(
             torch.nn.TransformerEncoderLayer(
-                d_model=d_model,
+                d_model=embed_channels,
                 nhead=n_heads,
                 dim_feedforward=dim_feedforward,
                 dropout=dropout,
@@ -680,20 +682,29 @@ class TransformerEncoderModel(torch.nn.Module):
         )
         n_patches = (self.grid_len // self.patch_size) ** 3
         self.pos_encoder = SinusoidalPosEncoder(
-            max_positions=n_patches, model_dim=d_model
+            max_positions=n_patches, model_dim=embed_channels
         )
         self.pooling = (
             torch.nn.Sequential(
-                torch.nn.Linear(d_model * n_patches, 2048),
+                torch.nn.Linear(embed_channels * n_patches, 2048),
                 torch.nn.GELU(),
                 torch.nn.Linear(2048, embed_channels),
             )
             if global_pooling
             else None
         )
-        self.linear_projection = torch.nn.Linear(
-            choir_dim * self.patch_size**3, d_model
+        self.linear_projection = torch.nn.Sequential(
+            torch.nn.Linear(choir_dim * self.patch_size**3, embed_channels),
+            torch.nn.GELU() if non_linear_projection else torch.nn.Identity(),
         )
+        self.embed_dim = embed_channels
+        if spatialize_patches:
+            assert math.cbrt(
+                embed_channels
+            ).is_integer(), (
+                "Embedding dimension must be a perfect cube for spatialized patches"
+            )
+        self.spatialize_patches = spatialize_patches
 
     def forward(
         self,
@@ -778,22 +789,30 @@ class TransformerEncoderModel(torch.nn.Module):
             )  # Concatenate all patches and pool them
             if debug:
                 print(f"Pooled shape: {x.shape}")
-            return x.view(bs * n, ctx_len, -1, 1, 1, 1).squeeze(
+            x = x.view(bs * n, ctx_len, -1, 1, 1, 1).squeeze(
                 dim=1
             )  # For now we'll try with 1 context frame TODO
+        elif self.spatialize_patches:
+            patch_dim = int(math.cbrt(self.embed_dim))
+            # x is (bs * n * ctx_len, n_patches, d_model)
+            x = x.view(bs * n * ctx_len, n_patches, patch_dim, patch_dim, patch_dim)
+            if debug:
+                print(f"Spatialized shape: {x.shape}")
+            x = x.view(bs * n, ctx_len, *x.shape[1:])
+            x = x.squeeze(dim=1)
         else:
             x = (
-                x.permute(0, 2, 1)
+                x.permute(0, 2, 1)  # (bs * n * ctx_len, d_model, n_patches)
                 .view(
                     bs * n,
                     ctx_len,
-                    x.shape[2],
-                    self.patch_size,
+                    self.embed_dim,
+                    self.patch_size,  # Each patch is d=256 and we have 64 patches.
                     self.patch_size,
                     self.patch_size,
                 )
                 .squeeze(dim=1)
             )
-            if debug:
-                print(f"Output shape: {x.shape}")
-            return x
+        if debug:
+            print(f"Output shape: {x.shape}")
+        return x

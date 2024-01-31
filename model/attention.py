@@ -137,8 +137,8 @@ class MultiHeadSpatialAttention(torch.nn.Module):
         inner_dim = dim_head * n_heads
         self.scale = torch.sqrt(torch.tensor(dim_head))
         self.heads = n_heads
-        self.heads_k = torch.nn.Linear(k_dim, inner_dim, bias=use_bias)
         self.heads_q = torch.nn.Linear(q_dim, inner_dim, bias=use_bias)
+        self.heads_k = torch.nn.Linear(k_dim, inner_dim, bias=use_bias)
         self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
         self.out_proj = torch.nn.Sequential(
             torch.nn.Linear(inner_dim, q_dim, bias=use_bias)

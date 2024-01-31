@@ -206,6 +206,7 @@ model_store(
         rescale_input=MISSING,
         temporal_dim=256,
         y_embed_dim=256,
+        context_channels=MISSING,
         embed_full_choir=False,
         use_backbone_self_attn=False,
         use_encoder_self_attn=False,
@@ -585,6 +586,7 @@ experiment_store(
         data_loader=dict(batch_size=64),
         model=dict(
             y_embed_dim=256,
+            context_channels=MISSING,
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet",
@@ -596,6 +598,44 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="cddpm_3d_multiview_contactopt",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "bps_ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            augment=True,
+            n_augs=20,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=216,
+            context_channels=64,
+            choir_dim=1,
+            rescale_input=True,
+            backbone="3d_unet_w_transformer_spatial_patches",
+            embed_full_choir=False,
+            use_encoder_self_attn=False,
+            use_backbone_self_attn=True,
+        ),
+        run=dict(conditional=True, full_choir=False),
+        bases=(Experiment,),
+    ),
+    name="cddpm_tr_3d_multiview_contactopt",
 )
 experiment_store(
     make_config(

@@ -42,6 +42,7 @@ class BPSDiffusionModel(torch.nn.Module):
         use_backbone_self_attn: bool = False,
         use_encoder_self_attn: bool = False,
         y_embed_dim: Optional[int] = None,
+        context_channels: Optional[int] = None,
     ):
         super().__init__()
         y_dim = (bps_dim * choir_dim) if y_embed_dim is not None else None
@@ -91,6 +92,23 @@ class BPSDiffusionModel(torch.nn.Module):
                 if y_embed_dim is not None
                 else None,
             ),
+            "3d_unet_w_transformer_spatial_patches": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                ),
+                partial(
+                    TransformerEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    spatialize_patches=True,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
@@ -98,7 +116,7 @@ class BPSDiffusionModel(torch.nn.Module):
             choir_dim=choir_dim * (2 if embed_full_choir else 1),
             output_channels=1,
             temporal_dim=temporal_dim,
-            context_channels=y_embed_dim,
+            context_channels=context_channels or y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
