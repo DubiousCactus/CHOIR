@@ -19,6 +19,7 @@ from tqdm import tqdm
 from model.backbones import (
     MLPResNetBackboneModel,
     MLPResNetEncoderModel,
+    MultiScaleResnetEncoderModel,
     PointNet2EncoderModel,
     ResnetEncoderModel,
     TransformerEncoderModel,
@@ -50,7 +51,12 @@ class BPSDiffusionModel(torch.nn.Module):
         # TODO: Move all this crap to config (god I'm lazy to do that)
         backbones = {
             "mlp_resnet": (
-                partial(MLPResNetBackboneModel, hidden_dim=1024, bps_dim=bps_dim),
+                partial(
+                    MLPResNetBackboneModel,
+                    hidden_dim=1024,
+                    bps_dim=bps_dim,
+                    context_channels=context_channels or y_embed_dim,
+                ),
                 partial(MLPResNetEncoderModel, hidden_dim=512, embed_dim=y_embed_dim)
                 if y_embed_dim is not None
                 else None,
@@ -58,6 +64,7 @@ class BPSDiffusionModel(torch.nn.Module):
             "3d_unet": (
                 partial(
                     UNetBackboneModel,
+                    context_channels=context_channels or y_embed_dim,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
                     norm_groups=16,
@@ -76,10 +83,32 @@ class BPSDiffusionModel(torch.nn.Module):
                 if y_embed_dim is not None
                 else None,
             ),
+            "3d_unet_multiscale": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                    context_channels=[16, 32, 64, 128, y_embed_dim],
+                ),
+                partial(
+                    MultiScaleResnetEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_encoder_self_attn,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
             "3d_unet_w_transformer": (
                 partial(
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
+                    context_channels=context_channels or y_embed_dim,
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
@@ -95,6 +124,7 @@ class BPSDiffusionModel(torch.nn.Module):
             "3d_unet_w_transformer_spatial_patches": (
                 partial(
                     UNetBackboneModel,
+                    context_channels=context_channels or y_embed_dim,
                     bps_grid_len=bps_grid_len,
                     normalization="group",
                     norm_groups=16,
@@ -116,7 +146,6 @@ class BPSDiffusionModel(torch.nn.Module):
             choir_dim=choir_dim * (2 if embed_full_choir else 1),
             output_channels=1,
             temporal_dim=temporal_dim,
-            context_channels=context_channels or y_embed_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None

@@ -623,8 +623,8 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            y_embed_dim=216,
-            context_channels=64,
+            y_embed_dim=256,
+            context_channels=256,
             choir_dim=1,
             rescale_input=True,
             backbone="3d_unet_w_transformer_spatial_patches",
