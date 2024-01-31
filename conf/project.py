@@ -35,7 +35,7 @@ PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH = str_to_bool(
     env.get("PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH", "f")
 )
 BEST_N_MODELS_TO_KEEP = int(
-    env.get("BEST_N_MODELS_TO_KEEP", 1)
+    env.get("BEST_N_MODELS_TO_KEEP", 3)
 )  # 0 means keep all models
 USE_WANDB = str_to_bool(env.get("USE_WANDB", "true"))
 PROJECT_NAME = "CHOIR"

@@ -24,3 +24,4 @@ git+https://github.com/otaheri/bps_torch
 metabatch
 scenepic
 opencv-python
+ema-pytorch

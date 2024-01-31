@@ -9,6 +9,7 @@
 from typing import Dict, List, Tuple, Union
 
 import torch
+from ema_pytorch import EMA
 
 from src.base_trainer import BaseTrainer
 from utils import to_cuda
@@ -21,6 +22,9 @@ class MultiViewDDPMTrainer(BaseTrainer):
         self.conditional = kwargs.get("conditional", False)
         self._use_deltas = self._train_loader.dataset.use_deltas
         self._full_choir = kwargs.get("full_choir", False)
+        self._ema = EMA(
+            self._model, beta=0.9999, update_after_step=100, update_every=10
+        )
 
     @to_cuda
     def _visualize(
@@ -34,8 +38,16 @@ class MultiViewDDPMTrainer(BaseTrainer):
             epoch: The current epoch.
         """
         samples, labels, _ = batch
+        with torch.no_grad():
+            # Initialize the EMA model with a forward pass before generation
+            self._ema.ema_model(
+                labels["choir"][:, -1]
+                if self._model.embed_full_choir
+                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                samples["choir"] if self.conditional else None,
+            )
         visualize_model_predictions_with_multiple_views(
-            self._model,
+            self._ema.ema_model,
             (samples, labels, None),
             epoch,
             bps_dim=self._bps_dim,

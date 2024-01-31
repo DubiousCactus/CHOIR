@@ -71,6 +71,7 @@ class BaseTrainer:
         self._n_ctrl_c = 0
         self._viz_n_samples = 1
         self._disable_grad = kwargs.get("disable_grad", False)
+        self._ema = None
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -171,6 +172,8 @@ class BaseTrainer:
             if not self._disable_grad:
                 loss.backward()
                 self._opt.step()
+                if self._ema is not None:
+                    self._ema.update()
             epoch_loss.update(loss.item())
             for k, v in loss_components.items():
                 epoch_loss_components[k].update(v.item())
@@ -406,6 +409,7 @@ class BaseTrainer:
             {
                 **{
                     "model_ckpt": self._model.state_dict(),
+                    "ema_model_ckpt": self._ema.state_dict(),
                     "opt_ckpt": self._opt.state_dict(),
                     "scheduler_ckpt": self._scheduler.state_dict()
                     if self._scheduler is not None
@@ -438,6 +442,8 @@ class BaseTrainer:
             }
         try:
             self._model.load_state_dict(ckpt["model_ckpt"])
+            if self._ema is not None:
+                self._ema.load_state_dict(ckpt["ema_model_ckpt"])
             print("[*] Model weights loaded successfully!")
         except Exception as e:
             if project_conf.PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH:
