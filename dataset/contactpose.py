@@ -20,7 +20,9 @@ import blosc
 import numpy as np
 import torch
 from hydra.utils import get_original_cwd
+from open3d import geometry as o3dg
 from open3d import io as o3dio
+from open3d import utility as o3du
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -30,8 +32,15 @@ from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from model.affine_mano import AffineMANO
 from utils import colorize
-from utils.dataset import augment_hand_object_pose, compute_choir, get_scalar
+from utils.dataset import (
+    augment_hand_object_pose,
+    compute_anchor_gaussians,
+    compute_choir,
+    get_contact_counts_by_neighbourhoods,
+    get_scalar,
+)
 from utils.visualization import (
+    visualize_3D_gaussians_on_hand_mesh,
     visualize_CHOIR,
     visualize_CHOIR_prediction,
     visualize_MANO,
@@ -481,6 +490,61 @@ class ContactPoseDataset(BaseDataset):
                         exponential_map_w=self._exponential_map_w,
                         use_deltas=self._use_deltas,
                     )
+
+                    # ==============================
+                    if obj_name not in ["apple"]:
+                        hand_mesh = o3dg.TriangleMesh()
+                        hand_mesh.vertices = o3du.Vector3dVector(
+                            gt_verts[0].detach().cpu().numpy()
+                        )
+                        hand_mesh.triangles = o3du.Vector3iVector(
+                            affine_mano.faces.detach().cpu().numpy()
+                        )
+                        hand_mesh.compute_vertex_normals()
+                        normals = np.asarray(hand_mesh.vertex_normals)
+                        colours = np.zeros_like(gt_verts[0].detach().cpu().numpy())
+                        print("======== Naive approach =========")
+                        # vertex_contacts = compute_hand_contacts_simple(obj_ptcld.float(),
+                        # gt_verts[0].float(),
+                        # tolerance_mm=4)
+                        # print(f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}")
+                        # print(f"[*] Colours: {colours.shape}")
+                        # colours[:, 0] = vertex_contacts / vertex_contacts.max()
+                        # hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
+                        # o3dv.draw_geometries([hand_mesh, obj_mesh])
+                        # o3dv.draw_geometries([hand_mesh])
+                        print("======== Neighbourhood-Cones approach =========")
+                        vertex_contacts = get_contact_counts_by_neighbourhoods(
+                            gt_verts[0],
+                            normals,
+                            obj_ptcld,
+                            tolerance_cone_angle=2,
+                            tolerance_mm=4,
+                            base_unit=self.base_unit,
+                            K=300,
+                        )
+                        print(
+                            f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}"
+                        )
+                        print(f"[*] Colours: {colours.shape}")
+                        # Visualize contacts by colouring the vertices
+                        colours[:, 0] = vertex_contacts / vertex_contacts.max()
+                        hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
+                        # o3dv.draw_geometries([hand_mesh, obj_mesh])
+                        # o3dv.draw_geometries([hand_mesh])
+                        gaussian_params = compute_anchor_gaussians(
+                            gt_verts[0], gt_anchors[0], vertex_contacts
+                        )
+                        print(f"[*] Gaussian params: {gaussian_params.shape}")
+                        # Visualize the Gaussian parameters
+                        visualize_3D_gaussians_on_hand_mesh(
+                            gt_verts[0],
+                            affine_mano.faces.detach().cpu().numpy(),
+                            gaussian_params,
+                            base_unit=self.base_unit,
+                            hand_color="grey",
+                        )
+                    # ==============================
 
                     sample_paths = []
                     # ================= Perturbed Hand-Object pairs =================

@@ -22,6 +22,7 @@ from pytorch3d.transforms.rotation_conversions import (
     matrix_to_rotation_6d,
     rotation_6d_to_matrix,
 )
+from scipy.spatial import cKDTree
 
 from utils import to_cuda
 
@@ -186,7 +187,7 @@ def compute_hand_contacts_simple(
     Compute the hand contacts as a vector of normalized contact values in [0, 1] for each of the 778 MANO vertices.
     This approach is very crude because even points that are tolerance_mm away LATERALLY from the hand
     vertex are considered to be in contact. I should probably approach the capsule idea of
-    ContactOpt or something cheaper but better.
+    ContactOpt or something cheaper but better (normal vectors?).
     """
     # Go through each MANO vertex and compute the distance to the object pointcloud (nearest
     # neighbor). Do this in a vectorized fashion.
@@ -207,6 +208,148 @@ def compute_hand_contacts_simple(
         distances_exp / distances_exp.max()
     )  # We now have 1 for least contact and 0 for max contact. It's the opposite of what we want!
     return 1.0 - distances
+
+
+def get_contact_counts_by_neighbourhoods(
+    mano_vertices: torch.Tensor,
+    mano_normals: torch.Tensor,
+    object_points: torch.Tensor,
+    tolerance_cone_angle: int,
+    tolerance_mm: int,
+    base_unit: float,
+    K=100,
+) -> torch.Tensor:
+    """
+    Compute the contact counters for each MANO vertex. They are computed by counting the number of
+    object points within a cone around each MANO vertex in the direction of the vertex normal.
+
+    Args:
+        mano_vertices: A tensor of shape (N, 3) representing the N MANO vertices.
+        mano_normals: A tensor of shape (N, 3) representing the normals at the N MANO vertices.
+        object_points: A tensor of shape (P, 3) representing the P object points (sampled uniformly).
+        tolerance_cone_angle: The angle in degrees of the cone within which to count object points.
+        tolerance_mm: The distance in millimeters within which to count object points.
+        base_unit: The number of mm per unit in the dataset.
+        K: The number of nearest object points to consider when computing the contact counters.
+    Returns:
+        A tensor of shape (N,) representing the raw contact counters for all N MANO vertices.
+    """
+
+    # Convert mano_vertices and object_points to numpy arrays
+    mano_vertices = np.array(mano_vertices)
+    object_points = np.array(object_points)
+
+    # ========= Compute the contact counters for each MANO vertex =========
+    # Build a KDTree for object_points
+    object_tree = cKDTree(object_points)
+
+    # Initialize contact counters
+    contact_counters = np.zeros(len(mano_vertices))
+
+    # Iterate over each MANO vertex
+    print(f"MANO vertices shape: {mano_vertices.shape}")
+    print(f"Object points shape: {object_points.shape}")
+    for i, vertex in enumerate(mano_vertices):
+        # Get the normal vector for the current MANO vertex
+        normal = mano_normals[i]
+
+        # Find the K nearest neighbors of the current MANO vertex
+        _, indices = object_tree.query(vertex, k=K)
+        neighbors = object_points[indices]
+        print(f"Computing contact counters for vertex {i}: {vertex}")
+        print(f"Nearest neighbors: {neighbors.shape}")
+
+        # Compute the distances between the MANO vertex and its K nearest neighbors
+        to_obj_vectors = neighbors - vertex
+        print(f"To object vectors: {to_obj_vectors.shape}")
+        distances = np.linalg.norm(to_obj_vectors, axis=1)
+        print(
+            f"Distances: {distances.shape}. Range (mm): {np.min(distances) * base_unit} - {np.max(distances) * base_unit}"
+        )
+
+        # Compute the angles between the normal vector and the vectors from the MANO vertex to its K nearest neighbors
+        angles = np.arccos(
+            np.dot(normal, to_obj_vectors.T) / (np.linalg.norm(normal) * distances)
+        )
+        print(f"Angles: {angles.shape}. Range: {np.min(angles)} - {np.max(angles)}")
+
+        # Count the number of neighbors within the cone of tolerance
+        contact_counters[i] = np.sum(
+            (angles <= tolerance_cone_angle) & ((distances * base_unit) <= tolerance_mm)
+        )
+
+    print("=========================================")
+    print(f"Contact counters: {contact_counters.shape}")
+    print(f"Range: {np.min(contact_counters)} - {np.max(contact_counters)}")
+    print("=========================================")
+    return torch.from_numpy(contact_counters)
+
+
+def compute_anchor_gaussians(
+    mano_vertices: torch.Tensor,
+    mano_anchors: torch.Tensor,
+    contact_counters: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Fit a 3D Gaussian on each anchor neighbourhood of MANO vertices, with given contact counters.
+    This is done by multiplying the vertices by their contact counters and then computing the mean
+    and covariance matrix of the clusters.
+
+    Args:
+        mano_vertices: A tensor of shape (N, 3) representing the N MANO vertices.
+        mano_anchors: A tensor of shape (N_ANCHORS, 3) representing the N_ANCHORS anchor points.
+        contact_counters: A tensor of shape (N,) representing the raw contact counters for all N MANO vertices.
+    Returns:
+        A tensor of shape (N_ANCHORS, 3, 3, 3) representing the 3D Gaussian parameters (mean and
+        covariance matrix) for each anchor neighbourhood.
+    """
+
+    # ================================================================
+    # ======= Normalize the contact counters for each anchor neighborhood =========
+    gaussian_params = torch.zeros((mano_anchors.shape[0], 12))
+    # Get distances to anchors
+    anchor_distances = torch.cdist(
+        torch.tensor(mano_vertices), mano_anchors
+    )  # Shape: (778, N_ANCHORS)
+    print(f"Anchor shapes: {mano_anchors.shape}")
+    print(f"Anchor distances: {anchor_distances.shape}")
+    # Keep nearest anchor index for each vertex
+    anchor_indices = torch.topk(anchor_distances, 1, largest=False).indices  # (778, 1)
+    print(
+        f"Nearest anchor indices: {anchor_indices.shape}. Range: {torch.min(anchor_indices)} - {torch.max(anchor_indices)}"
+    )
+    for anchor in mano_anchors:
+        print(
+            f"Computing contact values for anchor {torch.where(mano_anchors == anchor)[0][0]}"
+        )
+        # Get the indices of MANO vertices belonging to the current neighborhood
+        anchor_id = torch.where(mano_anchors == anchor)[0][0]
+        neighbour_vert_indices = torch.where(anchor_indices == anchor_id)[
+            0
+        ]  # List of indices of vertices belonging to the current anchor neighborhood
+        print(
+            f"Neighbour vertex indices: {neighbour_vert_indices.shape}. Range: {torch.min(neighbour_vert_indices)} - {torch.max(neighbour_vert_indices)}"
+        )
+        print(
+            f"Contact counters: {contact_counters[neighbour_vert_indices].shape}. Range: {torch.min(contact_counters[neighbour_vert_indices])} - {torch.max(contact_counters[neighbour_vert_indices])}"
+        )
+        print(
+            f"MANO vertices in neighbourhood: {mano_vertices[neighbour_vert_indices].shape}"
+        )
+        # Duplicate vertices by their contact counters
+        cluster_points = torch.repeat_interleave(
+            mano_vertices[neighbour_vert_indices],
+            contact_counters[neighbour_vert_indices].int()
+            + torch.ones_like(contact_counters[neighbour_vert_indices].int()),
+            dim=0,
+        )
+        print(f"Cluster points: {cluster_points.shape}.")
+        mean = torch.mean(cluster_points, dim=0)
+        cov = torch.cov((cluster_points - mean).T)
+        print(f"Mean: {mean.shape}. Cov: {cov.shape}")
+        gaussian_params[anchor_id] = torch.cat((mean, cov.flatten()))
+
+    return gaussian_params
 
 
 def compute_hand_contacts_bps(

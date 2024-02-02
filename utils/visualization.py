@@ -1035,3 +1035,46 @@ class ScenePicAnim:
     def save_animation(self, sp_anim_name):
         self.scene.link_canvas_events(self.main)
         self.scene.save_as_html(sp_anim_name, title=os.path.basename(sp_anim_name))
+
+
+def visualize_3D_gaussians_on_hand_mesh(
+    hand_verts: torch.Tensor,
+    hand_faces: torch.Tensor,
+    gaussian_params: torch.Tensor,
+    base_unit: float,
+    hand_color: str = "blue",
+):
+    geometries = []
+    print(gaussian_params.shape)
+    for i in range(gaussian_params.shape[0]):
+        print(f"Visualizing Gaussian {i + 1} / {gaussian_params.shape[0]}")
+        print(gaussian_params[i].shape)
+        mean = gaussian_params[i, :3]
+        covariance = gaussian_params[i, 3:].reshape(3, 3)
+        # Sample points from the Gaussian
+        num_points = 5000
+        points = np.random.multivariate_normal(mean, covariance, num_points)
+
+        # Create a point cloud from the sampled points
+        pcd = open3d.geometry.PointCloud()
+        pcd.points = open3d.utility.Vector3dVector(points)
+        geometries.append(pcd)
+
+    # Create the hand mesh
+    hand_mesh = open3d.geometry.TriangleMesh()
+    hand_mesh.vertices = open3d.utility.Vector3dVector(hand_verts)
+    hand_mesh.triangles = open3d.utility.Vector3iVector(hand_faces)
+    if hand_color == "blue":
+        color = np.array([0, 0, 255])
+    elif hand_color == "red":
+        color = np.array([255, 0, 0])
+    elif hand_color == "green":
+        color = np.array([0, 255, 0])
+    elif hand_color == "grey":
+        color = np.array([169, 169, 169])
+    elif hand_color == "rainbow":
+        color = np.random.rand(3)
+    hand_mesh.paint_uniform_color(color)
+
+    # Visualize the point cloud
+    open3d.visualization.draw_geometries(geometries + [hand_mesh])
