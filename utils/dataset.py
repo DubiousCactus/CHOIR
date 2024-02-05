@@ -289,6 +289,10 @@ def compute_anchor_gaussians(
     mano_vertices: torch.Tensor,
     mano_anchors: torch.Tensor,
     contact_counters: torch.Tensor,
+    base_unit: float,
+    anchor_mean_threshold_mm: float,
+    min_contact_points_for_neighbourhood: int,
+    debug_anchor: Optional[int] = None,
 ) -> torch.Tensor:
     """
     Fit a 3D Gaussian on each anchor neighbourhood of MANO vertices, with given contact counters.
@@ -299,6 +303,10 @@ def compute_anchor_gaussians(
         mano_vertices: A tensor of shape (N, 3) representing the N MANO vertices.
         mano_anchors: A tensor of shape (N_ANCHORS, 3) representing the N_ANCHORS anchor points.
         contact_counters: A tensor of shape (N,) representing the raw contact counters for all N MANO vertices.
+        base_unit: The number of mm per unit in the dataset.
+        anchor_mean_threshold_mm: The max distance (mm) between the mean of the cluster and the anchor point.
+        min_contact_points_for_neighbourhood: The minimum number of contact points required to consider a neighbourhood.
+        debug_anchor: If not None, only compute the contact values for the anchor with the given index.
     Returns:
         A tensor of shape (N_ANCHORS, 3, 3, 3) representing the 3D Gaussian parameters (mean and
         covariance matrix) for each anchor neighbourhood.
@@ -318,12 +326,13 @@ def compute_anchor_gaussians(
     print(
         f"Nearest anchor indices: {anchor_indices.shape}. Range: {torch.min(anchor_indices)} - {torch.max(anchor_indices)}"
     )
+    anchor_contacts = {}
     for anchor in mano_anchors:
-        print(
-            f"Computing contact values for anchor {torch.where(mano_anchors == anchor)[0][0]}"
-        )
         # Get the indices of MANO vertices belonging to the current neighborhood
-        anchor_id = torch.where(mano_anchors == anchor)[0][0]
+        anchor_id = int(torch.where(mano_anchors == anchor)[0][0])
+        if debug_anchor is not None and anchor_id != debug_anchor:
+            continue
+        print(f"Computing contact values for anchor {anchor_id}.")
         neighbour_vert_indices = torch.where(anchor_indices == anchor_id)[
             0
         ]  # List of indices of vertices belonging to the current anchor neighborhood
@@ -336,6 +345,17 @@ def compute_anchor_gaussians(
         print(
             f"MANO vertices in neighbourhood: {mano_vertices[neighbour_vert_indices].shape}"
         )
+        if (
+            torch.max(contact_counters[neighbour_vert_indices])
+            < min_contact_points_for_neighbourhood
+        ):
+            gaussian_params[anchor_id] = torch.zeros(12)
+            anchor_contacts[anchor_id] = (
+                mano_vertices[neighbour_vert_indices],
+                mano_vertices[neighbour_vert_indices],
+                contact_counters[neighbour_vert_indices],
+            )
+            continue
         # Duplicate vertices by their contact counters
         cluster_points = torch.repeat_interleave(
             mano_vertices[neighbour_vert_indices],
@@ -343,13 +363,25 @@ def compute_anchor_gaussians(
             + torch.ones_like(contact_counters[neighbour_vert_indices].int()),
             dim=0,
         )
+        anchor_contacts[anchor_id] = (
+            mano_vertices[neighbour_vert_indices],
+            cluster_points,
+            contact_counters[neighbour_vert_indices],
+        )
         print(f"Cluster points: {cluster_points.shape}.")
         mean = torch.mean(cluster_points, dim=0)
-        cov = torch.cov((cluster_points - mean).T)
-        print(f"Mean: {mean.shape}. Cov: {cov.shape}")
-        gaussian_params[anchor_id] = torch.cat((mean, cov.flatten()))
+        print(f"L2_Norm(mean-anchor) (mm): {torch.norm(mean - anchor) * base_unit}")
+        if torch.norm(mean - anchor) * base_unit > anchor_mean_threshold_mm:
+            print(
+                f"Mean of cluster is too far from anchor: {torch.norm(mean - anchor) * base_unit} > {anchor_mean_threshold_mm}"
+            )
+            gaussian_params[anchor_id] = torch.zeros(12)
+        else:
+            cov = torch.cov((cluster_points - mean).T)
+            print(f"Mean: {mean.shape}. Cov: {cov.shape}")
+            gaussian_params[anchor_id] = torch.cat((mean, cov.flatten()))
 
-    return gaussian_params
+    return gaussian_params, anchor_contacts
 
 
 def compute_hand_contacts_bps(

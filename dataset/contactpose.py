@@ -529,20 +529,47 @@ class ContactPoseDataset(BaseDataset):
                         print(f"[*] Colours: {colours.shape}")
                         # Visualize contacts by colouring the vertices
                         colours[:, 0] = vertex_contacts / vertex_contacts.max()
+                        colours[:, 1] = 0.58 - colours[:, 0]
+                        colours[:, 2] = 0.66 - colours[:, 0]
                         hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
                         # o3dv.draw_geometries([hand_mesh, obj_mesh])
                         # o3dv.draw_geometries([hand_mesh])
-                        gaussian_params = compute_anchor_gaussians(
-                            gt_verts[0], gt_anchors[0], vertex_contacts
+                        for i in range(32):
+                            break
+                            gaussian_params, anchor_contacts = compute_anchor_gaussians(
+                                gt_verts[0],
+                                gt_anchors[0],
+                                vertex_contacts,
+                                base_unit=self.base_unit,
+                                anchor_mean_threshold_mm=10,
+                                min_contact_points_for_neighbourhood=5,
+                                debug_anchor=i,
+                            )
+                            print(f"[*] Gaussian params: {gaussian_params.shape}")
+                            # Visualize the Gaussian parameters
+                            visualize_3D_gaussians_on_hand_mesh(
+                                hand_mesh,
+                                gaussian_params,
+                                base_unit=self.base_unit,
+                                debug_anchor=i,
+                                anchors=gt_anchors[0],
+                                anchor_contacts=anchor_contacts,
+                            )
+                        gaussian_params, anchor_contacts = compute_anchor_gaussians(
+                            gt_verts[0],
+                            gt_anchors[0],
+                            vertex_contacts,
+                            base_unit=self.base_unit,
+                            anchor_mean_threshold_mm=10,
+                            min_contact_points_for_neighbourhood=5,
                         )
                         print(f"[*] Gaussian params: {gaussian_params.shape}")
                         # Visualize the Gaussian parameters
                         visualize_3D_gaussians_on_hand_mesh(
-                            gt_verts[0],
-                            affine_mano.faces.detach().cpu().numpy(),
+                            hand_mesh,
+                            obj_mesh,
                             gaussian_params,
                             base_unit=self.base_unit,
-                            hand_color="grey",
                         )
                     # ==============================
 

@@ -1038,19 +1038,24 @@ class ScenePicAnim:
 
 
 def visualize_3D_gaussians_on_hand_mesh(
-    hand_verts: torch.Tensor,
-    hand_faces: torch.Tensor,
+    hand_mesh: Trimesh,
+    obj_mesh: Trimesh,
     gaussian_params: torch.Tensor,
     base_unit: float,
-    hand_color: str = "blue",
+    debug_anchor: Optional[int] = None,
+    anchors: Optional[torch.Tensor] = None,
+    anchor_contacts: Optional[torch.Tensor] = None,
 ):
     geometries = []
-    print(gaussian_params.shape)
     for i in range(gaussian_params.shape[0]):
-        print(f"Visualizing Gaussian {i + 1} / {gaussian_params.shape[0]}")
-        print(gaussian_params[i].shape)
+        if debug_anchor is not None and i != debug_anchor:
+            continue
+        # print(f"Visualizing Gaussian {i + 1} / {gaussian_params.shape[0]}")
+        if torch.all(gaussian_params[i] == 0):
+            continue
         mean = gaussian_params[i, :3]
         covariance = gaussian_params[i, 3:].reshape(3, 3)
+        # print(covariance)
         # Sample points from the Gaussian
         num_points = 5000
         points = np.random.multivariate_normal(mean, covariance, num_points)
@@ -1058,23 +1063,45 @@ def visualize_3D_gaussians_on_hand_mesh(
         # Create a point cloud from the sampled points
         pcd = open3d.geometry.PointCloud()
         pcd.points = open3d.utility.Vector3dVector(points)
+        # Partition RGB colourspace in 32 and use a different colour for each anchor:
+        pcd.paint_uniform_color(
+            np.array(
+                [
+                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 0,
+                    (int((i * 16) % 255) / 255.0)
+                    if (i >= 32 / 3 and i < 64 / 3)
+                    else 0,
+                    (int((i * 16) % 255) / 255.0) if i >= 64 / 3 else 0,
+                ]
+            )
+            if debug_anchor is None
+            else np.array([0, 0, 1])
+        )
         geometries.append(pcd)
 
-    # Create the hand mesh
-    hand_mesh = open3d.geometry.TriangleMesh()
-    hand_mesh.vertices = open3d.utility.Vector3dVector(hand_verts)
-    hand_mesh.triangles = open3d.utility.Vector3iVector(hand_faces)
-    if hand_color == "blue":
-        color = np.array([0, 0, 255])
-    elif hand_color == "red":
-        color = np.array([255, 0, 0])
-    elif hand_color == "green":
-        color = np.array([0, 255, 0])
-    elif hand_color == "grey":
-        color = np.array([169, 169, 169])
-    elif hand_color == "rainbow":
-        color = np.random.rand(3)
-    hand_mesh.paint_uniform_color(color)
-
+    geometries.append(hand_mesh)
+    geometries.append(obj_mesh)
+    if debug_anchor is not None:
+        assert anchors is not None
+        # Draw a green cube around the debug anchor
+        debug_color = [0.04, 0.66, 0.43]
+        box = open3d.geometry.TriangleMesh.create_box(
+            5 / base_unit, 5 / base_unit, 5 / base_unit
+        ).translate(anchors[debug_anchor] - np.array([2.5, 2.5, 2.5]) / base_unit)
+        box.paint_uniform_color(debug_color)
+        geometries.append(box)
+        print(
+            f"Anchor {debug_anchor} has contacts: {anchor_contacts[debug_anchor][0].shape}, "
+            + f"weighted={anchor_contacts[debug_anchor][1].shape}"
+            + f" and total contacts={anchor_contacts[debug_anchor][2].sum()}"
+        )
+        pcd = open3d.geometry.PointCloud()
+        contacts = anchor_contacts[debug_anchor][2].cpu().numpy()
+        pts = anchor_contacts[debug_anchor][0].cpu().numpy()
+        # Remove the pts that have a contact value of 0:
+        pts = pts[contacts > 0]
+        pcd.points = open3d.utility.Vector3dVector(pts)
+        pcd.paint_uniform_color(debug_color)
+        geometries.append(pcd)
     # Visualize the point cloud
-    open3d.visualization.draw_geometries(geometries + [hand_mesh])
+    open3d.visualization.draw_geometries(geometries)
