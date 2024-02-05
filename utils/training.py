@@ -19,7 +19,7 @@ import tqdm
 
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
-from src.losses.hoi import CHOIRFittingLoss
+from src.losses.hoi import CHOIRFittingLoss, ContactsFittingLoss
 from utils import to_cuda, to_cuda_
 
 
@@ -33,6 +33,8 @@ def optimize_pose_pca_from_choir(
     is_rhand: bool,
     use_smplx: bool,
     dataset: str,
+    contact_gaussians: Optional[torch.Tensor] = None,
+    obj_pts: Optional[torch.Tensor] = None,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-11,
     lr: float = 5e-2,
@@ -164,6 +166,66 @@ def optimize_pose_pca_from_choir(
 
         proc_bar.set_description(
             f"Anchors loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+        )
+        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
+            plateau_cnt += 1
+        else:
+            plateau_cnt = 0
+        prev_loss = loss.detach().type(torch.float64)
+        loss = loss + shape_regularizer + pose_regularizer
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if plateau_cnt >= 10:
+            break
+
+    if contact_gaussians is None:
+        return (
+            theta.detach(),
+            beta.detach(),
+            rot.detach(),
+            trans.detach(),
+            anchors.detach(),
+            verts.detach(),
+            joints.detach(),
+        )
+
+    plateau_cnt = 0
+    proc_bar = tqdm.tqdm(range(300))
+    prev_loss = float("inf")
+    optimizer.zero_grad()
+    theta, beta, rot, trans = (
+        theta.detach(),
+        beta.detach(),
+        rot.detach(),
+        trans.detach(),
+    )
+    for p in (rot, trans, theta, beta):
+        p.requires_grad = True
+    optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=5e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.99)
+    contacts_loss = ContactsFittingLoss().to(contact_gaussians.device)
+    contact_gaussians.requires_grad = False
+    assert obj_pts is not None, "obj_pts must be provided if contact_gaussians is."
+    obj_pts.requires_grad = False
+    contact_gaussians.requires_grad = False
+    for _ in proc_bar:
+        optimizer.zero_grad()
+        if use_smplx:
+            output = smplx_model(
+                hand_pose=theta, betas=beta, global_orient=rot, transl=trans
+            )
+            verts, joints = output.vertices, output.joints
+        else:
+            verts, joints = affine_mano(theta, beta, rot, trans)
+        anchors = affine_mano.get_anchors(verts)
+        loss = 1000 * contacts_loss(verts, anchors.detach(), obj_pts, contact_gaussians)
+        shape_regularizer = (
+            torch.norm(beta) ** 2
+        )  # Encourage the shape parameters to remain close to 0
+        pose_regularizer = theta_w * 100 * torch.norm(theta) ** 2
+        proc_bar.set_description(
+            f"Contacts loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
         if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
             plateau_cnt += 1

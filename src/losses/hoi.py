@@ -310,3 +310,86 @@ class CHOIRFittingLoss(torch.nn.Module):
         distances = torch.gather(anchor_distances, 2, anchor_ids).squeeze(-1)
         choir_loss = torch.nn.functional.mse_loss(distances, choir[:, :, -1])
         return choir_loss
+
+
+class ContactsFittingLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(
+        self,
+        verts: torch.Tensor,
+        anchor_verts: torch.Tensor,
+        obj_pts: torch.Tensor,
+        contact_gaussians: torch.Tensor,
+        K: int = 5,
+        weights_threshold: float = 0.01,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        TODO: Write this docstring.
+        """
+        # 1. Compute K object nearest neighbors for each MANO vertex
+        knn = torch.cdist(verts, obj_pts)  # (V, O)
+        knn = torch.topk(knn, K, dim=-1, largest=False, sorted=False).values  # (V, K)
+
+        # 2. Compute the squared distance between each MANO vertex and its K nearest neighbors
+        distances = knn
+
+        # 3. Compute the distance weights as the PDF values of the contact Gaussians (using the
+        # nearest Gaussian to each vertex).
+        anchor_distances = torch.cdist(verts, anchor_verts)  # (V, A)
+        anchor_distances, anchor_indices = torch.topk(
+            anchor_distances, 1, dim=-1, largest=False, sorted=False
+        )
+        for i in range(32):
+            # Find vertices associated with anchor i
+            # print(
+            # f"verts: {verts.shape}, indices: {anchor_indices.shape}, "
+            # + f"this_anchor_indices: {(anchor_indices==i).shape}, "
+            # + f"contact_gaussians: {contact_gaussians.shape}"
+            # )
+            this_anchor_indices = (anchor_indices == i).squeeze(-1)
+            neighbourhood_verts = verts[this_anchor_indices]
+            # print(f"neighbourhood_verts: {neighbourhood_verts.shape}")
+            # if torch.allclose(
+            # contact_gaussians[i], torch.zeros_like(contact_gaussians[i]), rtol=1e-9
+            # ):
+            if torch.all(contact_gaussians[i] == 0):
+                # print(f"anchor {i} has not enough contacts")
+                distances[this_anchor_indices] *= 0
+                continue
+            mean, cov = contact_gaussians[i, :3], contact_gaussians[i, 3:].reshape(3, 3)
+            # /!\ The mean is at the origin, so we shift it by the anchor verts:
+            mean = mean + anchor_verts[:, i]
+            anchor_gaussian = torch.distributions.MultivariateNormal(mean, cov)
+            weights = torch.exp(anchor_gaussian.log_prob(neighbourhood_verts))
+            print(f"Max contact values for Gaussian {i}/32: {weights.max()}")
+            # print(
+            # f"weights: {weights.shape}. neighbour verts: {neighbourhood_verts.shape}. "
+            # + f"distances: {distances[this_anchor_indices].shape}"
+            # )
+            # weights = torch.exp(torch.clamp_min(weights, -200))
+            print(f"weights range: {weights.min()} - {weights.max()}")
+            weights = (weights / weights.max()) if weights.max() > 1.0 else weights
+            print(f"weights new range: {weights.min()} - {weights.max()}")
+            # Prune the very low weights:
+            weights = torch.where(
+                weights > weights_threshold, weights, torch.zeros_like(weights)
+            )
+            print(f"Pruned weights range: {weights.min()} - {weights.max()}")
+            print(
+                f"distances range: {distances[this_anchor_indices].min()} - {distances[this_anchor_indices].max()}"
+            )
+            distances[this_anchor_indices] = (
+                distances[this_anchor_indices] * weights[..., None].detach()
+            )
+            print(
+                f"distances new range: {distances[this_anchor_indices].min()} - {distances[this_anchor_indices].max()}"
+            )
+        # 4. Compute the weighted sum of the distances as the loss.
+        print(f"distances: {distances.shape}")
+        print(f"distances range: {distances.min()} - {distances.max()}")
+        print(
+            f"distances above 5mm: {torch.where(distances > 0.005, 1.0, 0.0).sum().item()}"
+        )
+        return (distances**2).mean()

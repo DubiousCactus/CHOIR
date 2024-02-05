@@ -43,6 +43,7 @@ from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
     visualize_CHOIR,
     visualize_CHOIR_prediction,
+    visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
 )
 
@@ -492,7 +493,7 @@ class ContactPoseDataset(BaseDataset):
                     )
 
                     # ==============================
-                    if obj_name not in ["apple"]:
+                    if obj_name in ["scissors", "cup", "eyeglasses"]:
                         hand_mesh = o3dg.TriangleMesh()
                         hand_mesh.vertices = o3du.Vector3dVector(
                             gt_verts[0].detach().cpu().numpy()
@@ -518,7 +519,7 @@ class ContactPoseDataset(BaseDataset):
                             gt_verts[0],
                             normals,
                             obj_ptcld,
-                            tolerance_cone_angle=2,
+                            tolerance_cone_angle=4,
                             tolerance_mm=4,
                             base_unit=self.base_unit,
                             K=300,
@@ -549,6 +550,7 @@ class ContactPoseDataset(BaseDataset):
                             # Visualize the Gaussian parameters
                             visualize_3D_gaussians_on_hand_mesh(
                                 hand_mesh,
+                                obj_mesh,
                                 gaussian_params,
                                 base_unit=self.base_unit,
                                 debug_anchor=i,
@@ -561,7 +563,7 @@ class ContactPoseDataset(BaseDataset):
                             vertex_contacts,
                             base_unit=self.base_unit,
                             anchor_mean_threshold_mm=10,
-                            min_contact_points_for_neighbourhood=5,
+                            min_contact_points_for_neighbourhood=4,
                         )
                         print(f"[*] Gaussian params: {gaussian_params.shape}")
                         # Visualize the Gaussian parameters
@@ -570,6 +572,68 @@ class ContactPoseDataset(BaseDataset):
                             obj_mesh,
                             gaussian_params,
                             base_unit=self.base_unit,
+                            anchors=gt_anchors[0],
+                        )
+
+                        print("====== Reconstructing contacts from 3D Gaussians ======")
+                        visualize_hand_contacts_from_3D_gaussians(
+                            hand_mesh,
+                            gaussian_params,
+                            gt_anchors[0],
+                            gt_contacts=vertex_contacts,
+                        )
+
+                        # Test TTO with the 3D Gaussians! For this, let's corrupt the distance
+                        # field with some noise and see how well we can improve the contacts using
+                        # the Contact Gaussians.
+                        noisy_choir = torch.clamp(
+                            gt_choir
+                            + torch.randn_like(gt_choir) * (80 / self.base_unit),
+                            1e-5,
+                        )
+                        visualize_CHOIR_prediction(
+                            noisy_choir,
+                            gt_choir,
+                            self._bps,
+                            self._anchor_indices,
+                            gt_scalar,
+                            gt_scalar,
+                            gt_rescaled_ref_pts,
+                            gt_rescaled_ref_pts,
+                            gt_verts,
+                            gt_joints,
+                            gt_anchors,
+                            is_rhand=(hand_idx == "right"),
+                            contact_gaussians=None,
+                            use_smplx=False,
+                            dataset="ContactPose",
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
+                            use_deltas=self._use_deltas,
+                            plot_choir=False,
+                        )
+                        # Now augment the noisy CHOIR with the Gaussian parameters
+                        visualize_CHOIR_prediction(
+                            noisy_choir,
+                            gt_choir,
+                            self._bps,
+                            self._anchor_indices,
+                            gt_scalar,
+                            gt_scalar,
+                            gt_rescaled_ref_pts,
+                            gt_rescaled_ref_pts,
+                            gt_verts,
+                            gt_joints,
+                            gt_anchors,
+                            contact_gaussians=gaussian_params,
+                            obj_pts=obj_ptcld.float(),
+                            is_rhand=(hand_idx == "right"),
+                            use_smplx=False,
+                            dataset="ContactPose",
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
+                            use_deltas=self._use_deltas,
+                            plot_choir=False,
                         )
                     # ==============================
 

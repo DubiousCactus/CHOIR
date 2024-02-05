@@ -343,10 +343,13 @@ def compute_anchor_gaussians(
             f"Contact counters: {contact_counters[neighbour_vert_indices].shape}. Range: {torch.min(contact_counters[neighbour_vert_indices])} - {torch.max(contact_counters[neighbour_vert_indices])}"
         )
         print(
+            f"Non-zero contact counters: {torch.where(contact_counters[neighbour_vert_indices] > 0, 1.0, 0.0).sum()}"
+        )
+        print(
             f"MANO vertices in neighbourhood: {mano_vertices[neighbour_vert_indices].shape}"
         )
         if (
-            torch.max(contact_counters[neighbour_vert_indices])
+            torch.where(contact_counters[neighbour_vert_indices] > 0, 1.0, 0.0).sum()
             < min_contact_points_for_neighbourhood
         ):
             gaussian_params[anchor_id] = torch.zeros(12)
@@ -357,10 +360,14 @@ def compute_anchor_gaussians(
             )
             continue
         # Duplicate vertices by their contact counters
+        # First, remove neighbour_vert_indices where the contact counter is 0:
+        neighbour_vert_indices = neighbour_vert_indices[
+            contact_counters[neighbour_vert_indices] > 0
+        ]
         cluster_points = torch.repeat_interleave(
             mano_vertices[neighbour_vert_indices],
-            contact_counters[neighbour_vert_indices].int()
-            + torch.ones_like(contact_counters[neighbour_vert_indices].int()),
+            contact_counters[neighbour_vert_indices].int(),
+            # + torch.ones_like(contact_counters[neighbour_vert_indices].int()),
             dim=0,
         )
         anchor_contacts[anchor_id] = (
@@ -379,6 +386,8 @@ def compute_anchor_gaussians(
         else:
             cov = torch.cov((cluster_points - mean).T)
             print(f"Mean: {mean.shape}. Cov: {cov.shape}")
+            # /!\ The mean must be shifted to the origin, so that we can shift it back in TTO!
+            mean = mean - anchor
             gaussian_params[anchor_id] = torch.cat((mean, cov.flatten()))
 
     return gaussian_params, anchor_contacts
