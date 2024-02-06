@@ -23,6 +23,7 @@ from hydra.utils import get_original_cwd
 from open3d import geometry as o3dg
 from open3d import io as o3dio
 from open3d import utility as o3du
+from open3d import visualization as o3dv
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -97,6 +98,11 @@ class ContactPoseDataset(BaseDataset):
                 "rot": 0.15,
                 "pca": 0.5,
             },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
+            {
+                "trans": 0.005,
+                "rot": 0.05,
+                "pca": 0.5,
+            },  # Level 3 (0.005m, 0.15rad, 0.5 PCA units), for tests with TTO
         ]
         self._use_contactopt_splits = use_contactopt_splits
         self._use_improved_contactopt_splits = use_improved_contactopt_splits
@@ -492,151 +498,6 @@ class ContactPoseDataset(BaseDataset):
                         use_deltas=self._use_deltas,
                     )
 
-                    # ==============================
-                    if obj_name in ["scissors", "cup", "eyeglasses"]:
-                        hand_mesh = o3dg.TriangleMesh()
-                        hand_mesh.vertices = o3du.Vector3dVector(
-                            gt_verts[0].detach().cpu().numpy()
-                        )
-                        hand_mesh.triangles = o3du.Vector3iVector(
-                            affine_mano.faces.detach().cpu().numpy()
-                        )
-                        hand_mesh.compute_vertex_normals()
-                        normals = np.asarray(hand_mesh.vertex_normals)
-                        colours = np.zeros_like(gt_verts[0].detach().cpu().numpy())
-                        print("======== Naive approach =========")
-                        # vertex_contacts = compute_hand_contacts_simple(obj_ptcld.float(),
-                        # gt_verts[0].float(),
-                        # tolerance_mm=4)
-                        # print(f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}")
-                        # print(f"[*] Colours: {colours.shape}")
-                        # colours[:, 0] = vertex_contacts / vertex_contacts.max()
-                        # hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
-                        # o3dv.draw_geometries([hand_mesh, obj_mesh])
-                        # o3dv.draw_geometries([hand_mesh])
-                        print("======== Neighbourhood-Cones approach =========")
-                        vertex_contacts = get_contact_counts_by_neighbourhoods(
-                            gt_verts[0],
-                            normals,
-                            obj_ptcld,
-                            tolerance_cone_angle=4,
-                            tolerance_mm=4,
-                            base_unit=self.base_unit,
-                            K=300,
-                        )
-                        print(
-                            f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}"
-                        )
-                        print(f"[*] Colours: {colours.shape}")
-                        # Visualize contacts by colouring the vertices
-                        colours[:, 0] = vertex_contacts / vertex_contacts.max()
-                        colours[:, 1] = 0.58 - colours[:, 0]
-                        colours[:, 2] = 0.66 - colours[:, 0]
-                        hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
-                        # o3dv.draw_geometries([hand_mesh, obj_mesh])
-                        # o3dv.draw_geometries([hand_mesh])
-                        for i in range(32):
-                            break
-                            gaussian_params, anchor_contacts = compute_anchor_gaussians(
-                                gt_verts[0],
-                                gt_anchors[0],
-                                vertex_contacts,
-                                base_unit=self.base_unit,
-                                anchor_mean_threshold_mm=10,
-                                min_contact_points_for_neighbourhood=5,
-                                debug_anchor=i,
-                            )
-                            print(f"[*] Gaussian params: {gaussian_params.shape}")
-                            # Visualize the Gaussian parameters
-                            visualize_3D_gaussians_on_hand_mesh(
-                                hand_mesh,
-                                obj_mesh,
-                                gaussian_params,
-                                base_unit=self.base_unit,
-                                debug_anchor=i,
-                                anchors=gt_anchors[0],
-                                anchor_contacts=anchor_contacts,
-                            )
-                        gaussian_params, anchor_contacts = compute_anchor_gaussians(
-                            gt_verts[0],
-                            gt_anchors[0],
-                            vertex_contacts,
-                            base_unit=self.base_unit,
-                            anchor_mean_threshold_mm=10,
-                            min_contact_points_for_neighbourhood=4,
-                        )
-                        print(f"[*] Gaussian params: {gaussian_params.shape}")
-                        # Visualize the Gaussian parameters
-                        visualize_3D_gaussians_on_hand_mesh(
-                            hand_mesh,
-                            obj_mesh,
-                            gaussian_params,
-                            base_unit=self.base_unit,
-                            anchors=gt_anchors[0],
-                        )
-
-                        print("====== Reconstructing contacts from 3D Gaussians ======")
-                        visualize_hand_contacts_from_3D_gaussians(
-                            hand_mesh,
-                            gaussian_params,
-                            gt_anchors[0],
-                            gt_contacts=vertex_contacts,
-                        )
-
-                        # Test TTO with the 3D Gaussians! For this, let's corrupt the distance
-                        # field with some noise and see how well we can improve the contacts using
-                        # the Contact Gaussians.
-                        noisy_choir = torch.clamp(
-                            gt_choir
-                            + torch.randn_like(gt_choir) * (80 / self.base_unit),
-                            1e-5,
-                        )
-                        visualize_CHOIR_prediction(
-                            noisy_choir,
-                            gt_choir,
-                            self._bps,
-                            self._anchor_indices,
-                            gt_scalar,
-                            gt_scalar,
-                            gt_rescaled_ref_pts,
-                            gt_rescaled_ref_pts,
-                            gt_verts,
-                            gt_joints,
-                            gt_anchors,
-                            is_rhand=(hand_idx == "right"),
-                            contact_gaussians=None,
-                            use_smplx=False,
-                            dataset="ContactPose",
-                            remap_bps_distances=self._remap_bps_distances,
-                            exponential_map_w=self._exponential_map_w,
-                            use_deltas=self._use_deltas,
-                            plot_choir=False,
-                        )
-                        # Now augment the noisy CHOIR with the Gaussian parameters
-                        visualize_CHOIR_prediction(
-                            noisy_choir,
-                            gt_choir,
-                            self._bps,
-                            self._anchor_indices,
-                            gt_scalar,
-                            gt_scalar,
-                            gt_rescaled_ref_pts,
-                            gt_rescaled_ref_pts,
-                            gt_verts,
-                            gt_joints,
-                            gt_anchors,
-                            contact_gaussians=gaussian_params,
-                            obj_pts=obj_ptcld.float(),
-                            is_rhand=(hand_idx == "right"),
-                            use_smplx=False,
-                            dataset="ContactPose",
-                            remap_bps_distances=self._remap_bps_distances,
-                            exponential_map_w=self._exponential_map_w,
-                            use_deltas=self._use_deltas,
-                            plot_choir=False,
-                        )
-                    # ==============================
-
                     sample_paths = []
                     # ================= Perturbed Hand-Object pairs =================
                     for j in range(self._seq_len):
@@ -719,6 +580,152 @@ class ContactPoseDataset(BaseDataset):
                             gt_trans.squeeze().cpu().numpy(),
                         )
                         # =================================================================
+
+                        # ==============================
+                        if obj_name in ["scissors"] and not has_visualized:
+                            has_visualized = True
+                            hand_mesh = o3dg.TriangleMesh()
+                            hand_mesh.vertices = o3du.Vector3dVector(
+                                gt_verts[0].detach().cpu().numpy()
+                            )
+                            hand_mesh.triangles = o3du.Vector3iVector(
+                                affine_mano.faces.detach().cpu().numpy()
+                            )
+                            hand_mesh.compute_vertex_normals()
+                            normals = np.asarray(hand_mesh.vertex_normals)
+                            colours = np.zeros_like(gt_verts[0].detach().cpu().numpy())
+                            print("======== Neighbourhood-Cones approach =========")
+                            vertex_contacts = get_contact_counts_by_neighbourhoods(
+                                gt_verts[0],
+                                normals,
+                                obj_ptcld,
+                                tolerance_cone_angle=4,
+                                tolerance_mm=4,
+                                base_unit=self.base_unit,
+                                K=300,
+                            )
+                            print(
+                                f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}"
+                            )
+                            print(f"[*] Colours: {colours.shape}")
+                            # Visualize contacts by colouring the vertices
+                            colours[:, 0] = vertex_contacts / vertex_contacts.max()
+                            colours[:, 1] = 0.58 - colours[:, 0]
+                            colours[:, 2] = 0.66 - colours[:, 0]
+                            hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
+                            o3dv.draw_geometries([hand_mesh, obj_mesh])
+                            # o3dv.draw_geometries([hand_mesh])
+                            for i in range(32):
+                                break
+                                (
+                                    gaussian_params,
+                                    anchor_contacts,
+                                ) = compute_anchor_gaussians(
+                                    gt_verts[0],
+                                    gt_anchors[0],
+                                    vertex_contacts,
+                                    base_unit=self.base_unit,
+                                    anchor_mean_threshold_mm=20,
+                                    min_contact_points_for_neighbourhood=5,
+                                    debug_anchor=i,
+                                )
+                                print(f"[*] Gaussian params: {gaussian_params.shape}")
+                                # Visualize the Gaussian parameters
+                                visualize_3D_gaussians_on_hand_mesh(
+                                    hand_mesh,
+                                    obj_mesh,
+                                    gaussian_params,
+                                    base_unit=self.base_unit,
+                                    debug_anchor=i,
+                                    anchors=gt_anchors[0],
+                                    anchor_contacts=anchor_contacts,
+                                )
+                            gaussian_params, anchor_contacts = compute_anchor_gaussians(
+                                gt_verts[0],
+                                gt_anchors[0],
+                                vertex_contacts,
+                                base_unit=self.base_unit,
+                                anchor_mean_threshold_mm=20,
+                                min_contact_points_for_neighbourhood=4,
+                            )
+                            print(f"[*] Gaussian params: {gaussian_params.shape}")
+                            # Visualize the Gaussian parameters
+                            visualize_3D_gaussians_on_hand_mesh(
+                                hand_mesh,
+                                obj_mesh,
+                                gaussian_params,
+                                base_unit=self.base_unit,
+                                anchors=gt_anchors[0],
+                            )
+
+                            print(
+                                "====== Reconstructing contacts from 3D Gaussians ======"
+                            )
+                            visualize_hand_contacts_from_3D_gaussians(
+                                hand_mesh,
+                                gaussian_params,
+                                gt_anchors[0],
+                                gt_contacts=vertex_contacts,
+                            )
+
+                            visualize_CHOIR_prediction(
+                                choir,
+                                gt_choir,
+                                self._bps,
+                                self._anchor_indices,
+                                gt_scalar,
+                                gt_scalar,
+                                gt_rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                is_rhand=(hand_idx == "right"),
+                                contact_gaussians=None,
+                                use_smplx=False,
+                                dataset="ContactPose",
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                                use_deltas=self._use_deltas,
+                                plot_choir=False,
+                            )
+                            # Now augment the noisy CHOIR with the Gaussian parameters
+                            obj_mesh.compute_vertex_normals()
+                            obj_vert_normals = torch.cat(
+                                (
+                                    torch.from_numpy(
+                                        np.asarray(obj_mesh.vertices)
+                                    ).type(dtype=torch.float32),
+                                    torch.from_numpy(
+                                        np.asarray(obj_mesh.vertex_normals)
+                                    ).type(dtype=torch.float32),
+                                ),
+                                dim=-1,
+                            )
+                            visualize_CHOIR_prediction(
+                                choir,
+                                gt_choir,
+                                self._bps,
+                                self._anchor_indices,
+                                gt_scalar,
+                                gt_scalar,
+                                gt_rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                contact_gaussians=gaussian_params,
+                                obj_pts=obj_ptcld.float(),
+                                obj_normals=obj_vert_normals,
+                                is_rhand=(hand_idx == "right"),
+                                use_smplx=False,
+                                dataset="ContactPose",
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                                use_deltas=self._use_deltas,
+                                plot_choir=False,
+                            )
+                        # ==============================
 
                         with open(sample_pth, "wb") as f:
                             pkl = pickle.dumps((sample, label, mesh_pth))

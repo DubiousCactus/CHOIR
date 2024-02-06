@@ -532,6 +532,7 @@ def visualize_CHOIR_prediction(
     remap_bps_distances: bool,
     contact_gaussians: Optional[torch.Tensor] = None,
     obj_pts: Optional[torch.Tensor] = None,
+    obj_normals: Optional[torch.Tensor] = None,
     exponential_map_w: Optional[float] = None,
     plot_choir: bool = True,
     use_deltas: bool = False,
@@ -595,6 +596,7 @@ def visualize_CHOIR_prediction(
             _choir_pred,
             contact_gaussians=contact_gaussians,
             obj_pts=obj_pts,
+            obj_normals=obj_normals,
             bps=bps,
             anchor_indices=anchor_indices.int(),
             scalar=input_scalar,
@@ -663,6 +665,11 @@ def visualize_CHOIR_prediction(
         tmesh,
         obj_ptcld=(input_ref_pts[0] / input_scalar[0]) if obj_pts is None else obj_pts,
         gt_hand=gt_hand_mesh,
+    )
+    visualize_MANO(
+        tmesh,
+        obj_ptcld=(input_ref_pts[0] / input_scalar[0]) if obj_pts is None else obj_pts,
+        opacity=1.0,
     )
     # ===================================================================================
     if plot_choir:
