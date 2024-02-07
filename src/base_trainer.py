@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import plotext as plt
 import torch
+from accelerate import Accelerator
 from hydra.core.hydra_config import HydraConfig
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
@@ -72,6 +73,25 @@ class BaseTrainer:
         self._viz_n_samples = 1
         self._disable_grad = kwargs.get("disable_grad", False)
         self._ema = None
+        self._accelerator = Accelerator()
+        (
+            self._model,
+            self._opt,
+            self._scheduler,
+            self._train_data_loader,
+            self._val_data_loader,
+            # self._bps,
+            # self._anchor_indices
+        ) = self._accelerator.prepare(
+            self._model,
+            self._opt,
+            self._scheduler,
+            self._train_loader,
+            self._val_loader,
+            # self._bps,
+            # self._anchor_indices
+            device_placement=[True, True, True, False, False],
+        )
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -109,26 +129,6 @@ class BaseTrainer:
             torch.Tensor: The loss for the batch.
         """
         samples, labels, _ = batch
-        # ============== Uncomment to make sure the data is loaded correctly ==============
-        # print(f"Displaying {samples['choir'].shape[1]} samples")
-        # for i in range(samples["choir"].shape[1]):
-        # mano_params_gt = {
-        # "pose": labels["theta"][:, i],
-        # "beta": labels["beta"][:, i],
-        # "rot_6d": labels["rot"][:, i],
-        # "trans": labels["trans"][:, i],
-        # }
-        # visualize_CHOIR_prediction(
-        # samples["choir"][:, i],
-        # labels["choir"][:, i],
-        # self._bps,
-        # samples["scalar"][:, i],
-        # labels["scalar"][:, i],
-        # samples["rescaled_ref_pts"][:, i],
-        # labels["rescaled_ref_pts"][:, i],
-        # mano_params_gt,
-        # bps_dim=self._bps_dim,
-        # )
         # For this baseline, we onl want one batch dimension so we can reshape all tensors to be (B * T, ...):
         for k, v in samples.items():
             samples[k] = v.view(-1, *v.shape[2:])
@@ -170,7 +170,7 @@ class BaseTrainer:
                 batch
             )  # User implementation goes here (train.py)
             if not self._disable_grad:
-                loss.backward()
+                self._accelerator.backward(loss)
                 self._opt.step()
                 if self._ema is not None:
                     self._ema.update()

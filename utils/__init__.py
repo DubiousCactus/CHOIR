@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Tuple, Union
 import numpy as np
 import torch
 import tqdm
+from accelerate import Accelerator
 from hydra.conf import HydraConf, JobConf, RunDir
 from hydra_zen import ZenStore, store
 
@@ -45,9 +46,10 @@ def seed_everything(seed: int):
 
 def to_cuda_(x: Any) -> Union[Tuple, List, torch.Tensor, torch.nn.Module]:
     device = "cpu"
+    # device = Accelerator().device
     dtype = x.dtype if isinstance(x, torch.Tensor) else None
     if project_conf.USE_CUDA_IF_AVAILABLE and torch.cuda.is_available():
-        device = "cuda"
+        device = Accelerator().device
     elif project_conf.USE_MPS_IF_AVAILABLE and torch.backends.mps.is_available():
         device = "mps"
         dtype = torch.float32 if dtype is torch.float64 else dtype
