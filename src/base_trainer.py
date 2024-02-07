@@ -183,7 +183,7 @@ class BaseTrainer:
                 has_visualized += 1
             self._pbar.update()
         epoch_loss = epoch_loss.compute().clone()
-        if project_conf.USE_WANDB:
+        if project_conf.USE_WANDB and self._accelerator.is_main_process:
             wandb.log({"train_loss": epoch_loss}, step=epoch)
             wandb.log(
                 {
@@ -247,7 +247,7 @@ class BaseTrainer:
             val_loss = val_loss.compute().clone()
             for k, v in val_loss_components.items():
                 val_loss_components[k] = v.compute().clone()
-            if project_conf.USE_WANDB:
+            if project_conf.USE_WANDB and self._accelerator.is_main_process:
                 wandb.log({"val_loss": val_loss}, step=epoch)
                 wandb.log(
                     {

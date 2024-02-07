@@ -142,16 +142,15 @@ def launch_experiment(
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
-    if project_conf.USE_WANDB:
+    if project_conf.USE_WANDB and accelerator.is_main_process:
         # exp_conf is a string, so we need to load it back to a dict:
-        if accelerator.is_main_process:
-            exp_conf = yaml.safe_load(exp_conf)
-            wandb.init(
-                project=project_conf.PROJECT_NAME,
-                name=run_name,
-                config=exp_conf,
-            )
-            wandb.watch(model_inst, log="all", log_graph=True)
+        exp_conf = yaml.safe_load(exp_conf)
+        wandb.init(
+            project=project_conf.PROJECT_NAME,
+            name=run_name,
+            config=exp_conf,
+        )
+        wandb.watch(model_inst, log="all", log_graph=True)
     " ============ Reproducibility of data loaders ============ "
     g = None
     if project_conf.REPRODUCIBLE:
