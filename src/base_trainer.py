@@ -151,7 +151,7 @@ class BaseTrainer:
         Returns:
             float: Average training loss for the epoch.
         """
-        epoch_loss, epoch_loss_components = MeanMetric(), defaultdict(MeanMetric)
+        epoch_loss, epoch_loss_components = MeanMetric().to(self._accelerator.device), defaultdict(MeanMetric)
         self._pbar.reset()
         self._pbar.set_description(description)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
@@ -174,9 +174,10 @@ class BaseTrainer:
                 self._opt.step()
                 if self._ema is not None:
                     self._ema.update()
-            epoch_loss.update(loss.item())
+            epoch_loss.update(loss.clone())
             for k, v in loss_components.items():
-                epoch_loss_components[k].update(v.item())
+                epoch_loss_components[k].to(self._accelerator.device)
+                epoch_loss_components[k].update(v.clone())
             update_pbar_str(
                 self._pbar,
                 f"{description} [loss={epoch_loss.compute():.4f} /"
@@ -194,7 +195,7 @@ class BaseTrainer:
                     self._visualize(batch, epoch)
                 has_visualized += 1
             self._pbar.update()
-        epoch_loss = epoch_loss.compute().item()
+        epoch_loss = epoch_loss.compute().clone()
         if project_conf.USE_WANDB:
             wandb.log({"train_loss": epoch_loss}, step=epoch)
             wandb.log(
@@ -218,7 +219,7 @@ class BaseTrainer:
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.VALIDATION.value]
         "==================== Validation loop for one epoch ===================="
         with torch.no_grad():
-            val_loss, val_loss_components = MeanMetric(), defaultdict(MeanMetric)
+            val_loss, val_loss_components = MeanMetric().to(self._accelerator.device), defaultdict(MeanMetric)
             for i, batch in enumerate(self._val_loader):
                 if (
                     not self._running
@@ -232,9 +233,10 @@ class BaseTrainer:
                 loss, loss_components = self._train_val_iteration(
                     batch, validation=True
                 )  # User implementation goes here (train.py)
-                val_loss.update(loss.item())
+                val_loss.update(loss.clone())
                 for k, v in loss_components.items():
-                    val_loss_components[k].update(v.item())
+                    val_loss_components[k].to(self._accelerator.device)
+                    val_loss_components[k].update(v.clone())
                 update_pbar_str(
                     self._pbar,
                     f"{description} [loss={val_loss.compute():.4f} /"
@@ -252,9 +254,9 @@ class BaseTrainer:
                 ):
                     self._visualize(batch, epoch)
                     has_visualized += 1
-            val_loss = val_loss.compute().item()
+            val_loss = val_loss.compute().clone()
             for k, v in val_loss_components.items():
-                val_loss_components[k] = v.compute().item()
+                val_loss_components[k] = v.compute().clone()
             if project_conf.USE_WANDB:
                 wandb.log({"val_loss": val_loss}, step=epoch)
                 wandb.log(
