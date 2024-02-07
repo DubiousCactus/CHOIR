@@ -113,7 +113,7 @@ def launch_experiment(
         accelerator.print(
             colorize(
                 f"[*] Rescaling learning rate for {accelerator.num_processes} processes",
-                project_conf.COLORS["blue"],
+                project_conf.ANSI_COLORS["blue"],
             )
         )
     opt_inst = optimizer(
