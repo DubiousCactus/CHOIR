@@ -109,6 +109,13 @@ def launch_experiment(
         bps = test_dataset.bps
         remap_bps_distances = test_dataset.bps
         exponential_map_w = test_dataset.bps
+    if accelerator.num_processes > 1:
+        accelerator.print(
+            colorize(
+                f"[*] Rescaling learning rate for {accelerator.num_processes} processes",
+                project_conf.COLORS["blue"],
+            )
+        )
     opt_inst = optimizer(
         model_inst.parameters(), lr=just(optimizer).lr * accelerator.num_processes
     )

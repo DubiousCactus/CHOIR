@@ -148,6 +148,7 @@ class BaseTrainer:
                 and project_conf.SIGINT_BEHAVIOR
                 == project_conf.TerminationBehavior.ABORT_EPOCH
             ):
+                self._accelerator.wait_for_everyone()
                 self._accelerator.print("[!] Training aborted.")
                 break
             with self._accelerator.accumulate(self._model):
@@ -214,6 +215,7 @@ class BaseTrainer:
                     and project_conf.SIGINT_BEHAVIOR
                     == project_conf.TerminationBehavior.ABORT_EPOCH
                 ):
+                    self._accelerator.wait_for_everyone()
                     self._accelerator.print("[!] Training aborted.")
                     break
                 # Blink the progress bar to indicate that the validation loop is running
