@@ -98,5 +98,13 @@ class MultiViewDDPMTrainer(BaseTrainer):
         losses = self._training_loss(
             samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
         )
+        if validation:
+            losses["ema"] = self._ema.ema_model(
+                # Take the last frame
+                labels["choir"][:, -1]
+                if self._full_choir
+                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                samples["choir"] if self.conditional else None,
+            )  # Only the hand distances!
         loss = sum([v for v in losses.values()])
         return loss, losses
