@@ -150,15 +150,16 @@ class BaseTrainer:
             ):
                 self._accelerator.print("[!] Training aborted.")
                 break
-            self._opt.zero_grad()
-            loss, loss_components = self._train_val_iteration(
-                batch
-            )  # User implementation goes here (train.py)
-            if not self._disable_grad:
-                self._accelerator.backward(loss)
-                self._opt.step()
-                if self._ema is not None:
-                    self._ema.update()
+            with self._accelerator.accumulate(self._model):
+                loss, loss_components = self._train_val_iteration(
+                    batch
+                )  # User implementation goes here (train.py)
+                if not self._disable_grad:
+                    self._accelerator.backward(loss)
+                    self._opt.step()
+                    self._opt.zero_grad()
+                    if self._ema is not None:
+                        self._ema.update()
             epoch_loss.update(loss.clone())
             for k, v in loss_components.items():
                 epoch_loss_components[k].to(self._accelerator.device)

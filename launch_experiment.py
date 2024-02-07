@@ -43,7 +43,9 @@ def launch_experiment(
     training_loss: Partial[torch.nn.Module],
 ):
     run_name = os.path.basename(HydraConfig.get().runtime.output_dir)
-    accelerator = Accelerator()
+    accelerator = Accelerator(
+        gradient_accumulation_steps=run.gradient_accumulation_steps
+    )
     # Generate a random ANSI code:
     color_code = f"38;5;{hash(run_name) % 255}"
     accelerator.print(
@@ -107,7 +109,9 @@ def launch_experiment(
         bps = test_dataset.bps
         remap_bps_distances = test_dataset.bps
         exponential_map_w = test_dataset.bps
-    opt_inst = optimizer(model_inst.parameters())
+    opt_inst = optimizer(
+        model_inst.parameters(), lr=just(optimizer).lr * accelerator.num_processes
+    )
     if scheduler.func is torch.optim.lr_scheduler.CosineAnnealingLR:
         scheduler_inst = scheduler(opt_inst, T_max=run.epochs)
     else:

@@ -345,6 +345,7 @@ sched_store(
 class RunConfig:
     epochs: int = 1000
     seed: int = 42
+    gradient_accumulation_steps: int = 1
     val_every: int = 1
     viz_every: int = 0
     viz_train_every: int = 0
