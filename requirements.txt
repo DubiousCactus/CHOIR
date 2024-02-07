@@ -25,3 +25,4 @@ metabatch
 scenepic
 opencv-python
 ema-pytorch
+accelerate

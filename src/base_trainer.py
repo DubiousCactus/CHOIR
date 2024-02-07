@@ -40,6 +40,7 @@ class BaseTrainer:
         train_loader: DataLoader,
         val_loader: DataLoader,
         training_loss: torch.nn.Module,
+        accelerator: Accelerator,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         **kwargs,
     ) -> None:
@@ -73,25 +74,7 @@ class BaseTrainer:
         self._viz_n_samples = 1
         self._disable_grad = kwargs.get("disable_grad", False)
         self._ema = None
-        self._accelerator = Accelerator()
-        (
-            self._model,
-            self._opt,
-            self._scheduler,
-            self._train_data_loader,
-            self._val_data_loader,
-            # self._bps,
-            # self._anchor_indices
-        ) = self._accelerator.prepare(
-            self._model,
-            self._opt,
-            self._scheduler,
-            self._train_loader,
-            self._val_loader,
-            # self._bps,
-            # self._anchor_indices
-            device_placement=[True, True, True, False, False],
-        )
+        self._accelerator = accelerator
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -151,7 +134,9 @@ class BaseTrainer:
         Returns:
             float: Average training loss for the epoch.
         """
-        epoch_loss, epoch_loss_components = MeanMetric().to(self._accelerator.device), defaultdict(MeanMetric)
+        epoch_loss, epoch_loss_components = MeanMetric().to(
+            self._accelerator.device
+        ), defaultdict(MeanMetric)
         self._pbar.reset()
         self._pbar.set_description(description)
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.TRAINING.value]
@@ -163,7 +148,7 @@ class BaseTrainer:
                 and project_conf.SIGINT_BEHAVIOR
                 == project_conf.TerminationBehavior.ABORT_EPOCH
             ):
-                print("[!] Training aborted.")
+                self._accelerator.print("[!] Training aborted.")
                 break
             self._opt.zero_grad()
             loss, loss_components = self._train_val_iteration(
@@ -219,14 +204,16 @@ class BaseTrainer:
         color_code = project_conf.ANSI_COLORS[project_conf.Theme.VALIDATION.value]
         "==================== Validation loop for one epoch ===================="
         with torch.no_grad():
-            val_loss, val_loss_components = MeanMetric().to(self._accelerator.device), defaultdict(MeanMetric)
+            val_loss, val_loss_components = MeanMetric().to(
+                self._accelerator.device
+            ), defaultdict(MeanMetric)
             for i, batch in enumerate(self._val_loader):
                 if (
                     not self._running
                     and project_conf.SIGINT_BEHAVIOR
                     == project_conf.TerminationBehavior.ABORT_EPOCH
                 ):
-                    print("[!] Training aborted.")
+                    self._accelerator.print("[!] Training aborted.")
                     break
                 # Blink the progress bar to indicate that the validation loop is running
                 blink_pbar(i, self._pbar, 4)
@@ -296,7 +283,7 @@ class BaseTrainer:
             self._load_checkpoint(model_ckpt_path)
         if project_conf.PLOT_ENABLED:
             self._setup_plot()
-        print(f"[*] Training for {epochs} epochs")
+        self._accelerator.print(f"[*] Training for {epochs} epochs")
         self._viz_n_samples = visualize_n_samples
         train_losses, val_losses = [], []
         " ==================== Training loop ==================== "
@@ -332,13 +319,14 @@ class BaseTrainer:
             " ==================== Plotting ==================== "
             if project_conf.PLOT_ENABLED:
                 self._plot(epoch, train_losses, val_losses)
+        self._accelerator.wait_for_everyone()
         self._pbar.close()
         self._save_checkpoint(
             val_losses[-1],
             os.path.join(HydraConfig.get().runtime.output_dir, "last.ckpt"),
         )
-        print(f"[*] Training finished for {self._run_name}!")
-        print(
+        self._accelerator.print(f"[*] Training finished for {self._run_name}!")
+        self._accelerator.print(
             f"[*] Best validation loss: {self._model_saver.min_val_loss:.4f} "
             + f"at epoch {self._model_saver.min_val_loss_epoch}."
         )
@@ -407,13 +395,23 @@ class BaseTrainer:
         Returns:
             None
         """
+        self._accelerator.wait_for_everyone()
+        # self._accelerator.save_state(output_dir=ckpt_path.split(".")[0]) # TODO: Always pass a directory to save_checkpoint?
+        unwrapped_model = self._accelerator.unwrap_model(self._model)
+        unwrapped_opt = self._accelerator.unwrap_model(self._opt)
+        unwrapped_sched = self._accelerator.unwrap_model(self._scheduler)
+        # torch.save({
+        # "val_loss": val_loss,
+        # "epoch": self._epoch,
+        # **kwargs,
+        # }, ckpt_path)
         torch.save(
             {
                 **{
-                    "model_ckpt": self._model.state_dict(),
+                    "model_ckpt": unwrapped_model.state_dict(),
                     "ema_model_ckpt": self._ema.state_dict(),
-                    "opt_ckpt": self._opt.state_dict(),
-                    "scheduler_ckpt": self._scheduler.state_dict()
+                    "opt_ckpt": unwrapped_opt.state_dict(),
+                    "scheduler_ckpt": unwrapped_sched.state_dict()
                     if self._scheduler is not None
                     else None,
                     "epoch": self._epoch,
@@ -434,7 +432,13 @@ class BaseTrainer:
         Returns:
             None
         """
-        print(f"[*] Restoring from checkpoint: {ckpt_path}")
+        self._accelerator.print(
+            f"[*] Restoring from checkpoint: {ckpt_path.split('.')[0]}"
+        )
+        # self._accelerator.load_state(ckpt_path.split(".")[0])
+        unwrapped_model = self._accelerator.unwrap_model(self._model)
+        unwrapped_opt = self._accelerator.unwrap_model(self._opt)
+        unwrapped_sched = self._accelerator.unwrap_model(self._scheduler)
         ckpt = to_cuda_(torch.load(ckpt_path, map_location="cpu"))
         # If the model was optimized with torch.optimize() we need to remove the "_orig_mod"
         # prefix:
@@ -443,36 +447,38 @@ class BaseTrainer:
                 k.replace("_orig_mod.", ""): v for k, v in ckpt["model_ckpt"].items()
             }
         try:
-            self._model.load_state_dict(ckpt["model_ckpt"])
+            unwrapped_model.load_state_dict(ckpt["model_ckpt"])
             if self._ema is not None:
                 self._ema.load_state_dict(ckpt["ema_model_ckpt"])
-            print("[*] Model weights loaded successfully!")
+            self._accelerator.print("[*] Model weights loaded successfully!")
         except Exception as e:
             if project_conf.PARTIALLY_LOAD_MODEL_IF_NO_FULL_MATCH:
-                print(
+                self._accelerator.print(
                     "[!] Partially loading model weights (no full match between model and checkpoint)"
                 )
                 self._model.load_state_dict(ckpt["model_ckpt"], strict=False)
             else:
                 raise e
         if not model_only:
-            self._opt.load_state_dict(ckpt["opt_ckpt"])
+            unwrapped_opt.load_state_dict(ckpt["opt_ckpt"])
             self._epoch = ckpt["epoch"]
             self._starting_epoch = ckpt["epoch"]
             self._min_val_loss = ckpt["val_loss"]
             if self._scheduler is not None:
-                self._scheduler.load_state_dict(ckpt["scheduler_ckpt"])
+                unwrapped_sched.load_state_dict(ckpt["scheduler_ckpt"])
 
     def _terminator(self, sig, frame):
         """
         Handles the SIGINT signal (Ctrl+C) and stops the training loop.
         """
+        if not self._accelerator.is_main_process:
+            return
         if (
             project_conf.SIGINT_BEHAVIOR
             == project_conf.TerminationBehavior.WAIT_FOR_EPOCH_END
             and self._n_ctrl_c == 0
         ):
-            print(
+            self._accelerator.print(
                 f"[!] SIGINT received. Waiting for epoch to end for {self._run_name}. Press Ctrl+C again to abort."
             )
             self._n_ctrl_c += 1
@@ -480,6 +486,8 @@ class BaseTrainer:
             project_conf.SIGINT_BEHAVIOR == project_conf.TerminationBehavior.ABORT_EPOCH
             or self._n_ctrl_c > 0
         ):
-            print(f"[!] SIGINT received. Aborting epoch for {self._run_name}!")
+            self._accelerator.print(
+                f"[!] SIGINT received. Aborting epoch for {self._run_name}!"
+            )
             raise KeyboardInterrupt
         self._running = False

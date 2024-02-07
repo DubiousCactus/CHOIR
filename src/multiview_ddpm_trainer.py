@@ -25,6 +25,7 @@ class MultiViewDDPMTrainer(BaseTrainer):
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )
+        # self._accelerator.register_for_checkpointing(self._ema)
 
     @to_cuda
     def _visualize(
@@ -99,12 +100,17 @@ class MultiViewDDPMTrainer(BaseTrainer):
             samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
         )
         if validation:
-            losses["ema"] = self._ema.ema_model(
+            ema_y_hat = self._ema.ema_model(
                 # Take the last frame
                 labels["choir"][:, -1]
                 if self._full_choir
                 else labels["choir"][:, -1][..., -1].unsqueeze(-1),
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
+            losses["ema"] = self._training_loss(
+                samples, {k: v[:, -1] for k, v in labels.items()}, ema_y_hat
+            )["mse"]
+        # TODO: Refactor the loss aggregation (maybe DDPMLoss doesn't need to return a dict?) Or
+        # maybe I should sun the losses with a recursive function?
         loss = sum([v for v in losses.values()])
         return loss, losses

@@ -15,6 +15,7 @@ from dataclasses import asdict
 import hydra_zen
 import torch
 import yaml
+from accelerate import Accelerator
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import to_absolute_path
 from hydra_zen import just
@@ -27,7 +28,7 @@ from model.aggregate_ved import Aggregate_VED
 from model.diffusion_model import BPSDiffusionModel
 from src.base_trainer import BaseTrainer
 from src.losses.hoi import CHOIRLoss
-from utils import colorize, to_cuda_
+from utils import colorize
 
 
 def launch_experiment(
@@ -42,9 +43,10 @@ def launch_experiment(
     training_loss: Partial[torch.nn.Module],
 ):
     run_name = os.path.basename(HydraConfig.get().runtime.output_dir)
+    accelerator = Accelerator()
     # Generate a random ANSI code:
     color_code = f"38;5;{hash(run_name) % 255}"
-    print(
+    accelerator.print(
         colorize(
             f"========================= Running {run_name} =========================",
             color_code,
@@ -61,7 +63,7 @@ def launch_experiment(
             training_loss=training_loss,
         )
     )
-    print(
+    accelerator.print(
         colorize(
             "Experiment config:\n" + "_" * 18 + "\n" + exp_conf + "_" * 18, color_code
         )
@@ -84,9 +86,11 @@ def launch_experiment(
         model_inst = model(bps_dim=just(dataset).bps_dim)
     else:
         model_inst = model()
-    print(model_inst)
-    print(f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}")
-    print(
+    accelerator.print(model_inst)
+    accelerator.print(
+        f"Number of parameters: {sum(p.numel() for p in model_inst.parameters())}"
+    )
+    accelerator.print(
         f"Number of trainable parameters: {sum(p.numel() for p in model_inst.parameters() if p.requires_grad)}"
     )
     train_dataset, val_dataset, test_dataset = None, None, None
@@ -121,20 +125,22 @@ def launch_experiment(
         training_loss_inst = training_loss()
 
     "============ CUDA ============"
-    model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
-    training_loss_inst: torch.nn.Module = to_cuda_(training_loss_inst)  # type: ignore
+    # TODO: Remove all model/loss/optimizer/scheduler-related to_cuda calls (use Accelerator)
+    # model_inst: torch.nn.Module = to_cuda_(model_inst)  # type: ignore
+    # training_loss_inst: torch.nn.Module = to_cuda_(training_loss_inst)  # type: ignore
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
     if project_conf.USE_WANDB:
         # exp_conf is a string, so we need to load it back to a dict:
-        exp_conf = yaml.safe_load(exp_conf)
-        wandb.init(
-            project=project_conf.PROJECT_NAME,
-            name=run_name,
-            config=exp_conf,
-        )
-        wandb.watch(model_inst, log="all", log_graph=True)
+        if accelerator.is_main_process:
+            exp_conf = yaml.safe_load(exp_conf)
+            wandb.init(
+                project=project_conf.PROJECT_NAME,
+                name=run_name,
+                config=exp_conf,
+            )
+            wandb.watch(model_inst, log="all", log_graph=True)
     " ============ Reproducibility of data loaders ============ "
     g = None
     if project_conf.REPRODUCIBLE:
@@ -147,6 +153,23 @@ def launch_experiment(
         val_loader_inst = data_loader(
             val_dataset, generator=g, shuffle=False, drop_last=False, n_batches=None
         )
+        (
+            model_inst,
+            opt_inst,
+            scheduler_inst,
+            training_loss_inst,
+            train_loader_inst,
+            val_loader_inst,
+        ) = accelerator.prepare(
+            model_inst,
+            opt_inst,
+            scheduler_inst,
+            training_loss_inst,
+            train_loader_inst,
+            val_loader_inst,
+            # I prefer to handle device placement myself for dataloaders (MPS stuff, etc.)
+            device_placement=[True, True, True, True, False, False],
+        )
     else:
         test_loader_inst = data_loader(
             test_dataset,
@@ -155,6 +178,20 @@ def launch_experiment(
             drop_last=False,
             n_batches=None,
             num_workers=1,
+        )
+        (
+            model_inst,
+            opt_inst,
+            scheduler_inst,
+            training_loss_inst,
+            test_loader_inst,
+        ) = accelerator.prepare(
+            model_inst,
+            opt_inst,
+            scheduler_inst,
+            training_loss_inst,
+            test_loader_inst,
+            device_placement=[True, True, True, True, False],
         )
 
     " ============ Checkpoint loading ============ "
@@ -192,6 +229,7 @@ def launch_experiment(
             train_loader=train_loader_inst,
             val_loader=val_loader_inst,
             training_loss=training_loss_inst,
+            accelerator=accelerator,
             **asdict(run),
         ).train(
             epochs=run.epochs,
@@ -208,6 +246,7 @@ def launch_experiment(
             data_loader=test_loader_inst,
             model_ckpt_path=model_ckpt_path,
             training_loss=training_loss_inst,
+            accelerator=accelerator,
             **asdict(run),
         ).test(
             visualize_every=run.viz_every,
