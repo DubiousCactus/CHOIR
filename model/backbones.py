@@ -703,6 +703,7 @@ class MultiScaleResnetEncoderModel(torch.nn.Module):
         normalization: str = "batch",
         norm_groups: int = 16,
         use_self_attention: bool = False,
+        feature_pooling: str = "none",
     ):
         super().__init__()
         self.grid_len = bps_grid_len
@@ -774,6 +775,7 @@ class MultiScaleResnetEncoderModel(torch.nn.Module):
         self.out_conv = torch.nn.Conv3d(
             embed_channels, embed_channels, 1, padding=0, stride=1
         )
+        self.channel_pooling = feature_pooling
 
     def forward(
         self,
@@ -803,7 +805,17 @@ class MultiScaleResnetEncoderModel(torch.nn.Module):
             level = level.view(bs * n, ctx_len, *level.shape[1:]).squeeze(
                 dim=1
             )  # For now we'll try with 1 context frame TODO
-        return l0, l1, l2, l3, l4
+
+        feature_levels = [l0, l1, l2, l3, l4]
+        if self.channel_pooling != "none":
+            for i in range(len(feature_levels)):
+                if self.channel_pooling == "max":
+                    feature_levels[i] = (
+                        feature_levels[i].max(dim=1, keepdim=True).values
+                    )
+                elif self.channel_pooling == "avg":
+                    feature_levels[i] = feature_levels[i].mean(dim=1, keepdim=True)
+        return tuple(feature_levels)
 
 
 class TransformerEncoderModel(torch.nn.Module):

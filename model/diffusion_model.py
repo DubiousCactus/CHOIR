@@ -83,7 +83,7 @@ class BPSDiffusionModel(torch.nn.Module):
                 if y_embed_dim is not None
                 else None,
             ),
-            "3d_unet_multiscale": (
+            "3d_unet_multiscale_no_feature_pooling": (
                 partial(
                     UNetBackboneModel,
                     bps_grid_len=bps_grid_len,
@@ -99,6 +99,50 @@ class BPSDiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
+                    use_self_attention=use_encoder_self_attn,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
+            "3d_unet_multiscale_max_feature_pooling": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                    context_channels=[1] * 5,
+                ),
+                partial(
+                    MultiScaleResnetEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    feature_pooling="max",
+                    use_self_attention=use_encoder_self_attn,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
+            "3d_unet_multiscale_avg_feature_pooling": (
+                partial(
+                    UNetBackboneModel,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                    context_channels=[1] * 5,
+                ),
+                partial(
+                    MultiScaleResnetEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    feature_pooling="avg",
                     use_self_attention=use_encoder_self_attn,
                 )
                 if y_embed_dim is not None
