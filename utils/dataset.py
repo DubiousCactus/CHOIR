@@ -247,8 +247,8 @@ def get_contact_counts_by_neighbourhoods(
     contact_counters = np.zeros(len(mano_vertices))
 
     # Iterate over each MANO vertex
-    print(f"MANO vertices shape: {mano_vertices.shape}")
-    print(f"Object points shape: {object_points.shape}")
+    # print(f"MANO vertices shape: {mano_vertices.shape}")
+    # print(f"Object points shape: {object_points.shape}")
     for i, vertex in enumerate(mano_vertices):
         # Get the normal vector for the current MANO vertex
         normal = mano_normals[i]
@@ -256,32 +256,32 @@ def get_contact_counts_by_neighbourhoods(
         # Find the K nearest neighbors of the current MANO vertex
         _, indices = object_tree.query(vertex, k=K)
         neighbors = object_points[indices]
-        print(f"Computing contact counters for vertex {i}: {vertex}")
-        print(f"Nearest neighbors: {neighbors.shape}")
+        # print(f"Computing contact counters for vertex {i}: {vertex}")
+        # print(f"Nearest neighbors: {neighbors.shape}")
 
         # Compute the distances between the MANO vertex and its K nearest neighbors
         to_obj_vectors = neighbors - vertex
-        print(f"To object vectors: {to_obj_vectors.shape}")
+        # print(f"To object vectors: {to_obj_vectors.shape}")
         distances = np.linalg.norm(to_obj_vectors, axis=1)
-        print(
-            f"Distances: {distances.shape}. Range (mm): {np.min(distances) * base_unit} - {np.max(distances) * base_unit}"
-        )
+        # print(
+        # f"Distances: {distances.shape}. Range (mm): {np.min(distances) * base_unit} - {np.max(distances) * base_unit}"
+        # )
 
         # Compute the angles between the normal vector and the vectors from the MANO vertex to its K nearest neighbors
         angles = np.arccos(
             np.dot(normal, to_obj_vectors.T) / (np.linalg.norm(normal) * distances)
         )
-        print(f"Angles: {angles.shape}. Range: {np.min(angles)} - {np.max(angles)}")
+        # print(f"Angles: {angles.shape}. Range: {np.min(angles)} - {np.max(angles)}")
 
         # Count the number of neighbors within the cone of tolerance
         contact_counters[i] = np.sum(
             (angles <= tolerance_cone_angle) & ((distances * base_unit) <= tolerance_mm)
         )
 
-    print("=========================================")
-    print(f"Contact counters: {contact_counters.shape}")
-    print(f"Range: {np.min(contact_counters)} - {np.max(contact_counters)}")
-    print("=========================================")
+    # print("=========================================")
+    # print(f"Contact counters: {contact_counters.shape}")
+    # print(f"Range: {np.min(contact_counters)} - {np.max(contact_counters)}")
+    # print("=========================================")
     return torch.from_numpy(contact_counters)
 
 
@@ -319,35 +319,35 @@ def compute_anchor_gaussians(
     anchor_distances = torch.cdist(
         torch.tensor(mano_vertices), mano_anchors
     )  # Shape: (778, N_ANCHORS)
-    print(f"Anchor shapes: {mano_anchors.shape}")
-    print(f"Anchor distances: {anchor_distances.shape}")
+    # print(f"Anchor shapes: {mano_anchors.shape}")
+    # print(f"Anchor distances: {anchor_distances.shape}")
     # Keep nearest anchor index for each vertex
     anchor_indices = torch.topk(anchor_distances, 1, largest=False).indices  # (778, 1)
-    print(
-        f"Nearest anchor indices: {anchor_indices.shape}. Range: {torch.min(anchor_indices)} - {torch.max(anchor_indices)}"
-    )
+    # print(
+    # f"Nearest anchor indices: {anchor_indices.shape}. Range: {torch.min(anchor_indices)} - {torch.max(anchor_indices)}"
+    # )
     anchor_contacts = {}
     for anchor in mano_anchors:
         # Get the indices of MANO vertices belonging to the current neighborhood
         anchor_id = int(torch.where(mano_anchors == anchor)[0][0])
         if debug_anchor is not None and anchor_id != debug_anchor:
             continue
-        print(f"Computing contact values for anchor {anchor_id}.")
+        # print(f"Computing contact values for anchor {anchor_id}.")
         neighbour_vert_indices = torch.where(anchor_indices == anchor_id)[
             0
         ]  # List of indices of vertices belonging to the current anchor neighborhood
-        print(
-            f"Neighbour vertex indices: {neighbour_vert_indices.shape}. Range: {torch.min(neighbour_vert_indices)} - {torch.max(neighbour_vert_indices)}"
-        )
-        print(
-            f"Contact counters: {contact_counters[neighbour_vert_indices].shape}. Range: {torch.min(contact_counters[neighbour_vert_indices])} - {torch.max(contact_counters[neighbour_vert_indices])}"
-        )
-        print(
-            f"Non-zero contact counters: {torch.where(contact_counters[neighbour_vert_indices] > 0, 1.0, 0.0).sum()}"
-        )
-        print(
-            f"MANO vertices in neighbourhood: {mano_vertices[neighbour_vert_indices].shape}"
-        )
+        # print(
+        # f"Neighbour vertex indices: {neighbour_vert_indices.shape}. Range: {torch.min(neighbour_vert_indices)} - {torch.max(neighbour_vert_indices)}"
+        # )
+        # print(
+        # f"Contact counters: {contact_counters[neighbour_vert_indices].shape}. Range: {torch.min(contact_counters[neighbour_vert_indices])} - {torch.max(contact_counters[neighbour_vert_indices])}"
+        # )
+        # print(
+        # f"Non-zero contact counters: {torch.where(contact_counters[neighbour_vert_indices] > 0, 1.0, 0.0).sum()}"
+        # )
+        # print(
+        # f"MANO vertices in neighbourhood: {mano_vertices[neighbour_vert_indices].shape}"
+        # )
         if (
             torch.where(contact_counters[neighbour_vert_indices] > 0, 1.0, 0.0).sum()
             < min_contact_points_for_neighbourhood
@@ -375,17 +375,17 @@ def compute_anchor_gaussians(
             cluster_points,
             contact_counters[neighbour_vert_indices],
         )
-        print(f"Cluster points: {cluster_points.shape}.")
+        # print(f"Cluster points: {cluster_points.shape}.")
         mean = torch.mean(cluster_points, dim=0)
-        print(f"L2_Norm(mean-anchor) (mm): {torch.norm(mean - anchor) * base_unit}")
+        # print(f"L2_Norm(mean-anchor) (mm): {torch.norm(mean - anchor) * base_unit}")
         if torch.norm(mean - anchor) * base_unit > anchor_mean_threshold_mm:
-            print(
-                f"Mean of cluster is too far from anchor: {torch.norm(mean - anchor) * base_unit} > {anchor_mean_threshold_mm}"
-            )
+            # print(
+            # f"Mean of cluster is too far from anchor: {torch.norm(mean - anchor) * base_unit} > {anchor_mean_threshold_mm}"
+            # )
             gaussian_params[anchor_id] = torch.zeros(12)
         else:
             cov = torch.cov((cluster_points - mean).T)
-            print(f"Mean: {mean.shape}. Cov: {cov.shape}")
+            # print(f"Mean: {mean.shape}. Cov: {cov.shape}")
             # /!\ The mean must be shifted to the origin, so that we can shift it back in TTO!
             mean = mean - anchor
             gaussian_params[anchor_id] = torch.cat((mean, cov.flatten()))

@@ -169,13 +169,13 @@ def optimize_pose_pca_from_choir(
             f"Anchors loss: {contact_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
         if (
-            torch.abs(prev_loss - contact_loss.detach().type(torch.float64))
+            torch.abs(prev_loss - contact_loss.detach().type(torch.float32))
             <= loss_thresh
         ):
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = contact_loss.detach().type(torch.float64)
+        prev_loss = contact_loss.detach().type(torch.float32)
         contact_loss = contact_loss + shape_regularizer + pose_regularizer
         contact_loss.backward()
         optimizer.step()
@@ -242,7 +242,7 @@ def optimize_pose_pca_from_choir(
             + f"/ Pose reg: {pose_regularizer.item():.8f} / Abs. pose reg: {abs_pose_regularizer.item():.8f}"
         )
         if (
-            torch.abs(prev_loss - contact_loss.detach().type(torch.float64)) <= 1e-4
+            torch.abs(prev_loss - contact_loss.detach().type(torch.float32)) <= 1e-4
             and enable_penetration_loss
         ):
             plateau_cnt += 1
@@ -260,7 +260,7 @@ def optimize_pose_pca_from_choir(
         else:
             converged_pose = verts.detach().clone()
         # loss = loss + shape_regularizer +  abs_pose_regularizer
-        prev_loss = loss.detach().type(torch.float64)
+        prev_loss = loss.detach().type(torch.float32)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -399,11 +399,11 @@ def optimize_mesh_from_joints_and_anchors(
         proc_bar.set_description(
             f"Anchors loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
-        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
+        if torch.abs(prev_loss - loss.detach().type(torch.float32)) <= loss_thresh:
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = loss.detach().type(torch.float64)
+        prev_loss = loss.detach().type(torch.float32)
         loss = loss + shape_regularizer + pose_regularizer
         loss.backward()
         optimizer.step()

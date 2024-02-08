@@ -27,7 +27,6 @@ from open3d import visualization as o3dv
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
-from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
@@ -42,10 +41,7 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
-    visualize_CHOIR,
-    visualize_CHOIR_prediction,
     visualize_hand_contacts_from_3D_gaussians,
-    visualize_MANO,
 )
 
 
@@ -390,6 +386,7 @@ class ContactPoseDataset(BaseDataset):
             + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
             + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
             + f"{'_deltas' if self._use_deltas else ''}"
+            + f"_contact-gaussians"
             + f"_{split}{'-augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
@@ -443,7 +440,7 @@ class ContactPoseDataset(BaseDataset):
                         ]
                     )
                 else:
-                    visualize = self._debug and (random.Random().random() < 0.05)
+                    visualize = self._debug and (random.Random().random() < 0.5)
                     has_visualized = False
                     computed = True
                     # ================== Original Hand-Object Pair ==================
@@ -497,6 +494,104 @@ class ContactPoseDataset(BaseDataset):
                         exponential_map_w=self._exponential_map_w,
                         use_deltas=self._use_deltas,
                     )
+                    # ========== Compute ground-truth contact points ================
+                    gt_hand_mesh = o3dg.TriangleMesh()
+                    gt_hand_mesh.vertices = o3du.Vector3dVector(
+                        gt_verts[0].detach().cpu().numpy()
+                    )
+                    gt_hand_mesh.triangles = o3du.Vector3iVector(
+                        affine_mano.faces.detach().cpu().numpy()
+                    )
+                    gt_hand_mesh.compute_vertex_normals()
+                    normals = np.asarray(gt_hand_mesh.vertex_normals)
+                    gt_vertex_contacts = get_contact_counts_by_neighbourhoods(
+                        gt_verts[0],
+                        normals,
+                        obj_ptcld,
+                        tolerance_cone_angle=4,
+                        tolerance_mm=4,
+                        base_unit=self.base_unit,
+                        K=300,
+                    )
+                    # ======== Compute ground-truth Contact Gaussians ==============
+                    gt_contact_gaussian_params, _ = compute_anchor_gaussians(
+                        gt_verts[0],
+                        gt_anchors[0],
+                        gt_vertex_contacts,
+                        base_unit=self.base_unit,
+                        anchor_mean_threshold_mm=20,
+                        min_contact_points_for_neighbourhood=4,
+                    )
+                    # TODO: Refactor so that compute_choir is called "compute_bps_rep" or something
+                    # of the sort. Cause now I'm augmenting CHOIR to also have Contact Gaussian
+                    # parameters! Anyway this is a mess. I think it's easier to do it all in
+                    # compute_choir (cause of the anchor indexing stuff).
+                    mu = gt_contact_gaussian_params[:, :3]
+
+                    cov = gt_contact_gaussian_params[:, 3:].reshape(-1, 3, 3)
+                    cholesky_cov = torch.zeros_like(cov)
+                    for i in range(cov.shape[0]):
+                        if torch.all(cov[i] == 0):
+                            continue
+                        cholesky_cov[i] = torch.linalg.cholesky(cov[i])
+                    flat_lower_indices = [
+                        0,
+                        3,
+                        4,
+                        6,
+                        7,
+                        8,
+                    ]  # Indices of the flattened lower triangular matrix
+                    lower_tril_cov = cholesky_cov.view(-1, 9)[:, flat_lower_indices]
+                    # Basic test:
+                    lower_tril_mat = torch.zeros_like(cov)
+                    lower_tril_mat = lower_tril_mat.view(-1, 9)
+                    lower_tril_mat[:, flat_lower_indices] = lower_tril_cov
+                    lower_tril_mat = lower_tril_mat.view(-1, 3, 3)
+                    approx_cov = torch.einsum(
+                        "bik,bjk->bij", lower_tril_mat, lower_tril_mat
+                    )
+                    assert (
+                        torch.norm(cov - approx_cov) < 1e-10
+                    ), f"Diff: {torch.norm(cov - approx_cov)}"
+                    print(f"Lower tril cov: {lower_tril_cov[None, ...].shape}")
+                    print(f"Mu: {mu[None, ...].shape}")
+                    print(f"GT Choir: {gt_choir.shape}")
+                    aug_gt_choir = torch.zeros(
+                        gt_choir.shape[0], gt_choir.shape[1], 11
+                    ).to(gt_choir.device)
+                    print(f"Anchor indices: {self._anchor_indices.shape}")
+                    mu = mu.to(aug_gt_choir.device)
+                    lower_tril_cov = lower_tril_cov.to(aug_gt_choir.device)
+                    # TODO: Remove this. It's temporary (I know it can be vectorized but it
+                    # wouldn't need to if it was done in the compute_choir function).
+                    for i in range(self._anchor_indices.shape[0]):
+                        # Concatenate the Gaussian parameters of anchor associated to the current
+                        # index to the CHOIR field
+                        anchor_idx = self._anchor_indices[i]
+                        aug_gt_choir[:, anchor_idx] = torch.cat(
+                            [
+                                gt_choir[:, i],
+                                mu[None, anchor_idx],
+                                lower_tril_cov[None, anchor_idx],
+                            ],
+                            dim=-1,
+                        )
+
+                    print(f"GT Choir w/ contacts: {aug_gt_choir.shape}")
+                    # TODO: Make sure the distances in CHOIR are roughly the same scale as the
+                    # Gaussian parameters. If not we'll have to adjust the exponential_map_w or
+                    # rescale the Gaussian parameters.
+                    print(f"CHOIR range: {gt_choir.min()} - {gt_choir.max()}")
+                    print(
+                        f"Lower tril cov range: {lower_tril_cov.min()} - {lower_tril_cov.max()}"
+                    )
+                    print(f"Absolute diff: {torch.abs(aug_gt_choir - gt_choir)}")
+                    assert torch.all(
+                        torch.abs(aug_gt_choir - gt_choir) < 1e-10
+                    ), "CHOIR distances have changed!"
+                    raise NotImplementedError("Finish this")
+                    # =================================================================
 
                     sample_paths = []
                     # ================= Perturbed Hand-Object pairs =================
@@ -578,42 +673,78 @@ class ContactPoseDataset(BaseDataset):
                             gt_beta.squeeze().cpu().numpy(),
                             gt_rot_6d.squeeze().cpu().numpy(),
                             gt_trans.squeeze().cpu().numpy(),
+                            gt_contact_gaussian_params.squeeze().cpu().numpy(),
                         )
                         # =================================================================
 
-                        # ==============================
-                        if obj_name in ["scissors"] and not has_visualized:
-                            has_visualized = True
-                            hand_mesh = o3dg.TriangleMesh()
-                            hand_mesh.vertices = o3du.Vector3dVector(
-                                gt_verts[0].detach().cpu().numpy()
-                            )
-                            hand_mesh.triangles = o3du.Vector3iVector(
-                                affine_mano.faces.detach().cpu().numpy()
-                            )
-                            hand_mesh.compute_vertex_normals()
-                            normals = np.asarray(hand_mesh.vertex_normals)
+                        with open(sample_pth, "wb") as f:
+                            pkl = pickle.dumps((sample, label, mesh_pth))
+                            compressed_pkl = blosc.compress(pkl)
+                            f.write(compressed_pkl)
+                        sample_paths.append(sample_pth)
+
+                        if visualize and not has_visualized:
+                            # print(
+                            # f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
+                            # )
+                            # visualize_CHOIR(
+                            # # choir.squeeze(0),
+                            # gt_choir.squeeze(0),
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # gt_verts.squeeze(0),
+                            # gt_anchors.squeeze(0),
+                            # obj_mesh,
+                            # obj_ptcld,
+                            # gt_rescaled_ref_pts.squeeze(0),
+                            # affine_mano,
+                            # use_deltas=self._use_deltas,
+                            # )
+                            # faces = affine_mano.faces
+                            # gt_MANO_mesh = Trimesh(
+                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # pred_MANO_mesh = Trimesh(
+                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            # )
+                            # visualize_MANO(
+                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            # )
+                            # visualize_CHOIR_prediction(
+                            # gt_choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # gt_scalar,
+                            # rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # )
+                            # ==============================
                             colours = np.zeros_like(gt_verts[0].detach().cpu().numpy())
-                            print("======== Neighbourhood-Cones approach =========")
-                            vertex_contacts = get_contact_counts_by_neighbourhoods(
-                                gt_verts[0],
-                                normals,
-                                obj_ptcld,
-                                tolerance_cone_angle=4,
-                                tolerance_mm=4,
-                                base_unit=self.base_unit,
-                                K=300,
-                            )
                             print(
-                                f"[*] Computed contacts: {vertex_contacts.shape}. Range: {vertex_contacts.min()} - {vertex_contacts.max()}"
+                                f"[*] Computed contacts: {gt_vertex_contacts.shape}. "
+                                + f"Range: {gt_vertex_contacts.min()} - {gt_vertex_contacts.max()}"
                             )
                             print(f"[*] Colours: {colours.shape}")
                             # Visualize contacts by colouring the vertices
-                            colours[:, 0] = vertex_contacts / vertex_contacts.max()
+                            colours[:, 0] = (
+                                gt_vertex_contacts / gt_vertex_contacts.max()
+                            )
                             colours[:, 1] = 0.58 - colours[:, 0]
                             colours[:, 2] = 0.66 - colours[:, 0]
-                            hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
-                            o3dv.draw_geometries([hand_mesh, obj_mesh])
+                            gt_hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
+                            o3dv.draw_geometries([gt_hand_mesh, obj_mesh])
                             # o3dv.draw_geometries([hand_mesh])
                             for i in range(32):
                                 break
@@ -623,7 +754,7 @@ class ContactPoseDataset(BaseDataset):
                                 ) = compute_anchor_gaussians(
                                     gt_verts[0],
                                     gt_anchors[0],
-                                    vertex_contacts,
+                                    gt_vertex_contacts,
                                     base_unit=self.base_unit,
                                     anchor_mean_threshold_mm=20,
                                     min_contact_points_for_neighbourhood=5,
@@ -632,28 +763,22 @@ class ContactPoseDataset(BaseDataset):
                                 print(f"[*] Gaussian params: {gaussian_params.shape}")
                                 # Visualize the Gaussian parameters
                                 visualize_3D_gaussians_on_hand_mesh(
-                                    hand_mesh,
+                                    gt_hand_mesh,
                                     obj_mesh,
                                     gaussian_params,
                                     base_unit=self.base_unit,
                                     debug_anchor=i,
                                     anchors=gt_anchors[0],
-                                    anchor_contacts=anchor_contacts,
+                                    anchor_contacts=anchor_contacts,  # Only for debugging
                                 )
-                            gaussian_params, anchor_contacts = compute_anchor_gaussians(
-                                gt_verts[0],
-                                gt_anchors[0],
-                                vertex_contacts,
-                                base_unit=self.base_unit,
-                                anchor_mean_threshold_mm=20,
-                                min_contact_points_for_neighbourhood=4,
+                            print(
+                                f"[*] Gaussian params: {gt_contact_gaussian_params.shape}"
                             )
-                            print(f"[*] Gaussian params: {gaussian_params.shape}")
                             # Visualize the Gaussian parameters
                             visualize_3D_gaussians_on_hand_mesh(
-                                hand_mesh,
+                                gt_hand_mesh,
                                 obj_mesh,
-                                gaussian_params,
+                                gt_contact_gaussian_params,
                                 base_unit=self.base_unit,
                                 anchors=gt_anchors[0],
                             )
@@ -662,35 +787,72 @@ class ContactPoseDataset(BaseDataset):
                                 "====== Reconstructing contacts from 3D Gaussians ======"
                             )
                             visualize_hand_contacts_from_3D_gaussians(
-                                hand_mesh,
-                                gaussian_params,
+                                gt_hand_mesh,
+                                gt_contact_gaussian_params,
                                 gt_anchors[0],
-                                gt_contacts=vertex_contacts,
+                                gt_contacts=gt_vertex_contacts,
+                            )
+                            print(
+                                f"gaussian params shape: {gt_contact_gaussian_params.shape}"
+                            )
+                            mu = gt_contact_gaussian_params[:, :3]
+                            cov = gt_contact_gaussian_params[:, 3:].reshape(-1, 3, 3)
+                            cholesky_cov = torch.zeros_like(cov)
+                            for i in range(cov.shape[0]):
+                                if torch.all(cov[i] == 0):
+                                    continue
+                                cholesky_cov[i] = torch.linalg.cholesky(cov[i])
+                                print(
+                                    f"Cholesky shape: {cholesky_cov[i].shape}. Random element: {cholesky_cov[i]}"
+                                )
+                            approx_cov = torch.einsum(
+                                "bik,bjk->bij", cholesky_cov, cholesky_cov
+                            )
+                            print(f"Diff: {torch.norm(cov - approx_cov)}")
+                            choleksy_gaussian_params = torch.cat(
+                                (mu, approx_cov.reshape(-1, 9)), dim=-1
+                            )
+                            # Visualize the Gaussian parameters
+                            visualize_3D_gaussians_on_hand_mesh(
+                                gt_hand_mesh,
+                                obj_mesh,
+                                choleksy_gaussian_params,
+                                base_unit=self.base_unit,
+                                anchors=gt_anchors[0],
                             )
 
-                            visualize_CHOIR_prediction(
-                                choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                gt_scalar,
-                                gt_scalar,
-                                gt_rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                is_rhand=(hand_idx == "right"),
-                                contact_gaussians=None,
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                                use_deltas=self._use_deltas,
-                                plot_choir=False,
+                            print(
+                                "====== Reconstructing contacts from 3D Gaussians ======"
                             )
-                            # Now augment the noisy CHOIR with the Gaussian parameters
-                            obj_mesh.compute_vertex_normals()
+                            visualize_hand_contacts_from_3D_gaussians(
+                                gt_hand_mesh,
+                                choleksy_gaussian_params,
+                                gt_anchors[0],
+                                gt_contacts=gt_vertex_contacts,
+                            )
+                            # visualize_CHOIR_prediction(
+                            # choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # gt_scalar,
+                            # gt_scalar,
+                            # gt_rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # is_rhand=(hand_idx == "right"),
+                            # contact_gaussians=None,
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # plot_choir=False,
+                            # )
+                            # # Now augment the noisy CHOIR with the Gaussian parameters
+                            # obj_mesh.compute_vertex_normals()
                             obj_vert_normals = torch.cat(
                                 (
                                     torch.from_numpy(
@@ -702,84 +864,55 @@ class ContactPoseDataset(BaseDataset):
                                 ),
                                 dim=-1,
                             )
-                            visualize_CHOIR_prediction(
-                                choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                gt_scalar,
-                                gt_scalar,
-                                gt_rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                contact_gaussians=gaussian_params,
-                                obj_pts=obj_ptcld.float(),
-                                obj_normals=obj_vert_normals,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                                use_deltas=self._use_deltas,
-                                plot_choir=False,
-                            )
-                        # ==============================
+                            # visualize_CHOIR_prediction(
+                            # choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # gt_scalar,
+                            # gt_scalar,
+                            # gt_rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # contact_gaussians=gt_contact_gaussian_params,
+                            # obj_pts=obj_ptcld.float(),
+                            # obj_normals=obj_vert_normals,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # plot_choir=False,
+                            # )
 
-                        with open(sample_pth, "wb") as f:
-                            pkl = pickle.dumps((sample, label, mesh_pth))
-                            compressed_pkl = blosc.compress(pkl)
-                            f.write(compressed_pkl)
-                        sample_paths.append(sample_pth)
-
-                        if visualize and not has_visualized:
-                            print(
-                                f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
-                            )
-                            visualize_CHOIR(
-                                # choir.squeeze(0),
-                                gt_choir.squeeze(0),
-                                self._bps,
-                                self._anchor_indices,
-                                scalar,
-                                gt_verts.squeeze(0),
-                                gt_anchors.squeeze(0),
-                                obj_mesh,
-                                obj_ptcld,
-                                gt_rescaled_ref_pts.squeeze(0),
-                                affine_mano,
-                                use_deltas=self._use_deltas,
-                            )
-                            faces = affine_mano.faces
-                            gt_MANO_mesh = Trimesh(
-                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            )
-                            pred_MANO_mesh = Trimesh(
-                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            )
-                            visualize_MANO(
-                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            )
-                            visualize_CHOIR_prediction(
-                                gt_choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                scalar,
-                                gt_scalar,
-                                rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                                use_deltas=self._use_deltas,
-                            )
+                            # visualize_CHOIR_prediction(
+                            # choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # gt_scalar,
+                            # gt_scalar,
+                            # gt_rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # contact_gaussians=choleksy_gaussian_params,
+                            # obj_pts=obj_ptcld.float(),
+                            # obj_normals=obj_vert_normals,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # plot_choir=False,
+                            # )
+                            # ==============================
+                            # ==============================
                             has_visualized = True
                     grasp_paths.append(sample_paths)
                 pbar.update()

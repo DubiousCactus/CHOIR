@@ -382,8 +382,10 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta,
             gt_rot_6d,
             gt_trans,
+            gt_contact_gaussians,
             mesh_pths,
         ) = (
+            [],
             [],
             [],
             [],
@@ -432,6 +434,7 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta.append(label[6])
             gt_rot_6d.append(label[7])
             gt_trans.append(label[8])
+            gt_contact_gaussians.append(label[9])
             mesh_pths.append(mesh_pth)
         # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
         sample = {
@@ -460,5 +463,8 @@ class BaseDataset(TaskSet, abc.ABC):
             "beta": torch.from_numpy(np.array([a for a in gt_beta])),
             "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
             "trans": torch.from_numpy(np.array([a for a in gt_trans])),
+            "contact_gaussians": torch.from_numpy(
+                np.array([a for a in gt_contact_gaussians])
+            ),
         }
         return sample, label, mesh_pths

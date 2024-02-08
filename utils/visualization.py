@@ -1110,7 +1110,6 @@ def visualize_3D_gaussians_on_hand_mesh(
             + f" and total contact points={anchor_contacts[debug_anchor][2].sum()}"
         )
         pcd = open3d.geometry.PointCloud()
-        contacts = anchor_contacts[debug_anchor][2].cpu().numpy()
         pts = anchor_contacts[debug_anchor][0].cpu().numpy()
         # Remove the pts that have a contact value of 0:
         # pts = pts[contacts > 0]
