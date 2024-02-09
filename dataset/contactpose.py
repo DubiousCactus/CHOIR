@@ -75,6 +75,7 @@ class ContactPoseDataset(BaseDataset):
         seed: int = 0,
         debug: bool = False,
         rescale: str = "none",
+        model_contacts: bool = False,
         remap_bps_distances: bool = False,
         exponential_map_w: float = 5.0,
         random_anchor_assignment: bool = False,
@@ -119,6 +120,7 @@ class ContactPoseDataset(BaseDataset):
             max_views_per_grasp = 1
 
         self._eval_anchor_assignment = eval_anchor_assignment
+        self._model_contacts = model_contacts
 
         super().__init__(
             dataset_name="ContactPose",
@@ -386,7 +388,7 @@ class ContactPoseDataset(BaseDataset):
             + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
             + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
             + f"{'_deltas' if self._use_deltas else ''}"
-            + f"_contact-gaussians"
+            + f"{'_contact-gaussians' if self._model_contacts else ''}"
             + f"_{split}{'-augmented' if self._augment else ''}",
         )
         if not osp.isdir(samples_labels_pickle_pth):
@@ -504,93 +506,98 @@ class ContactPoseDataset(BaseDataset):
                     )
                     gt_hand_mesh.compute_vertex_normals()
                     normals = np.asarray(gt_hand_mesh.vertex_normals)
-                    gt_vertex_contacts = get_contact_counts_by_neighbourhoods(
-                        gt_verts[0],
-                        normals,
-                        obj_ptcld,
-                        tolerance_cone_angle=4,
-                        tolerance_mm=4,
-                        base_unit=self.base_unit,
-                        K=300,
-                    )
-                    # ======== Compute ground-truth Contact Gaussians ==============
-                    gt_contact_gaussian_params, _ = compute_anchor_gaussians(
-                        gt_verts[0],
-                        gt_anchors[0],
-                        gt_vertex_contacts,
-                        base_unit=self.base_unit,
-                        anchor_mean_threshold_mm=20,
-                        min_contact_points_for_neighbourhood=4,
-                    )
-                    # TODO: Refactor so that compute_choir is called "compute_bps_rep" or something
-                    # of the sort. Cause now I'm augmenting CHOIR to also have Contact Gaussian
-                    # parameters! Anyway this is a mess. I think it's easier to do it all in
-                    # compute_choir (cause of the anchor indexing stuff).
-                    mu = gt_contact_gaussian_params[:, :3]
-
-                    cov = gt_contact_gaussian_params[:, 3:].reshape(-1, 3, 3)
-                    cholesky_cov = torch.zeros_like(cov)
-                    for i in range(cov.shape[0]):
-                        if torch.all(cov[i] == 0):
-                            continue
-                        cholesky_cov[i] = torch.linalg.cholesky(cov[i])
-                    flat_lower_indices = [
-                        0,
-                        3,
-                        4,
-                        6,
-                        7,
-                        8,
-                    ]  # Indices of the flattened lower triangular matrix
-                    lower_tril_cov = cholesky_cov.view(-1, 9)[:, flat_lower_indices]
-                    # Basic test:
-                    lower_tril_mat = torch.zeros_like(cov)
-                    lower_tril_mat = lower_tril_mat.view(-1, 9)
-                    lower_tril_mat[:, flat_lower_indices] = lower_tril_cov
-                    lower_tril_mat = lower_tril_mat.view(-1, 3, 3)
-                    approx_cov = torch.einsum(
-                        "bik,bjk->bij", lower_tril_mat, lower_tril_mat
-                    )
-                    assert (
-                        torch.norm(cov - approx_cov) < 1e-10
-                    ), f"Diff: {torch.norm(cov - approx_cov)}"
-                    print(f"Lower tril cov: {lower_tril_cov[None, ...].shape}")
-                    print(f"Mu: {mu[None, ...].shape}")
-                    print(f"GT Choir: {gt_choir.shape}")
-                    aug_gt_choir = torch.zeros(
-                        gt_choir.shape[0], gt_choir.shape[1], 11
-                    ).to(gt_choir.device)
-                    print(f"Anchor indices: {self._anchor_indices.shape}")
-                    mu = mu.to(aug_gt_choir.device)
-                    lower_tril_cov = lower_tril_cov.to(aug_gt_choir.device)
-                    # TODO: Remove this. It's temporary (I know it can be vectorized but it
-                    # wouldn't need to if it was done in the compute_choir function).
-                    for i in range(self._anchor_indices.shape[0]):
-                        # Concatenate the Gaussian parameters of anchor associated to the current
-                        # index to the CHOIR field
-                        anchor_idx = self._anchor_indices[i]
-                        aug_gt_choir[:, anchor_idx] = torch.cat(
-                            [
-                                gt_choir[:, i],
-                                mu[None, anchor_idx],
-                                lower_tril_cov[None, anchor_idx],
-                            ],
-                            dim=-1,
+                    if self._model_contacts:
+                        gt_vertex_contacts = get_contact_counts_by_neighbourhoods(
+                            gt_verts[0],
+                            normals,
+                            obj_ptcld,
+                            tolerance_cone_angle=4,
+                            tolerance_mm=4,
+                            base_unit=self.base_unit,
+                            K=300,
                         )
+                        # ======== Compute ground-truth Contact Gaussians ==============
+                        gt_contact_gaussian_params, _ = compute_anchor_gaussians(
+                            gt_verts[0],
+                            gt_anchors[0],
+                            gt_vertex_contacts,
+                            base_unit=self.base_unit,
+                            anchor_mean_threshold_mm=20,
+                            min_contact_points_for_neighbourhood=4,
+                        )
+                        # TODO: Refactor so that compute_choir is called "compute_bps_rep" or something
+                        # of the sort. Cause now I'm augmenting CHOIR to also have Contact Gaussian
+                        # parameters! Anyway this is a mess. I think it's easier to do it all in
+                        # compute_choir (cause of the anchor indexing stuff).
+                        # TODO: I repeat: I will write this in the messiest way so I can get a PoC
+                        # ready ASAP. Then I'll refactor it and it'll be so clean you'll never know
+                        # this horror happened. (Right?)
+                        mu = (
+                            gt_contact_gaussian_params[:, :3] * 100
+                        )  # TODO: Make this scaling cleaner (idk how yet)
+                        cov = (
+                            gt_contact_gaussian_params[:, 3:].reshape(-1, 3, 3) * 1000
+                        )  # TODO: Make this scaling cleaner
+                        cholesky_cov = torch.zeros_like(cov)
+                        for i in range(cov.shape[0]):
+                            if torch.all(cov[i] == 0):
+                                continue
+                            cholesky_cov[i] = torch.linalg.cholesky(cov[i])
+                        flat_lower_indices = [
+                            0,
+                            3,
+                            4,
+                            6,
+                            7,
+                            8,
+                        ]  # Indices of the flattened lower triangular matrix
+                        lower_tril_cov = cholesky_cov.view(-1, 9)[:, flat_lower_indices]
+                        # Basic test:
+                        lower_tril_mat = torch.zeros_like(cov)
+                        lower_tril_mat = lower_tril_mat.view(-1, 9)
+                        lower_tril_mat[:, flat_lower_indices] = lower_tril_cov
+                        lower_tril_mat = lower_tril_mat.view(-1, 3, 3)
+                        approx_cov = torch.einsum(
+                            "bik,bjk->bij", lower_tril_mat, lower_tril_mat
+                        )
+                        assert (
+                            torch.norm(cov - approx_cov) < 1e-7
+                        ), f"Diff: {torch.norm(cov - approx_cov)}"
+                        # print(f"Lower tril cov: {lower_tril_cov[None, ...].shape}")
+                        # print(f"Mu: {mu[None, ...].shape}")
+                        # print(f"GT Choir: {gt_choir.shape}")
+                        aug_gt_choir = torch.zeros(
+                            gt_choir.shape[0], gt_choir.shape[1], 11
+                        ).to(gt_choir.device)
+                        # print(f"Anchor indices: {self._anchor_indices.shape}")
+                        mu = mu.to(aug_gt_choir.device)
+                        lower_tril_cov = lower_tril_cov.to(aug_gt_choir.device)
+                        # TODO: Remove this. It's temporary (I know it can be vectorized but it
+                        # wouldn't need to if it was done in the compute_choir function).
+                        for i in range(self._anchor_indices.shape[0]):
+                            # Concatenate the Gaussian parameters of anchor associated to the current
+                            # index to the CHOIR field
+                            anchor_idx = self._anchor_indices[i]
+                            aug_gt_choir[:, anchor_idx] = torch.cat(
+                                [
+                                    gt_choir[:, i],
+                                    mu[None, anchor_idx],
+                                    lower_tril_cov[None, anchor_idx],
+                                ],
+                                dim=-1,
+                            )
 
-                    print(f"GT Choir w/ contacts: {aug_gt_choir.shape}")
-                    # TODO: Make sure the distances in CHOIR are roughly the same scale as the
-                    # Gaussian parameters. If not we'll have to adjust the exponential_map_w or
-                    # rescale the Gaussian parameters.
-                    print(f"CHOIR range: {gt_choir.min()} - {gt_choir.max()}")
-                    print(
-                        f"Lower tril cov range: {lower_tril_cov.min()} - {lower_tril_cov.max()}"
-                    )
-                    print(f"Absolute diff: {torch.abs(aug_gt_choir - gt_choir)}")
-                    assert torch.all(
-                        torch.abs(aug_gt_choir - gt_choir) < 1e-10
-                    ), "CHOIR distances have changed!"
-                    raise NotImplementedError("Finish this")
+                        # print(f"GT Choir w/ contacts: {aug_gt_choir.shape}")
+                        # TODO: Make sure the distances in CHOIR are roughly the same scale as the
+                        # Gaussian parameters. If not we'll have to adjust the exponential_map_w or
+                        # rescale the Gaussian parameters.
+                        # print(f"CHOIR range: {gt_choir.min()} - {gt_choir.max()}")
+                        # print(
+                        # f"Lower tril cov range: {lower_tril_cov.min()} - {lower_tril_cov.max()}"
+                        # )
+                        # print(
+                        # f"Mu range: {mu.min()} - {mu.max()}"
+                        # )
                     # =================================================================
 
                     sample_paths = []
@@ -664,7 +671,9 @@ class ContactPoseDataset(BaseDataset):
                             joints.squeeze().cpu().numpy(),
                             anchors.squeeze().cpu().numpy(),
                         ), (
-                            gt_choir.squeeze().cpu().numpy(),
+                            aug_gt_choir.squeeze().cpu().numpy()
+                            if self._model_contacts
+                            else gt_choir,
                             gt_rescaled_ref_pts.squeeze().cpu().numpy(),
                             gt_scalar.cpu().numpy(),
                             gt_joints.squeeze().cpu().numpy(),

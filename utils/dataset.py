@@ -317,7 +317,7 @@ def compute_anchor_gaussians(
     gaussian_params = torch.zeros((mano_anchors.shape[0], 12))
     # Get distances to anchors
     anchor_distances = torch.cdist(
-        torch.tensor(mano_vertices), mano_anchors
+        mano_vertices, mano_anchors
     )  # Shape: (778, N_ANCHORS)
     # print(f"Anchor shapes: {mano_anchors.shape}")
     # print(f"Anchor distances: {anchor_distances.shape}")

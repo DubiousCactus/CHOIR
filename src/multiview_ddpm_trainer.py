@@ -22,6 +22,11 @@ class MultiViewDDPMTrainer(BaseTrainer):
         self.conditional = kwargs.get("conditional", False)
         self._use_deltas = self._train_loader.dataset.use_deltas
         self._full_choir = kwargs.get("full_choir", False)
+        self._model_contacts = kwargs.get("model_contacts", False)
+        if self._model_contacts:
+            self._model.backbone.set_anchor_indices(
+                self._train_loader.dataset.anchor_indices
+            )
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )
@@ -82,7 +87,11 @@ class MultiViewDDPMTrainer(BaseTrainer):
                 # Take the last frame
                 labels["choir"][:, -1]
                 if self._full_choir
-                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                else (
+                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                    if not self._model_contacts
+                    else labels["choir"][:, -1][..., 1:]
+                ),
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
         else:
@@ -103,7 +112,11 @@ class MultiViewDDPMTrainer(BaseTrainer):
                 # Take the last frame
                 labels["choir"][:, -1]
                 if self._full_choir
-                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                else (
+                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                    if not self._model_contacts
+                    else labels["choir"][:, -1][..., 1:]
+                ),
                 samples["choir"] if self.conditional else None,
             )  # Only the hand distances!
             losses["ema"] = self._training_loss(

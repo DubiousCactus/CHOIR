@@ -17,6 +17,7 @@ import torch
 from tqdm import tqdm
 
 from model.backbones import (
+    ContactUNetBackboneModel,
     MLPResNetBackboneModel,
     MLPResNetEncoderModel,
     MultiScaleResnetEncoderModel,
@@ -70,6 +71,29 @@ class BPSDiffusionModel(torch.nn.Module):
                     norm_groups=16,
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
+                ),
+                partial(
+                    ResnetEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    pool_all_features="spatial",
+                    use_self_attention=use_encoder_self_attn,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
+            "3d_contact_unet": (
+                partial(
+                    ContactUNetBackboneModel,
+                    context_channels=context_channels or y_embed_dim,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                    choir_dim=10,
                 ),
                 partial(
                     ResnetEncoderModel,
@@ -143,8 +167,13 @@ class BPSDiffusionModel(torch.nn.Module):
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
-            choir_dim=choir_dim * (2 if embed_full_choir else 1),
-            output_channels=1,
+            choir_dim=(
+                choir_dim * (2 if embed_full_choir else 1)
+                if backbone != "3d_contact_unet"
+                else 10
+            ),  # TODO: Fix this horror!!!
+            # TODO: Refactor the entire handling of choir_dim for x and for y.... This is a complete mess
+            output_channels=1 if backbone != "3d_contact_unet" else 10,
             temporal_dim=temporal_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
@@ -183,11 +212,16 @@ class BPSDiffusionModel(torch.nn.Module):
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
         # print(f"Input shape: {x.shape}")
-        # print(f"Input range: [{x.min()}, {x.max()}]")
+        # print(f"Input range (full input): [{x.min()}, {x.max()}]")
+        # print(f"Input range (first dim, prob hand dist): [{x[..., 0].min()}, {x[..., 0].max()}]")
         if self._rescale_input:
             # From [0, 1] to [-1, 1]:
-            x = 2 * x - 1
-        # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
+            if self.embed_full_choir:
+                x[..., :2] = 2 * x[..., :2] - 1
+            else:
+                x[..., 0] = 2 * x[..., 0] - 1  # Only the BPS hand distances
+        # print(f"Input range after stdization (full choir): [{x.min()}, {x.max()}]")
+        # print(f"Input range after stdization (first dim): [{x[..., 0].min()}, {x[..., 0].max()}]")
         # print(f"Input shape: {x.shape}")
         # print(f"Y shape: {y.shape if y is not None else None}")
         # ===== Training =========
@@ -200,7 +234,7 @@ class BPSDiffusionModel(torch.nn.Module):
         # 2. Sample the noise with shape x.shape
         if self.embed_full_choir:
             obj_bps = x[..., 0][..., None]
-            x = x[..., -1][..., None]
+            x = x[..., 1:][..., None]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
         # print(f"eps.shape: {eps.shape}")
         # 3. Diffuse the image
@@ -294,19 +328,24 @@ class BPSDiffusionModel(torch.nn.Module):
             output = x_hat.view(*_in_shape)
             if self._rescale_input:
                 # Back to [0, 1]:
-                output = (output + 1) / 2
+                output[..., :2] = (output[..., :2] + 1) / 2  # Only the BPS distances
                 # print(f"Output range: [{output.min()}, {output.max()}]")
-                output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
+                output[..., :2] = torch.clamp(output[..., :2], 0 + 1e-5, 1 - 1e-5)
                 # print(
                 # f"Output range after stdization: [{output.min()}, {output.max()}]"
                 # )
             else:
                 # Clamp to [-1, 1]:
                 # print(f"Output range: [{output.min()}, {output.max()}]")
-                output = torch.clamp(output, -1 + 1e-5, 1 - 1e-5)
+                output[..., :2] = torch.clamp(output[..., :2], -1 + 1e-5, 1 - 1e-5)
                 # print(
                 # f"Output range after stdization: [{output.min()}, {output.max()}]"
                 # )
+
+            # TODO: This stuff if backbone is 3d_contact_unet
+            # diag_indices = [0, 4, 8]  # Indices of the diagonal elements of the lower triangular matrix
+            # gaussian_params[..., diag_indices] = torch.relu(gaussian_params[..., diag_indices]) # Diagonal elements are non-negative
+            # print(f"Relu'ed Gaussian params: {gaussian_params.shape}")
             return output
 
 
