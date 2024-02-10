@@ -542,7 +542,11 @@ class ContactPoseDataset(BaseDataset):
                         for i in range(cov.shape[0]):
                             if torch.all(cov[i] == 0):
                                 continue
-                            cholesky_cov[i] = torch.linalg.cholesky(cov[i])
+                            try:
+                                cholesky_cov[i] = torch.linalg.cholesky(cov[i])
+                            except torch._C._LinalgError:
+                                nugget = torch.eye(3) * 1e-8
+                                cholesky_cov[i] = torch.linalg.cholesky(cov[i] + nugget)
                         flat_lower_indices = [
                             0,
                             3,
