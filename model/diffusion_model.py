@@ -165,6 +165,7 @@ class BPSDiffusionModel(torch.nn.Module):
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
+        self.use_contacts = backbone == "3d_contact_unet"
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             choir_dim=(
@@ -214,16 +215,28 @@ class BPSDiffusionModel(torch.nn.Module):
         # print(f"Input shape: {x.shape}")
         # print(f"Input range (full input): [{x.min()}, {x.max()}]")
         # print(f"Input range (first dim, prob hand dist): [{x[..., 0].min()}, {x[..., 0].max()}]")
+        # print(f"Y shape: {y.shape if y is not None else None}")
+        # print(f"Y range: [{y.min().item(), y.max().item()}]" if y is not None else None)
         if self._rescale_input:
             # From [0, 1] to [-1, 1]:
             if self.embed_full_choir:
                 x[..., :2] = 2 * x[..., :2] - 1
+                y = 2 * y - 1
+                if self.use_contacts:
+                    raise NotImplementedError  # Lazy
             else:
-                x[..., 0] = 2 * x[..., 0] - 1  # Only the BPS hand distances
+                min_, max_ = 0, 0.8
+                x[..., 0] = (
+                    2 * (x[..., 0] - min_) / (max_ - min_) - 1
+                )  # Only the BPS hand distances
+                y = 2 * y - 1
+                if self.use_contacts:
+                    min_, max_ = -1.5, 1.5
+                    x[..., 1:] = 2 * (x[..., 1:] - min_) / (max_ - min_) - 1
         # print(f"Input range after stdization (full choir): [{x.min()}, {x.max()}]")
         # print(f"Input range after stdization (first dim): [{x[..., 0].min()}, {x[..., 0].max()}]")
+        # print(f"Y range after stdization: [{y.min().item(), y.max().item()}]" if y is not None else None)
         # print(f"Input shape: {x.shape}")
-        # print(f"Y shape: {y.shape if y is not None else None}")
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -328,9 +341,25 @@ class BPSDiffusionModel(torch.nn.Module):
             output = x_hat.view(*_in_shape)
             if self._rescale_input:
                 # Back to [0, 1]:
-                output[..., :2] = (output[..., :2] + 1) / 2  # Only the BPS distances
+                min_, max_ = -1, 1
+                to_min, to_max = 0, 0.8
+                if self.embed_full_choir:
+                    raise NotImplementedError  # Lazy
+                output[..., 0] = to_min + (output[..., 0] - min_) * (
+                    to_max - to_min
+                ) / (max_ - min_)
                 # print(f"Output range: [{output.min()}, {output.max()}]")
-                output[..., :2] = torch.clamp(output[..., :2], 0 + 1e-5, 1 - 1e-5)
+                output[..., 0] = torch.clamp(output[..., 0], 0 + 1e-5, 1 - 1e-5)
+                if self.use_contacts:
+                    to_min_, to_max_ = -1.5, 1.5
+                    output[..., 1:] = to_min_ + (output[..., 1:] - min_) * (
+                        to_max_ - to_min_
+                    ) / (max_ - min_)
+                    # TODO: Clamp Guassian means to something like +/-20mm
+                    raise NotImplementedError("Clamping Gaussian means to +/-20mm")
+                    raise NotImplementedError(
+                        "Threhsolding non-active Gaussian variances"
+                    )
                 # print(
                 # f"Output range after stdization: [{output.min()}, {output.max()}]"
                 # )

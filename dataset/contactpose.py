@@ -30,6 +30,7 @@ from tqdm import tqdm
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
+from globals import FLAT_LOWER_INDICES
 from model.affine_mano import AffineMANO
 from utils import colorize
 from utils.dataset import (
@@ -41,6 +42,7 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
+    visualize_CHOIR,
     visualize_hand_contacts_from_3D_gaussians,
 )
 
@@ -540,6 +542,9 @@ class ContactPoseDataset(BaseDataset):
                         )  # TODO: Make this scaling cleaner
                         cholesky_cov = torch.zeros_like(cov)
                         for i in range(cov.shape[0]):
+                            # TODO: Work out the minimum threshold by looking through the dataset
+                            # with the lowest covariance. Use that for generation. Most likely
+                            # non-diagonal elements should be at > thresh and diag elements > 1e-8.
                             if torch.all(cov[i] == 0):
                                 continue
                             try:
@@ -547,22 +552,13 @@ class ContactPoseDataset(BaseDataset):
                             except torch._C._LinalgError:
                                 nugget = torch.eye(3) * 1e-8
                                 cholesky_cov[i] = torch.linalg.cholesky(cov[i] + nugget)
-                        flat_lower_indices = [
-                            0,
-                            3,
-                            4,
-                            6,
-                            7,
-                            8,
-                        ]  # Indices of the flattened lower triangular matrix
-                        lower_tril_cov = cholesky_cov.view(-1, 9)[:, flat_lower_indices]
+                        lower_tril_cov = cholesky_cov.view(-1, 9)[:, FLAT_LOWER_INDICES]
                         # Basic test:
-                        lower_tril_mat = torch.zeros_like(cov)
-                        lower_tril_mat = lower_tril_mat.view(-1, 9)
-                        lower_tril_mat[:, flat_lower_indices] = lower_tril_cov
-                        lower_tril_mat = lower_tril_mat.view(-1, 3, 3)
+                        test_lower_tril_mat = torch.zeros_like(cov).view(-1, 9)
+                        test_lower_tril_mat[:, FLAT_LOWER_INDICES] = lower_tril_cov
+                        test_lower_tril_mat = test_lower_tril_mat.view(-1, 3, 3)
                         approx_cov = torch.einsum(
-                            "bik,bjk->bij", lower_tril_mat, lower_tril_mat
+                            "bik,bjk->bij", test_lower_tril_mat, test_lower_tril_mat
                         )
                         assert (
                             torch.norm(cov - approx_cov) < 1e-7
@@ -581,8 +577,8 @@ class ContactPoseDataset(BaseDataset):
                         for i in range(self._anchor_indices.shape[0]):
                             # Concatenate the Gaussian parameters of anchor associated to the current
                             # index to the CHOIR field
-                            anchor_idx = self._anchor_indices[i]
-                            aug_gt_choir[:, anchor_idx] = torch.cat(
+                            anchor_idx = self._anchor_indices[i].item()
+                            aug_gt_choir[:, i] = torch.cat(
                                 [
                                     gt_choir[:, i],
                                     mu[None, anchor_idx],
@@ -697,23 +693,23 @@ class ContactPoseDataset(BaseDataset):
                         sample_paths.append(sample_pth)
 
                         if visualize and not has_visualized:
-                            # print(
-                            # f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
-                            # )
-                            # visualize_CHOIR(
-                            # # choir.squeeze(0),
-                            # gt_choir.squeeze(0),
-                            # self._bps,
-                            # self._anchor_indices,
-                            # scalar,
-                            # gt_verts.squeeze(0),
-                            # gt_anchors.squeeze(0),
-                            # obj_mesh,
-                            # obj_ptcld,
-                            # gt_rescaled_ref_pts.squeeze(0),
-                            # affine_mano,
-                            # use_deltas=self._use_deltas,
-                            # )
+                            print(
+                                f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
+                            )
+                            visualize_CHOIR(
+                                # choir.squeeze(0),
+                                gt_choir.squeeze(0),
+                                self._bps,
+                                self._anchor_indices,
+                                scalar,
+                                gt_verts.squeeze(0),
+                                gt_anchors.squeeze(0),
+                                obj_mesh,
+                                obj_ptcld,
+                                gt_rescaled_ref_pts.squeeze(0),
+                                affine_mano,
+                                use_deltas=self._use_deltas,
+                            )
                             # faces = affine_mano.faces
                             # gt_MANO_mesh = Trimesh(
                             # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()

@@ -23,6 +23,7 @@ from model.resnet_conv import TemporalIdentityResidualBlock as TemporalConvIdent
 from model.resnet_conv import TemporalUpScaleResidualBlock as TemporalConvUpBlock
 from model.resnet_mlp import ResidualBlock as ResBlock
 from model.resnet_mlp import TemporalResidualBlock as TemporalResBlock
+from utils.dataset import fetch_gaussian_params_from_CHOIR
 from vendor.Pointnet_Pointnet2_pytorch.models.pointnet2_utils import (
     PointNetFeaturePropagation,
     PointNetSetAbstraction,
@@ -559,12 +560,12 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         # 32 anchors assigned randomly to each BPS point, hence the repetition (see section on anchor assignment in the paper).
         self.n_gaussian_params, self.n_anchors = 9, 32
         self.n_repeats = (self.grid_len**3) // self.n_anchors
-        self.contacts_decoder = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(self.n_anchors),
-            torch.nn.Linear(self.n_gaussian_params * self.n_repeats, 2048),
-            torch.nn.GELU(),
-            torch.nn.Linear(2048, self.n_gaussian_params),
-        )
+        # self.contacts_decoder = torch.nn.Sequential(
+        # torch.nn.BatchNorm1d(self.n_anchors),
+        # torch.nn.Linear(self.n_gaussian_params * self.n_repeats, 2048),
+        # torch.nn.GELU(),
+        # torch.nn.Linear(2048, self.n_gaussian_params),
+        # )
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
         self.anchor_indices = anchor_indices
@@ -582,7 +583,6 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         # print(f"Input shape: {x.shape}")
         x = super().forward(x, t, y, debug)
         # print(f"Pre-Output shape: {x.shape}")
-        gaussian_param_feats = x[..., 1:]
         # print(f"gaussian param features: {gaussian_param_feats.shape}.")
         # Now, we'll decode the gaussian parameters by groups of N_REPEAT * 9,
         # where N_REPEAT = (bps_grid_len ** 3) / 32. We can batch everything together in a batch of
@@ -597,35 +597,19 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         # We can just sort the indices and then use the sorted indices to permute the second dimension.
         # This way, we'll have all the features of the same anchor together.
         # We'll then reshape the tensor to (B, N_REPEAT, 32, 9) and pass it through the MLP.
-        # print(f"Unsorted anchor indices: {self.anchor_indices.shape}: {self.anchor_indices[:5]}...{self.anchor_indices[-5:]}")
-        sorted_anchor_meta_indices = torch.argsort(
-            self.anchor_indices, dim=-1
-        )  # Goes in ascending order
-        # print(f"Sorted anchor indices: {sorted_anchor_meta_indices.shape}: {sorted_anchor_meta_indices[:5]}...{sorted_anchor_meta_indices[-5:]}")
-        gaussian_param_feats = gaussian_param_feats[:, sorted_anchor_meta_indices]
-        # print(f"Sorted gaussian param features: {gaussian_param_feats.shape}")
-        gaussian_param_feats = gaussian_param_feats.view(
-            gaussian_param_feats.shape[0],
-            self.n_repeats * self.n_anchors,
-            self.n_gaussian_params,
-        )
-        # print(f"Reshaped gaussian param features: {gaussian_param_feats.shape}")
-        gaussian_params = gaussian_param_feats.view(
-            gaussian_param_feats.shape[0],
+        gaussian_params = fetch_gaussian_params_from_CHOIR(
+            x,
+            self.anchor_indices,
             self.n_repeats,
             self.n_anchors,
-            self.n_gaussian_params,
+            choir_includes_obj=False,
         )
-        # print(f"Reshaped gaussian params: {gaussian_params.shape}")
-        gaussian_params = gaussian_params.permute(0, 2, 1, 3).reshape(
-            gaussian_params.shape[0],
-            self.n_anchors,
-            self.n_repeats * self.n_gaussian_params,
-        )
-        # print(f"Reshaped gaussian params: {gaussian_params.shape}")
-        gaussian_params = self.contacts_decoder(gaussian_params)  # (B, 32, 9)
-        # print(f"Pooled gaussian params: {gaussian_params.shape}")
-        # print(f"Reshaped pooled gaussian params: {gaussian_params.shape}")
+
+        gaussian_params = gaussian_params.mean(dim=-2)
+        # shape = gaussian_params.shape
+        # gaussian_params = gaussian_params.view(*shape[:-2] , self.n_gaussian_params * self.n_repeats)
+        # gaussian_params = self.contacts_decoder(gaussian_params)  # (B, 32, 9)
+
         # TODO: Refactor this in a better vectorized way
         aug_gt_choir = torch.zeros_like(x).to(x.device)
         # Finally, we'll concatenate the gaussian parameters to the original output tensor.
@@ -634,8 +618,8 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         for i in range(self.anchor_indices.shape[0]):
             # Concatenate the Gaussian parameters of anchor associated to the current
             # index to the CHOIR field
-            anchor_idx = self.anchor_indices[i]
-            aug_gt_choir[:, anchor_idx] = torch.cat(
+            anchor_idx = self.anchor_indices[i].item()
+            aug_gt_choir[:, i] = torch.cat(
                 [
                     x[:, i, 0].unsqueeze(-1),
                     gaussian_params[:, anchor_idx],

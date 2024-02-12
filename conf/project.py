@@ -26,6 +26,7 @@ class TerminationBehavior(Enum):
 - *env.get("VAR_NAME", "default_value")* returns the value of the environment variable VAR_NAME if
                                           it exists, or "default_value" otherwise.
 """
+DEBUG = str_to_bool(env.get("DEBUG", "0"))
 REPRODUCIBLE = str_to_bool(env.get("REPRODUCIBLE", "True"))
 CKPT_PATH = "ckpt"
 USE_CUDA_IF_AVAILABLE = str_to_bool(env.get("USE_CUDA_IF_AVAILABLE", "True"))
