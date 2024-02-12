@@ -560,12 +560,12 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         # 32 anchors assigned randomly to each BPS point, hence the repetition (see section on anchor assignment in the paper).
         self.n_gaussian_params, self.n_anchors = 9, 32
         self.n_repeats = (self.grid_len**3) // self.n_anchors
-        self.contacts_decoder = torch.nn.Sequential(
-            # torch.nn.BatchNorm1d(self.n_anchors),
-            torch.nn.Linear(self.n_gaussian_params * self.n_repeats, 2048),
-            torch.nn.GELU(),
-            torch.nn.Linear(2048, self.n_gaussian_params),
-        )
+        # self.contacts_decoder = torch.nn.Sequential(
+        # torch.nn.BatchNorm1d(self.n_anchors),
+        # torch.nn.Linear(self.n_gaussian_params * self.n_repeats, 2048),
+        # torch.nn.GELU(),
+        # torch.nn.Linear(2048, self.n_gaussian_params),
+        # )
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
         self.anchor_indices = anchor_indices
@@ -605,12 +605,10 @@ class ContactUNetBackboneModel(UNetBackboneModel):
             choir_includes_obj=False,
         )
 
-        # gaussian_params = gaussian_params.mean(dim=-2)
-        shape = gaussian_params.shape
-        gaussian_params = gaussian_params.view(
-            *shape[:-2], self.n_gaussian_params * self.n_repeats
-        )
-        gaussian_params = self.contacts_decoder(gaussian_params)  # (B, 32, 9)
+        gaussian_params = gaussian_params.mean(dim=-2)
+        # shape = gaussian_params.shape
+        # gaussian_params = gaussian_params.view(*shape[:-2] , self.n_gaussian_params * self.n_repeats)
+        # gaussian_params = self.contacts_decoder(gaussian_params)  # (B, 32, 9)
 
         # TODO: Refactor this in a better vectorized way
         aug_gt_choir = torch.zeros_like(x).to(x.device)
