@@ -24,6 +24,7 @@ from pytorch3d.transforms.rotation_conversions import (
 )
 from scipy.spatial import cKDTree
 
+from globals import FLAT_LOWER_INDICES
 from utils import to_cuda
 
 
@@ -729,3 +730,60 @@ def snap_to_original_mano(snap_joints: torch.Tensor) -> torch.Tensor:
         ]
     else:
         raise ValueError(f"Unknown shape {snap_joints.shape}")
+
+
+def lower_tril_cholesky_to_covmat(lower_tril: torch.Tensor) -> torch.Tensor:
+    assert (
+        len(lower_tril.shape) == 3
+    ), "Expecting batched vectors of lower triangular matrices (non-zero elements only) of shape (B, N_ANCHORS, 6)."
+    bs, n = tuple(lower_tril.shape[:2])
+    cov_mat = torch.zeros((bs, n, 3, 3)).view(bs, n, 9).to(lower_tril.device)
+    cov_mat[..., FLAT_LOWER_INDICES] = lower_tril
+    # A = L * L^T where L is the lower triangular matrix obtained from the Cholesky decomposition.
+    recovered_covs = torch.einsum(
+        "bnik,bnjk->bnij", cov_mat.view(bs, n, 3, 3), cov_mat.view(bs, n, 3, 3)
+    )
+    return recovered_covs
+
+
+def fetch_gaussian_params_from_CHOIR(
+    x: torch.Tensor,
+    anchor_indices: torch.Tensor,
+    n_repeats: int,
+    n_anchors: int,
+    choir_includes_obj: bool,
+    n_gaussian_params: int = 9,
+) -> torch.Tensor:
+    """
+    Fetch the Gaussian parameters from the CHOIR tensor where they are repeated N times for each
+    MANO anchor. N = (BPS_LEN // N_ANCHORS), N_ANCHORS = 32, BPS_LEN = BPS_GRID_LEN ** 3.
+    The Gaussian parameters are the mean and the vector of non-zero entries in the lower triangular
+    matrix (via Cholesky decomposition) of the covariance matrix. Each anchor's parameters are
+    scattered according to the list of anchor indices.
+
+    Args:
+        x (torch.Tensor): The CHOIR tensor of shape (*, BPS_LEN, 11).
+        anchor_indices (torch.Tensor): The anchor indices of shape (BPS_LEN, 1).
+        n_repeats (int): The number of repeats for each anchor (BPS_LEN // N_ANCHORS).
+        n_anchors (int): The number of anchors.
+        choir_includes_obj (bool): Whether the CHOIR tensor includes the object's CHOIR.
+
+    Returns:
+        gaussian_params (torch.Tensor): The repeated Gaussian parameters of shape (*, N_ANCHORS, N, 9).
+                                        The mean vectors are the first 3 elements and the lower
+                                        triangular matrix is the next 6.
+    """
+    assert (
+        len(x.shape) == 3
+    ), f"Expecting a CHOIR tensor of shape (B, BPS_LEN, 10) or (B, BP_LEN, 11) if choir_includes_obj but got {x.shape}."
+    sorted_anchor_meta_indices = torch.argsort(
+        anchor_indices, dim=-1
+    )  # Goes in ascending order
+    gaussian_param_feats = x[..., (2 if choir_includes_obj else 1) :]
+    gaussian_param_feats = gaussian_param_feats[:, sorted_anchor_meta_indices]
+    return gaussian_param_feats.view(
+        gaussian_param_feats.shape[0],
+        n_anchors,
+        n_repeats,
+        n_gaussian_params,
+    )
