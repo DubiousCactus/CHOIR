@@ -94,6 +94,30 @@ class BPSDiffusionModel(torch.nn.Module):
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
                     choir_dim=10,
+                    no_decoding=True,
+                ),
+                partial(
+                    ResnetEncoderModel,
+                    choir_dim=choir_dim * 2,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    pool_all_features="spatial",
+                    use_self_attention=use_encoder_self_attn,
+                )
+                if y_embed_dim is not None
+                else None,
+            ),
+            "3d_contact_unet_w_decoding": (
+                partial(
+                    ContactUNetBackboneModel,
+                    context_channels=context_channels or y_embed_dim,
+                    bps_grid_len=bps_grid_len,
+                    normalization="group",
+                    norm_groups=16,
+                    pooling="avg",
+                    use_self_attention=use_backbone_self_attn,
+                    choir_dim=10,
                 ),
                 partial(
                     ResnetEncoderModel,

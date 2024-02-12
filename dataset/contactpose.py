@@ -549,7 +549,7 @@ class ContactPoseDataset(BaseDataset):
                                 continue
                             try:
                                 cholesky_cov[i] = torch.linalg.cholesky(cov[i])
-                            except torch._C._LinalgError:
+                            except torch._C._LinAlgError:
                                 nugget = torch.eye(3) * 1e-8
                                 cholesky_cov[i] = torch.linalg.cholesky(cov[i] + nugget)
                         lower_tril_cov = cholesky_cov.view(-1, 9)[:, FLAT_LOWER_INDICES]

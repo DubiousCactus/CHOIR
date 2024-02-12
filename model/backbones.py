@@ -542,6 +542,7 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         output_paddings: Tuple[int] = (1, 1, 1, 1),
         context_channels: Optional[int | Tuple[int]] = None,
         use_self_attention: bool = False,
+        no_decoding: bool = False,
     ):
         super().__init__(
             time_encoder,
@@ -556,6 +557,7 @@ class ContactUNetBackboneModel(UNetBackboneModel):
             context_channels=context_channels,
             use_self_attention=use_self_attention,
         )
+        self._no_decoding = no_decoding
         self.anchor_indices = None
         # 32 anchors assigned randomly to each BPS point, hence the repetition (see section on anchor assignment in the paper).
         self.n_gaussian_params, self.n_anchors = 9, 32
@@ -582,6 +584,8 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         ), "Anchor indices must be set before forward pass."
         # print(f"Input shape: {x.shape}")
         x = super().forward(x, t, y, debug)
+        if self._no_decoding:
+            return x
         # print(f"Pre-Output shape: {x.shape}")
         # print(f"gaussian param features: {gaussian_param_feats.shape}.")
         # Now, we'll decode the gaussian parameters by groups of N_REPEAT * 9,
