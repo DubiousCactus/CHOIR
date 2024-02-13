@@ -434,7 +434,7 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta.append(label[6])
             gt_rot_6d.append(label[7])
             gt_trans.append(label[8])
-            gt_contact_gaussians.append(label[9])
+            gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
             mesh_pths.append(mesh_pth)
         # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
         sample = {

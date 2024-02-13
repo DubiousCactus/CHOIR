@@ -582,12 +582,9 @@ class ContactUNetBackboneModel(UNetBackboneModel):
         assert (
             self.anchor_indices is not None
         ), "Anchor indices must be set before forward pass."
-        # print(f"Input shape: {x.shape}")
         x = super().forward(x, t, y, debug)
         if self._no_decoding:
             return x
-        # print(f"Pre-Output shape: {x.shape}")
-        # print(f"gaussian param features: {gaussian_param_feats.shape}.")
         # Now, we'll decode the gaussian parameters by groups of N_REPEAT * 9,
         # where N_REPEAT = (bps_grid_len ** 3) / 32. We can batch everything together in a batch of
         # 32 * N_REPEAT, and then reshape the output to the original shape. This way, the MLP
@@ -609,29 +606,24 @@ class ContactUNetBackboneModel(UNetBackboneModel):
             choir_includes_obj=False,
         )
 
-        gaussian_params = gaussian_params.mean(dim=-2)
+        gaussian_params = gaussian_params.mean(dim=-2)  # Simple mean pooling as a PoC
         # shape = gaussian_params.shape
         # gaussian_params = gaussian_params.view(*shape[:-2] , self.n_gaussian_params * self.n_repeats)
         # gaussian_params = self.contacts_decoder(gaussian_params)  # (B, 32, 9)
 
-        # TODO: Refactor this in a better vectorized way
-        aug_gt_choir = torch.zeros_like(x).to(x.device)
         # Finally, we'll concatenate the gaussian parameters to the original output tensor.
         # By doing this, we also undo the sorting of the indices to get the original order of the
         # BPS points.
-        for i in range(self.anchor_indices.shape[0]):
-            # Concatenate the Gaussian parameters of anchor associated to the current
-            # index to the CHOIR field
-            anchor_idx = self.anchor_indices[i].item()
-            aug_gt_choir[:, i] = torch.cat(
-                [
-                    x[:, i, 0].unsqueeze(-1),
-                    gaussian_params[:, anchor_idx],
-                ],
-                dim=-1,
-            )
-        # print(f"Recomputed CHOIR: {aug_gt_choir.shape}")
-        return aug_gt_choir
+        x = torch.cat(
+            (
+                x[..., 0].unsqueeze(
+                    -1
+                ),  # The first channel is the CHOIR field (hand dist only though)
+                gaussian_params[:, self.anchor_indices],
+            ),
+            dim=-1,
+        )
+        return x
 
 
 class ResnetEncoderModel(torch.nn.Module):

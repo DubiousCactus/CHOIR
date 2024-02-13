@@ -189,16 +189,16 @@ class BPSDiffusionModel(torch.nn.Module):
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
-        self.use_contacts = backbone == "3d_contact_unet"
+        self.use_contacts = "contact" in backbone
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             choir_dim=(
                 choir_dim * (2 if embed_full_choir else 1)
-                if backbone != "3d_contact_unet"
+                if "contact" not in backbone
                 else 10
             ),  # TODO: Fix this horror!!!
             # TODO: Refactor the entire handling of choir_dim for x and for y.... This is a complete mess
-            output_channels=1 if backbone != "3d_contact_unet" else 10,
+            output_channels=1 if "contact" not in backbone else 10,
             temporal_dim=temporal_dim,
         )
         if y_dim is not None or y_embed_dim is not None:
