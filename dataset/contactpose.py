@@ -55,6 +55,37 @@ class ContactPoseDataset(BaseDataset):
     """
 
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
+    gt_udf_mean = torch.tensor([0.4786, 0.3606])  # object distances, hand distances
+    gt_udf_std = torch.tensor([0.1478, 0.1302])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.4786, 0.3419])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1478, 0.1395])  # object distances, hand distances
+
+    contacts_mean = torch.tensor(
+        [
+            -1.5331e-03,  # mean x
+            -1.6800e-03,  # mean y
+            -3.4660e-03,  # mean z
+            2.3796e-02,  # cholesky-decomped cov 00
+            -4.0151e-04,  # cholesky-decomped cov 03
+            1.8137e-02,  # cholesky-decomped cov 04
+            -5.5755e-05,  # cholesky-decomped cov 06
+            -7.4863e-04,  # cholesky-decomped cov 07
+            1.3010e-02,  # cholesky-decomped cov 08
+        ]
+    )
+    contacts_std = torch.tensor(
+        [
+            0.1521,  # mean x
+            0.1466,  # mean y
+            0.1419,  # mean z
+            0.0492,  # cholesky-decomped cov 00
+            0.0313,  # cholesky-decomped cov 03
+            0.0392,  # cholesky-decomped cov 04
+            0.0305,  # cholesky-decomped cov 06
+            0.0293,  # cholesky-decomped cov 07
+            0.0309,  # cholesky-decomped cov 08
+        ]
+    )
 
     def __init__(
         self,
@@ -534,11 +565,11 @@ class ContactPoseDataset(BaseDataset):
                         # TODO: I repeat: I will write this in the messiest way so I can get a PoC
                         # ready ASAP. Then I'll refactor it and it'll be so clean you'll never know
                         # this horror happened. (Right?)
-                        mu = (
-                            gt_contact_gaussian_params[:, :3] * 100
-                        )  # TODO: Make this scaling cleaner (idk how yet)
-                        cov = (
-                            gt_contact_gaussian_params[:, 3:].reshape(-1, 3, 3) * 1000
+                        mu = gt_contact_gaussian_params[
+                            :, :3
+                        ]  # TODO: Make this scaling cleaner (idk how yet)
+                        cov = gt_contact_gaussian_params[:, 3:].reshape(
+                            -1, 3, 3
                         )  # TODO: Make this scaling cleaner
                         cholesky_cov = torch.zeros_like(cov)
                         for i in range(cov.shape[0]):
@@ -561,7 +592,7 @@ class ContactPoseDataset(BaseDataset):
                             "bik,bjk->bij", test_lower_tril_mat, test_lower_tril_mat
                         )
                         assert (
-                            torch.norm(cov - approx_cov) < 1e-7
+                            torch.norm(cov - approx_cov) < 1e-8
                         ), f"Diff: {torch.norm(cov - approx_cov)}"
                         # print(f"Lower tril cov: {lower_tril_cov[None, ...].shape}")
                         # print(f"Mu: {mu[None, ...].shape}")
@@ -682,7 +713,9 @@ class ContactPoseDataset(BaseDataset):
                             gt_beta.squeeze().cpu().numpy(),
                             gt_rot_6d.squeeze().cpu().numpy(),
                             gt_trans.squeeze().cpu().numpy(),
-                            gt_contact_gaussian_params.squeeze().cpu().numpy(),
+                            gt_contact_gaussian_params.squeeze().cpu().numpy()
+                            if self._model_contacts
+                            else torch.zeros(1).cpu().numpy(),
                         )
                         # =================================================================
 

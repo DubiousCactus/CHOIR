@@ -193,44 +193,56 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             )
         # ========================================
         """
+        # Take the last frame (-1):
+        x = (
+            labels["choir"][:, -1]
+            if self._full_choir
+            else (
+                labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                if not self._model_contacts
+                else labels["choir"][:, -1][..., 1:]
+            )
+        )
+        y = samples["choir"] if self.conditional else None
+
+        # ========= Standardization ==========
+        x[..., 0] = (
+            x[..., 0] - self._train_loader.dataset.gt_udf_mean[1].to(x.device)
+        ) / self._train_loader.dataset.gt_udf_std[1].to(x.device)
+        if self._model_contacts:
+            x[..., 1:] = (
+                x[..., 1:] - self._train_loader.dataset.contacts_mean.to(x.device)
+            ) / self._train_loader.dataset.contacts_std.to(x.device)
+        y = (
+            y - self._train_loader.dataset.noisy_udf_mean.to(y.device)
+        ) / self._train_loader.dataset.noisy_udf_std.to(y.device)
+        # ===================================
+
+        # ========= Feature scaling ==========
+        x[..., 0] = (
+            2 * (x[..., 0] - x[..., 0].min()) / (x[..., 0].max() - x[..., 0].min()) - 1
+        )
+        if self._model_contacts:
+            x[..., 1:] = (
+                2
+                * (x[..., 1:] - x[..., 1:].min())
+                / (x[..., 1:].max() - x[..., 1:].min())
+                - 1
+            )
+        y = 2 * (y - y.min()) / (y.max() - y.min()) - 1
+        # ===================================
 
         if not self._use_deltas:
-            y_hat = self._model(
-                # Take the last frame
-                labels["choir"][:, -1]
-                if self._full_choir
-                else (
-                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
-                    if not self._model_contacts
-                    else labels["choir"][:, -1][..., 1:]
-                ),
-                samples["choir"] if self.conditional else None,
-            )  # Only the hand distances!
+            y_hat = self._model(x, y)
         else:
             raise NotImplementedError(
-                "Have to implement it with embed_full_choir in DiffusionModel!"
+                "Have to scrap embed_full_choir in DiffusionModel. I tried and it's not better."
             )
-            y_hat = self._model(
-                labels["choir"][:, -1]
-                if self._full_choir
-                else labels["choir"][:, -1][..., 3:],
-                samples["choir"] if self.conditional else None,
-            )  # Only the hand deltas!
         losses = self._training_loss(
             samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
         )
         if validation:
-            ema_y_hat = self._ema.ema_model(
-                # Take the last frame
-                labels["choir"][:, -1]
-                if self._full_choir
-                else (
-                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
-                    if not self._model_contacts
-                    else labels["choir"][:, -1][..., 1:]
-                ),
-                samples["choir"] if self.conditional else None,
-            )  # Only the hand distances!
+            ema_y_hat = self._ema.ema_model(x, y)
             losses["ema"] = self._training_loss(
                 samples, {k: v[:, -1] for k, v in labels.items()}, ema_y_hat
             )["mse"]
