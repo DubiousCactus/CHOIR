@@ -572,10 +572,11 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         self.multi_scale_encoder = not same_context_channels
         # ========= Partials =========
+        contacts_hidden_dim = 1024
         temporal_res_block = partial(
             TemporalResBlock,
-            dim_in=2048,
-            dim_out=2048,
+            dim_in=contacts_hidden_dim,
+            dim_out=contacts_hidden_dim,
             n_norm_groups=32,
             temporal_dim=temporal_dim,
             y_dim=context_channels[-1],
@@ -614,7 +615,9 @@ class ContactUNetBackboneModel(torch.nn.Module):
         self.contact_3 = temporal_res_block(dim_out=256)
         self.contact_4 = temporal_res_block(dim_in=256)
         self.contact_5 = temporal_res_block()
-        self.contact_output = torch.nn.Linear(2048, contacts_dim * self.n_anchors)
+        self.contact_output = torch.nn.Linear(
+            contacts_hidden_dim, contacts_dim * self.n_anchors
+        )
         # ========= Feature fusion =========
         self.feature_fusion_contacts_to_dist = MultiHeadSpatialAttention(
             q_dim=256,
