@@ -235,6 +235,6 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
                 samples, {k: v[:, -1] for k, v in labels.items()}, ema_y_hat
             )["mse"]
         # TODO: Refactor the loss aggregation (maybe DDPMLoss doesn't need to return a dict?) Or
-        # maybe I should sun the losses with a recursive function?
-        loss = sum([v for v in losses.values()])
-        return loss, losses
+        # maybe I should sum the losses with a recursive function?
+        # loss = sum([v for v in losses.values()])
+        return losses["mse"], losses
