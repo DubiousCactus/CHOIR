@@ -32,7 +32,11 @@ from dataset.grab import GRABDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
-from model.diffusion_model import BPSDiffusionModel, KPDiffusionModel
+from model.diffusion_model import (
+    BPSDiffusionModel,
+    ContactsBPSDiffusionModel,
+    KPDiffusionModel,
+)
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
@@ -214,6 +218,24 @@ model_store(
     ),
     name="bps_ddpm",
 )
+
+model_store(
+    pbuilds(
+        ContactsBPSDiffusionModel,
+        backbone="3d_unet",
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        bps_dim=MISSING,
+        temporal_dim=256,
+        y_embed_dim=256,
+        context_channels=MISSING,
+        use_backbone_self_attn=False,
+        use_encoder_self_attn=False,
+    ),
+    name="contact_bps_ddpm",
+)
+
 
 model_store(
     pbuilds(
@@ -608,7 +630,7 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
-            {"override /model": "bps_ddpm"},
+            {"override /model": "contact_bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm_multiview"},
             {"override /tester": "ddpm_multiview"},
@@ -631,10 +653,6 @@ experiment_store(
         model=dict(
             y_embed_dim=256,
             context_channels=MISSING,
-            choir_dim=1,
-            rescale_input=True,
-            backbone="3d_contact_unet",
-            embed_full_choir=False,
             use_encoder_self_attn=False,
             use_backbone_self_attn=True,
         ),
