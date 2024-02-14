@@ -41,7 +41,7 @@ def launch_stats_computation(
 
     train_loader_inst, val_loader_inst, test_loader_inst = None, None, None
     train_loader_inst = data_loader(
-        train_dataset, batch_size=1, num_workers=0, persist_workers=False
+        train_dataset, batch_size=1, num_workers=0, persistent_workers=False
     )
     val_loader_inst = data_loader(
         val_dataset,
@@ -50,7 +50,7 @@ def launch_stats_computation(
         n_batches=None,
         batch_size=1,
         num_workers=0,
-        persist_workers=False,
+        persistent_workers=False,
     )
     test_loader_inst = data_loader(
         test_dataset,
@@ -59,7 +59,7 @@ def launch_stats_computation(
         n_batches=None,
         batch_size=1,
         num_workers=0,
-        persist_workers=False,
+        persistent_workers=False,
     )
 
     gt_udf_vals, gt_gaussian_vals = [], []
