@@ -62,28 +62,28 @@ class ContactPoseDataset(BaseDataset):
 
     contacts_mean = torch.tensor(
         [
-            -1.5331e-03,  # mean x
-            -1.6800e-03,  # mean y
-            -3.4660e-03,  # mean z
-            2.3796e-02,  # cholesky-decomped cov 00
-            -4.0151e-04,  # cholesky-decomped cov 03
-            1.8137e-02,  # cholesky-decomped cov 04
-            -5.5755e-05,  # cholesky-decomped cov 06
-            -7.4863e-04,  # cholesky-decomped cov 07
-            1.3010e-02,  # cholesky-decomped cov 08
+            -8.7072e-08,  # mean x
+            1.5663e-06,  # mean y
+            9.8294e-06,  # mean z
+            1.0260e-03,  # cholesky-decomped cov 00
+            -1.7068e-06,  # cholesky-decomped cov 03
+            8.0481e-04,  # cholesky-decomped cov 04
+            -2.1206e-07,  # cholesky-decomped cov 06
+            2.2454e-06,  # cholesky-decomped cov 07
+            5.6147e-04,  # cholesky-decomped cov 08
         ]
     )
     contacts_std = torch.tensor(
         [
-            0.1521,  # mean x
-            0.1466,  # mean y
-            0.1419,  # mean z
-            0.0492,  # cholesky-decomped cov 00
-            0.0313,  # cholesky-decomped cov 03
-            0.0392,  # cholesky-decomped cov 04
-            0.0305,  # cholesky-decomped cov 06
-            0.0293,  # cholesky-decomped cov 07
-            0.0309,  # cholesky-decomped cov 08
+            0.0017,  # mean x
+            0.0017,  # mean y
+            0.0017,  # mean z
+            0.0017,  # cholesky-decomped cov 00
+            0.0011,  # cholesky-decomped cov 03
+            0.0014,  # cholesky-decomped cov 04
+            0.0011,  # cholesky-decomped cov 06
+            0.0011,  # cholesky-decomped cov 07
+            0.0011,  # cholesky-decomped cov 08
         ]
     )
 
