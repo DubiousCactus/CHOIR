@@ -55,6 +55,7 @@ class ContactPoseDataset(BaseDataset):
     """
 
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
+
     gt_udf_mean = torch.tensor([0.4796, 0.3610])  # object distances, hand distances
     gt_udf_std = torch.tensor([0.1489, 0.1299])  # object distances, hand distances
     noisy_udf_mean = torch.tensor([0.4796, 0.3424])  # object distances, hand distances

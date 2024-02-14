@@ -110,15 +110,58 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self.sigma = torch.nn.Parameter(torch.sqrt(self.beta), requires_grad=False)
         assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
         assert not (self.alpha < 0).any(), "Alphas contain neg"
-        self._input_shape = None
+        self._input_udf_shape, self._input_contacts_shape = None, None
+        self.x_udf_mean, self.x_udf_std = None, None
+        self.x_contacts_mean, self.x_contacts_std = None, None
+        self.y_udf_mean, self.y_udf_std = None, None
+
+    def set_dataset_stats(
+        self,
+        dataset: torch.utils.data.Dataset,
+    ) -> None:
+        self.x_udf_mean, self.x_udf_std = dataset.gt_udf_mean, dataset.gt_udf_std
+        self.x_contacts_mean, self.x_contacts_std = (
+            dataset.contacts_mean,
+            dataset.contacts_std,
+        )
+        self.y_udf_mean, self.y_udf_std = dataset.noisy_udf_mean, dataset.noisy_udf_std
+
+    def _standardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return (x - mean.to(x.device)) / std.to(x.device)
+
+    def _destandardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return x * std.to(x.device) + mean.to(x.device)
 
     def forward(
         self,
         x: torch.Tensor,
         y: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self._input_shape is None:
-            self._input_shape = x.shape[1:]
+        # ============= Preprocessing =============
+        assert self.x_udf_mean is not None, "Must call set_dataset_stats first"
+        if self.object_in_encoder:
+            x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
+            if self.use_contacts:
+                x[..., 2:] = self._standardize(
+                    x[..., 2:], self.x_contacts_mean, self.x_contacts_std
+                )
+        else:
+            x[..., 0] = self._standardize(
+                x[..., 0], self.x_udf_mean[1], self.x_udf_std[1]
+            )
+            if self.use_contacts:
+                x[..., 1:] = self._standardize(
+                    x[..., 1:], self.x_contacts_mean, self.x_contacts_std
+                )
+        y = (
+            self._standardize(y, self.y_udf_mean, self.y_udf_std)
+            if y is not None
+            else None
+        )
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -128,7 +171,8 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         )
         # 2. Sample the noise with shape x.shape
         x_udf = x[..., 1 if self.object_in_encoder else 0].unsqueeze(-1)
-        # TODO: Just give the anchor parameters to this forward method! (Refactor label computation)
+        # TODO: Just give the anchor parameters to this forward method? (eeeh this makes sense like
+        # this as well) (Refactor label computation)
         x_contacts = fetch_gaussian_params_from_CHOIR(
             x,
             self.backbone.anchor_indices,
@@ -137,6 +181,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             choir_includes_obj=self.object_in_encoder,
         )
         x_contacts = x_contacts[:, :, 0, :].reshape(-1, 32 * 9)
+
+        if self._input_udf_shape is None:
+            # Save for the generation.
+            self._input_udf_shape = x_udf.shape[1:]
+            self._input_contacts_shape = x_contacts.shape[1:]
+
         eps_udf, eps_contacts = (
             torch.randn_like(x_udf).to(x_udf.device).requires_grad_(False),
             torch.randn_like(x_contacts).to(x_contacts.device).requires_grad_(False),
@@ -168,8 +218,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         }
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
-        raise NotImplementedError("Not implemented yet")
-
         def make_t_batched(
             t: int, n: int, y_embed: Optional[torch.Tensor]
         ) -> torch.Tensor:
@@ -184,68 +232,112 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 )
             return t_batch
 
+        # ==== Preprocessing ====
+        y = (
+            self._standardize(y, self.y_udf_mean, self.y_udf_std)
+            if y is not None
+            else None
+        )
         # ===== Inference =======
-        assert self._input_shape is not None, "Must call forward first"
-        if self.embed_full_choir:
-            assert y is not None, "Must provide y when embed_full_choir is True"
+        assert (
+            self._input_udf_shape is not None or self._input_contacts_shape is not None
+        ), "Must call forward first"
+        if self.object_in_encoder:
+            # TODO: This is a hack. In the future the object will always be in y I think
+            object_udf = y[..., 0].unsqueeze(-1)
+            assert (
+                object_udf is not None
+            ), "Must provide object_udf when object_in_encoder is True"
         with torch.no_grad():
             device = next(self.parameters()).device
             y_embed = self.embedder(y) if y is not None else None
-            z_current = torch.randn(n, *self._input_shape).to(device)
+            z_udf_current, z_contacts_current = (
+                torch.randn(n, *self._input_udf_shape).to(device),
+                torch.randn(n, *self._input_contacts_shape).to(device),
+            )
             if y_embed is not None:
-                z_current = z_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
-            if self.embed_full_choir:
-                z_current[..., 0] = y[..., 0]
-            _in_shape = z_current.shape
+                z_udf_current = z_udf_current[None, ...].repeat(
+                    y_embed.shape[0], 1, 1, 1
+                )
+                z_contacts_current = z_contacts_current[None, ...].repeat(
+                    y_embed.shape[0], 1, 1, 1
+                )
+            _in_udf_shape, _in_contacts_shape = (
+                z_udf_current.shape,
+                z_contacts_current.shape,
+            )
             pbar = tqdm(total=self.time_steps, desc="Generating")
-            for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
-                eps_hat = self.backbone(
-                    z_current,
+            for t in range(10, 0, -1):  # Reversed from T to 1
+                eps_hat_udf, eps_hat_contacts = self.backbone(
+                    torch.cat((object_udf, z_udf_current), dim=-1)
+                    if self.object_in_encoder
+                    else z_udf_current,
+                    z_contacts_current,
                     make_t_batched(t, n, y_embed),
                     y_embed,
                 )
-                if self.embed_full_choir:
-                    z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current[
-                        ..., -1
-                    ][..., None] - (
-                        self.beta[t]
-                        / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
-                    ) * eps_hat
-                    eps = torch.randn_like(z_current[..., -1][..., None])
-                    z_current = torch.cat(
-                        (y[..., 0][..., None], z_prev_hat + eps * self.sigma[t]), dim=-1
-                    )
-                else:
-                    z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
-                        self.beta[t]
-                        / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
-                    ) * eps_hat
-                    eps = torch.randn_like(z_current)
-                    z_current = z_prev_hat + eps * self.sigma[t]
+                z_udf_prev_hat = (
+                    1 / (torch.sqrt(1 - self.beta[t]))
+                ) * z_udf_current - (
+                    self.beta[t]
+                    / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                ) * eps_hat_udf
+                z_contacts_prev_hat = (
+                    1 / (torch.sqrt(1 - self.beta[t]))
+                ) * z_contacts_current - (
+                    self.beta[t]
+                    / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                ) * eps_hat_contacts
+                eps_udf, eps_contacts = torch.randn_like(
+                    z_udf_current
+                ), torch.randn_like(z_contacts_current)
+                z_udf_current, z_contacts_current = (
+                    z_udf_prev_hat + eps_udf * self.sigma[t],
+                    z_contacts_prev_hat + eps_contacts * self.sigma[t],
+                )
                 pbar.update()
             # Now for z_0:
-            eps_hat = self.backbone(z_current, make_t_batched(t, n, y_embed), y_embed)
-            if self.embed_full_choir:
-                x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current[..., -1][
-                    ..., None
-                ] - (
-                    self.beta[0]
-                    / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
-                ) * eps_hat
-                x_hat = torch.cat((y[..., 0][..., None], x_hat), dim=-1)
-            else:
-                x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
-                    self.beta[0]
-                    / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
-                ) * eps_hat
+            eps_hat_udf, eps_hat_contacts = self.backbone(
+                torch.cat((object_udf, z_udf_current), dim=-1)
+                if self.object_in_encoder
+                else z_udf_current,
+                z_contacts_current,
+                make_t_batched(t, n, y_embed),
+                y_embed,
+            )
+            x_hat_udf = (1 / (torch.sqrt(1 - self.beta[0]))) * z_udf_current - (
+                self.beta[0]
+                / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+            ) * eps_hat_udf
+            x_hat_contacts = (
+                1 / (torch.sqrt(1 - self.beta[0]))
+            ) * z_contacts_current - (
+                self.beta[0]
+                / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+            ) * eps_hat_contacts
             pbar.update()
             pbar.close()
-            output = x_hat.view(*_in_shape)
-            # TODO: This stuff if backbone is 3d_contact_unet
-            # diag_indices = [0, 4, 8]  # Indices of the diagonal elements of the lower triangular matrix
-            # gaussian_params[..., diag_indices] = torch.relu(gaussian_params[..., diag_indices]) # Diagonal elements are non-negative
-            # print(f"Relu'ed Gaussian params: {gaussian_params.shape}")
-            return output
+            # ====== Postprocessing ======
+            x_hat_udf = x_hat_udf.view(*_in_udf_shape)
+            x_hat_contacts = x_hat_contacts.view(*_in_contacts_shape).view(
+                *_in_contacts_shape[:-2], 32, 9
+            )
+
+            x_hat_udf = self._destandardize(
+                x_hat_udf, self.x_udf_mean[1], self.x_udf_std[1]
+            )
+            x_hat_contacts = self._destandardize(
+                x_hat_contacts, self.x_contacts_mean, self.x_contacts_std
+            )
+            x_hat_udf = torch.clamp(x_hat_udf, 1e-5, 1 - 1e-5)
+            # Clamp the Gaussian means to have a maximum norm of 20mm:
+            # TODO: I don't know how to do that yet
+            # x_hat_contacts[..., :3] = ?
+            # Threshold the Gaussian covariances to be *activated* above 1e-5
+            # (or something else? Try and see!):
+            x_hat_contacts[..., 3:][x_hat_contacts[..., 3:] < 1e-5] = 0.0
+            # ============================
+            return x_hat_udf, x_hat_contacts
 
 
 class BPSDiffusionModel(torch.nn.Module):

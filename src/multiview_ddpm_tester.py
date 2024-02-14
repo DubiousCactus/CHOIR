@@ -20,25 +20,39 @@ class MultiViewDDPMTester(MultiViewTester):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
         self._data_loader.dataset.set_observations_number(1)
+        self._full_choir = kwargs.get("full_choir", False)
         self._use_deltas = self._data_loader.dataset.use_deltas
+        self._model_contacts = kwargs.get("model_contacts", False)
+        if self._model_contacts:
+            self._model.backbone.set_anchor_indices(
+                self._data_loader.dataset.anchor_indices
+            )
+            self._model.set_dataset_stats(self._data_loader.dataset)
+            self._ema.ema_model.backbone.set_anchor_indices(
+                self._data_loader.dataset.anchor_indices
+            )
+            self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
-            if not self._use_deltas:
-                self._model(
-                    labels["choir"][:, -1]
-                    if self._model.embed_full_choir
-                    else labels["choir"][:, -1][..., -1].unsqueeze(-1),
-                    samples["choir"] if self.conditional else None,
-                )  # Only the hand distances!
-            else:
-                raise NotImplementedError
-                self._model(
-                    labels["choir"][..., 3:],
-                    samples["choir"] if self.conditional else None,
-                )  # Only the hand deltas!
+            x = (
+                labels["choir"][:, -1]
+                if self._full_choir
+                else (
+                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                    if not self._model_contacts
+                    else (
+                        labels["choir"][:, -1]
+                        if self._model.object_in_encoder
+                        else labels["choir"][:, -1][..., 1:]
+                    )
+                )
+            )
+            y = samples["choir"] if self.conditional else None
+            self._model(x, y)
+            self._ema.ema_model(x, y)
         print("[+] Done!")
 
     @to_cuda

@@ -20,6 +20,7 @@ import open3d.io as o3dio
 import pyvista as pv
 import torch
 import trimesh
+from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
@@ -62,6 +63,9 @@ class MultiViewTester(MultiViewTrainer):
         self._is_baseline = False
         self._run_name = run_name
         self._model = model
+        self._ema = EMA(
+            self._model, beta=0.9999, update_after_step=100, update_every=10
+        )
         assert "max_observations" in kwargs, "max_observations must be provided."
         assert "save_predictions" in kwargs, "save_predictions must be provided."
         self._max_observations = kwargs["max_observations"]
