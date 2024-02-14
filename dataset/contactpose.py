@@ -704,7 +704,7 @@ class ContactPoseDataset(BaseDataset):
                         ), (
                             aug_gt_choir.squeeze().cpu().numpy()
                             if self._model_contacts
-                            else gt_choir,
+                            else gt_choir.squeeze().cpu().numpy(),
                             gt_rescaled_ref_pts.squeeze().cpu().numpy(),
                             gt_scalar.cpu().numpy(),
                             gt_joints.squeeze().cpu().numpy(),
