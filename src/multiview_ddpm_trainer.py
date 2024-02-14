@@ -275,5 +275,11 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             ema_loss = self._training_loss(None, None, ema_y_hat)
             losses["ema"] = sum([v for v in ema_loss.values()])
 
-        loss = sum([v for k, v in losses.items() if k != "ema"])
+        loss = sum(
+            [
+                v * (self._training_loss.contacts_weight if k == "contacts_mse" else 1)
+                for k, v in losses.items()
+                if k != "ema"
+            ]
+        )
         return loss, losses

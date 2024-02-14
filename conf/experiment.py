@@ -233,6 +233,7 @@ model_store(
         use_backbone_self_attn=False,
         use_encoder_self_attn=False,
         object_in_encoder=False,
+        contacts_hidden_dim=1024,
     ),
     name="contact_bps_ddpm",
 )
@@ -658,6 +659,7 @@ experiment_store(
             use_encoder_self_attn=False,
             use_backbone_self_attn=True,
             object_in_encoder=True,
+            contacts_hidden_dim=1024,
         ),
         run=dict(conditional=True, full_choir=False, model_contacts=True),
         bases=(Experiment,),

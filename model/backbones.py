@@ -537,6 +537,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         output_dim: int,
         contacts_dim: int,
         temporal_dim: int,
+        contacts_hidden_dim: int = 1024,
         pooling: str = "avg",
         normalization: str = "batch",
         norm_groups: int = 16,
@@ -574,7 +575,6 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         self.multi_scale_encoder = not same_context_channels
         # ========= Partials =========
-        contacts_hidden_dim = 1024
         temporal_res_block = partial(
             TemporalResBlock,
             dim_in=contacts_hidden_dim,

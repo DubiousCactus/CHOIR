@@ -42,6 +42,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         use_backbone_self_attn: bool = False,
         use_encoder_self_attn: bool = False,
         object_in_encoder: bool = False,
+        contacts_hidden_dim: int = 1024,
         y_embed_dim: Optional[int] = None,
         context_channels: Optional[int] = None,
     ):
@@ -60,6 +61,8 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     pooling="avg",
                     input_dim=2 if object_in_encoder else 1,
                     output_dim=1,
+                    contacts_hidden_dim=contacts_hidden_dim,
+                    contacts_dim=9,
                     use_self_attention=use_backbone_self_attn,
                 ),
                 partial(
@@ -80,7 +83,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self.use_contacts = "contact" in backbone
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
-            contacts_dim=9,
             # TODO: Refactor the entire handling of choir_dim for x and for y.... This is a complete mess
             temporal_dim=temporal_dim,
         )
