@@ -40,17 +40,26 @@ def launch_stats_computation(
     test_dataset.set_observations_number(1)
 
     train_loader_inst, val_loader_inst, test_loader_inst = None, None, None
-    train_loader_inst = data_loader(train_dataset, batch_size=1)
+    train_loader_inst = data_loader(
+        train_dataset, batch_size=1, num_workers=0, persist_workers=False
+    )
     val_loader_inst = data_loader(
-        val_dataset, shuffle=False, drop_last=False, n_batches=None, batch_size=1
+        val_dataset,
+        shuffle=False,
+        drop_last=False,
+        n_batches=None,
+        batch_size=1,
+        num_workers=0,
+        persist_workers=False,
     )
     test_loader_inst = data_loader(
         test_dataset,
         shuffle=False,
         drop_last=False,
         n_batches=None,
-        num_workers=1,
         batch_size=1,
+        num_workers=0,
+        persist_workers=False,
     )
 
     gt_udf_vals, gt_gaussian_vals = [], []
