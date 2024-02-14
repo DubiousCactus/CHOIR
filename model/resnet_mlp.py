@@ -25,6 +25,7 @@ class TemporalResidualBlock(torch.nn.Module):
         n_norm_groups: int = 32,
         temporal_dim: Optional[int] = None,
         y_dim: Optional[int] = None,
+        condition_by_addition: bool = True,
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(

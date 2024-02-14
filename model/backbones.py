@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 
 import torch
 
-from model.attention import MultiHeadSpatialAttention, SpatialTransformer
+from model.attention import SpatialTransformer
 from model.pos_encoding import SinusoidalPosEncoder
 from model.resnet_conv import DownScaleResidualBlock as ConvDownBlock
 from model.resnet_conv import IdentityResidualBlock as ConvIdentityBlock
@@ -613,30 +613,32 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         # ======== Contact layers =========
         self.contacts_dim = contacts_dim
-        self.contact_1 = temporal_res_block(dim_in=contacts_dim * self.n_anchors)
-        self.contact_3 = temporal_res_block(dim_out=256)
-        self.contact_4 = temporal_res_block(dim_in=256)
+        self.contact_1 = temporal_res_block(
+            dim_in=contacts_dim * self.n_anchors + 256, y_dim=None
+        )  # input x + embedding from unet
+        self.contact_3 = temporal_res_block()
+        self.contact_4 = temporal_res_block()
         self.contact_5 = temporal_res_block()
         self.contact_output = torch.nn.Linear(
             contacts_hidden_dim, contacts_dim * self.n_anchors
         )
         # ========= Feature fusion =========
-        self.feature_fusion_contacts_to_dist = MultiHeadSpatialAttention(
-            q_dim=256,
-            k_dim=256,
-            v_dim=256,
-            n_heads=8,
-            dim_head=32,
-            p_dropout=0.1,
-        )
-        self.feature_fusion_dist_to_contacts = MultiHeadSpatialAttention(
-            q_dim=256,
-            k_dim=256,
-            v_dim=256,
-            n_heads=8,
-            dim_head=32,
-            p_dropout=0.1,
-        )
+        # self.feature_fusion_contacts_to_dist = MultiHeadSpatialAttention(
+        # q_dim=256,
+        # k_dim=256,
+        # v_dim=256,
+        # n_heads=8,
+        # dim_head=32,
+        # p_dropout=0.1,
+        # )
+        # self.feature_fusion_dist_to_contacts = MultiHeadSpatialAttention(
+        # q_dim=256,
+        # k_dim=256,
+        # v_dim=256,
+        # n_heads=8,
+        # dim_head=32,
+        # p_dropout=0.1,
+        # )
         # ========= Layers =========
         dim_heads = 32
         self.identity1 = identity_conv_block(
@@ -783,29 +785,34 @@ class ContactUNetBackboneModel(torch.nn.Module):
             y = [y] * 5
         t_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.identity1(x_udf, t_embed, context=y[0], debug=debug)
-        c1 = self.contact_1(
-            x_contacts, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
-        )
         x2 = self.down1(x1, t_embed, context=y[1], debug=debug)
         # x2 = self.self_attn_1(x2) if self.use_self_attn else x2
         # c2 = self.contact_2(c1, t_emb=t_embed, y_emb=y[4].view(bs*ctx_len, -1), debug=debug)
         x3 = self.down2(x2, t_embed, context=y[2], debug=debug)
         x3 = self.self_attn_2(x3) if self.use_self_attn else x3
-        c3 = self.contact_3(
-            c1, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
-        )
         x4 = self.down3(x3, t_embed, context=y[3], debug=debug)
         x4 = self.self_attn_3(x4) if self.use_self_attn else x4
         x5 = self.tunnel1(x4, t_embed, context=y[4], debug=debug)
         x5 = self.self_attn_4(x5) if self.use_self_attn else x5
         x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # ========= Feature fusion =========
-        cx6 = x6 + self.feature_fusion_contacts_to_dist(
-            q=x6, k=c3[..., None, None, None], v=c3[..., None, None, None]
+        c1 = self.contact_1(
+            torch.cat((x_contacts, x6.mean(dim=(2, 3, 4))), dim=-1),
+            t_emb=t_embed,
+            y_emb=None,
+            debug=debug,
         )
-        c3x = c3 + self.feature_fusion_dist_to_contacts(
-            q=c3[..., None, None, None], k=x6, v=x6
-        ).view(bs * ctx_len, c3.shape[1])
+        c3 = self.contact_3(
+            c1, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
+        )
+        # cx6 = x6 + self.feature_fusion_contacts_to_dist(
+        # q=x6, k=c3[..., None, None, None], v=c3[..., None, None, None]
+        # )
+        # c3x = c3 + self.feature_fusion_dist_to_contacts(
+        # q=c3[..., None, None, None], k=x6, v=x6
+        # ).view(bs * ctx_len, c3.shape[1])
+        c3x = c3
+        cx6 = x6
         # x6 = self.cross_attn5(x6, context=y) if self.use_spatial_transformer else x6
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
