@@ -41,6 +41,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         temporal_dim: int,
         use_backbone_self_attn: bool = False,
         use_encoder_self_attn: bool = False,
+        object_in_encoder: bool = False,
         y_embed_dim: Optional[int] = None,
         context_channels: Optional[int] = None,
     ):
@@ -57,6 +58,8 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
+                    input_dim=2 if object_in_encoder else 1,
+                    output_dim=1,
                     use_self_attention=use_backbone_self_attn,
                 ),
                 partial(
@@ -73,10 +76,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
+        self.object_in_encoder = object_in_encoder
         self.use_contacts = "contact" in backbone
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
-            choir_dim=1,
             contacts_dim=9,
             # TODO: Refactor the entire handling of choir_dim for x and for y.... This is a complete mess
             temporal_dim=temporal_dim,
@@ -122,14 +125,14 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             .requires_grad_(False)
         )
         # 2. Sample the noise with shape x.shape
-        x_udf = x[..., 0].unsqueeze(-1)
+        x_udf = x[..., 1 if self.object_in_encoder else 0].unsqueeze(-1)
         # TODO: Just give the anchor parameters to this forward method! (Refactor label computation)
         x_contacts = fetch_gaussian_params_from_CHOIR(
             x,
             self.backbone.anchor_indices,
             self.backbone.n_repeats,
             self.backbone.n_anchors,
-            choir_includes_obj=False,
+            choir_includes_obj=self.object_in_encoder,
         )
         x_contacts = x_contacts[:, :, 0, :].reshape(-1, 32 * 9)
         eps_udf, eps_contacts = (
@@ -149,7 +152,13 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         y_embed = self.embedder(y) if y is not None else None
         # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat_udf, eps_hat_contacts = self.backbone(
-            diffused_x_udf, diffused_x_contacts, t, y_embed, debug=True
+            torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
+            if self.object_in_encoder
+            else diffused_x_udf,
+            diffused_x_contacts,
+            t,
+            y_embed,
+            debug=True,
         )
         return {
             "udf": (eps_hat_udf, eps_udf),

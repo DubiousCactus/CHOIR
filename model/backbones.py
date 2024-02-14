@@ -533,7 +533,8 @@ class ContactUNetBackboneModel(torch.nn.Module):
         self,
         time_encoder: torch.nn.Module,
         bps_grid_len: int,
-        choir_dim: int,
+        input_dim: int,
+        output_dim: int,
         contacts_dim: int,
         temporal_dim: int,
         pooling: str = "avg",
@@ -545,7 +546,8 @@ class ContactUNetBackboneModel(torch.nn.Module):
     ):
         super().__init__()
         self.grid_len = bps_grid_len
-        self.choir_dim = choir_dim
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         self.time_encoder = time_encoder
         self.use_self_attn = use_self_attention
         self.anchor_indices = None
@@ -638,7 +640,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         # ========= Layers =========
         dim_heads = 32
         self.identity1 = identity_conv_block(
-            channels_in=self.choir_dim,
+            channels_in=self.input_dim,
             channels_out=64,
             norm_groups=min(16, norm_groups),
             context_channels=context_channels[0],
@@ -734,7 +736,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
             norm_groups=min(16, norm_groups),
             context_channels=context_channels[0],
         )
-        self.out_conv = torch.nn.Conv3d(64, self.choir_dim, 1, padding=0, stride=1)
+        self.out_conv = torch.nn.Conv3d(64, self.output_dim, 1, padding=0, stride=1)
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
         self.anchor_indices = anchor_indices
@@ -765,7 +767,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
             self.grid_len,
             self.grid_len,
             self.grid_len,
-            self.choir_dim,
+            self.input_dim,
         )
         t = t.view(bs * ctx_len, -1)
         x_udf = x_udf.view(*comp_shape).permute(0, 4, 1, 2, 3)
@@ -825,14 +827,14 @@ class ContactUNetBackboneModel(torch.nn.Module):
         c6 = self.contact_output(c5)
         comp_output_shape = (
             bs * ctx_len,
-            self.choir_dim,
+            self.output_dim,
             self.grid_len,
             self.grid_len,
             self.grid_len,
         )
         output_shape = (
             *udf_input_shape[:-1],
-            self.choir_dim,
+            self.output_dim,
         )
         output = (
             self.out_conv(x10)

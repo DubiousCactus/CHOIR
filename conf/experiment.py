@@ -232,6 +232,7 @@ model_store(
         context_channels=MISSING,
         use_backbone_self_attn=False,
         use_encoder_self_attn=False,
+        object_in_encoder=False,
     ),
     name="contact_bps_ddpm",
 )
@@ -656,6 +657,7 @@ experiment_store(
             context_channels=MISSING,
             use_encoder_self_attn=False,
             use_backbone_self_attn=True,
+            object_in_encoder=True,
         ),
         run=dict(conditional=True, full_choir=False, model_contacts=True),
         bases=(Experiment,),
