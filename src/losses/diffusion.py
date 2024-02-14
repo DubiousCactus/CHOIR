@@ -11,9 +11,10 @@ import torch
 
 
 class DDPMLoss(torch.nn.Module):
-    def __init__(self, reduction: str = "mean"):
+    def __init__(self, contacts_weight: float = 1.0, reduction: str = "mean"):
         super().__init__()
         self.reduction = reduction
+        self.contacts_weight = contacts_weight
 
     def forward(
         self,
@@ -21,8 +22,23 @@ class DDPMLoss(torch.nn.Module):
         labels: torch.Tensor,
         model_output: Tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
-        return {
-            "mse": torch.nn.functional.mse_loss(
-                model_output[0], model_output[1], reduction=self.reduction
-            )
-        }
+        if type(model_output) is dict:
+            return {
+                "udf_mse": torch.nn.functional.mse_loss(
+                    model_output["udf"][0],
+                    model_output["udf"][1],
+                    reduction=self.reduction,
+                ),
+                "contacts_mse": self.contacts_weight
+                * torch.nn.functional.mse_loss(
+                    model_output["contacts"][0],
+                    model_output["contacts"][1],
+                    reduction=self.reduction,
+                ),
+            }
+        else:
+            return {
+                "udf_mse": torch.nn.functional.mse_loss(
+                    model_output[0], model_output[1], reduction=self.reduction
+                )
+            }

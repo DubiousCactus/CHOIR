@@ -151,9 +151,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         eps_hat_udf, eps_hat_contacts = self.backbone(
             diffused_x_udf, diffused_x_contacts, t, y_embed, debug=True
         )
-        return torch.cat([eps_hat_udf, eps_hat_contacts[..., None]], dim=-2), torch.cat(
-            [eps_udf, eps_contacts[..., None]], dim=-2
-        )
+        return {
+            "udf": (eps_hat_udf, eps_udf),
+            "contacts": (eps_hat_contacts, eps_contacts),
+        }
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
         raise NotImplementedError("Not implemented yet")

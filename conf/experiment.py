@@ -292,6 +292,7 @@ training_loss_store(
 training_loss_store(
     pbuilds(
         DDPMLoss,
+        contacts_weight=0.5,
         reduction="mean",
     ),
     name="diffusion",

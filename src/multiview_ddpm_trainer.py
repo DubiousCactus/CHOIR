@@ -238,15 +238,12 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             raise NotImplementedError(
                 "Have to scrap embed_full_choir in DiffusionModel. I tried and it's not better."
             )
-        losses = self._training_loss(
-            samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
-        )
+        losses = self._training_loss(None, None, y_hat)
+        # dict: {"udf_mse": torch.Tensor, "contacts_mse": torch.Tensor}
         if validation:
             ema_y_hat = self._ema.ema_model(x, y)
-            losses["ema"] = self._training_loss(
-                samples, {k: v[:, -1] for k, v in labels.items()}, ema_y_hat
-            )["mse"]
-        # TODO: Refactor the loss aggregation (maybe DDPMLoss doesn't need to return a dict?) Or
-        # maybe I should sum the losses with a recursive function?
-        # loss = sum([v for v in losses.values()])
-        return losses["mse"], losses
+            ema_loss = self._training_loss(None, None, ema_y_hat)
+            losses["ema"] = sum([v for v in ema_loss.values()])
+
+        loss = sum([v for k, v in losses.items() if k != "ema"])
+        return loss, losses
