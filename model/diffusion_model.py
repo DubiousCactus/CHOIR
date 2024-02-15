@@ -335,7 +335,9 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             # x_hat_contacts[..., :3] = ?
             # Threshold the Gaussian covariances to be *activated* above 1e-5
             # (or something else? Try and see!):
-            x_hat_contacts[..., 3:][x_hat_contacts[..., 3:] < 1e-5] = 0.0
+            # TODO: Remove this? It's better to do it in the contacts fitting loss with a
+            # hyperparameter!
+            # x_hat_contacts[..., 3:][x_hat_contacts[..., 3:] < 1e-5] = 0.0
             # ============================
             return x_hat_udf, x_hat_contacts
 

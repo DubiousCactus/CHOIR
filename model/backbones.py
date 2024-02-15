@@ -496,7 +496,6 @@ class UNetBackboneModel(torch.nn.Module):
         x5 = self.tunnel1(x4, t_embed, context=y[4], debug=debug)
         x5 = self.self_attn_4(x5) if self.use_self_attn else x5
         x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
-        # x6 = self.cross_attn5(x6, context=y) if self.use_spatial_transformer else x6
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
         # conctenate the upscaled features with the output of the previous downsampling layer, and
@@ -794,10 +793,9 @@ class ContactUNetBackboneModel(torch.nn.Module):
         x4 = self.self_attn_3(x4) if self.use_self_attn else x4
         x5 = self.tunnel1(x4, t_embed, context=y[4], debug=debug)
         x5 = self.self_attn_4(x5) if self.use_self_attn else x5
-        x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # ========= Feature fusion =========
         c1 = self.contact_1(
-            torch.cat((x_contacts, x6.mean(dim=(2, 3, 4))), dim=-1),
+            torch.cat((x_contacts, x5.mean(dim=(2, 3, 4))), dim=-1),
             t_emb=t_embed,
             y_emb=None,
             debug=debug,
@@ -811,17 +809,15 @@ class ContactUNetBackboneModel(torch.nn.Module):
         # c3x = c3 + self.feature_fusion_dist_to_contacts(
         # q=c3[..., None, None, None], k=x6, v=x6
         # ).view(bs * ctx_len, c3.shape[1])
-        c3x = c3
-        cx6 = x6
-        # x6 = self.cross_attn5(x6, context=y) if self.use_spatial_transformer else x6
+        x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
         # conctenate the upscaled features with the output of the previous downsampling layer, and
         # so on.
-        x7 = self.up1(torch.cat((cx6, x4), dim=1), t_embed, context=y[3], debug=debug)
+        x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, context=y[3], debug=debug)
         x7 = self.self_attn_5(x7) if self.use_self_attn else x7
         c4 = self.contact_4(
-            c3x, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
+            c3, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
         )
         x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y[2], debug=debug)
         x8 = self.self_attn_6(x8) if self.use_self_attn else x8

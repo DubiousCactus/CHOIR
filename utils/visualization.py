@@ -119,7 +119,7 @@ def visualize_model_predictions_with_multiple_views(
         temporal (bool, optional): Whether the model is temporal or not.
     """
     assert bps_dim == bps.shape[0]
-    samples, labels, _ = batch
+    samples, labels, mesh_paths = batch
     is_baseline = kwargs.get("method", "aggved") == "baseline"
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
@@ -136,6 +136,27 @@ def visualize_model_predictions_with_multiple_views(
         )
         # gt_scalar = labels["scalar"][0].view(-1, *labels["scalar"].shape[2:])
         gt_ref_pts = labels["rescaled_ref_pts"][0, -1].unsqueeze(0)
+        mesh_paths = mesh_paths[-1]  # Now we have a list of B entries.
+        N_PTS_ON_MESH = 3000
+        obj_mesh = open3d.io.read_triangle_mesh(mesh_paths[0])
+        obj_normals = to_cuda_(
+            torch.cat(
+                (
+                    torch.from_numpy(np.asarray(obj_mesh.vertices)).type(
+                        dtype=torch.float32
+                    ),
+                    torch.from_numpy(np.asarray(obj_mesh.vertex_normals)).type(
+                        dtype=torch.float32
+                    ),
+                ),
+                dim=-1,
+            )
+        )
+        obj_points = to_cuda_(
+            torch.from_numpy(
+                np.asarray(obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points)
+            ).float()
+        )
         # =============================================================
 
         if dataset.lower() == "grab":
@@ -240,6 +261,14 @@ def visualize_model_predictions_with_multiple_views(
                 y=samples["choir"][0].unsqueeze(0) if conditional else None,
             )
             choir_pred = choir_pred[:, 0]  # TODO: Plot all preds
+        elif kwargs.get("method", "aggved") == "coddpm":
+            conditional = kwargs["conditional"]
+            n = 1
+            choir_pred, contacts_pred = model.generate(
+                n,
+                y=samples["choir"][0].unsqueeze(0) if conditional else None,
+            )
+            choir_pred, contacts_pred = choir_pred.squeeze(1), contacts_pred.squeeze(1)
         elif kwargs.get("method", "aggved") == "aggved":
             y_hat = model(samples["choir"], use_mean=True)
             choir_pred = y_hat["choir"][0].unsqueeze(0)
@@ -291,6 +320,9 @@ def visualize_model_predictions_with_multiple_views(
                     joints_pred,
                 ) = optimize_pose_pca_from_choir(
                     choir_pred,
+                    contact_gaussians=contacts_pred,
+                    obj_pts=obj_points,
+                    obj_normals=obj_normals,
                     bps=bps,
                     anchor_indices=anchor_indices,
                     scalar=torch.mean(input_scalar)

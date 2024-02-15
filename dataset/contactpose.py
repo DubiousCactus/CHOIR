@@ -586,6 +586,7 @@ class ContactPoseDataset(BaseDataset):
                                 cholesky_cov[i] = torch.linalg.cholesky(cov[i] + nugget)
                         lower_tril_cov = cholesky_cov.view(-1, 9)[:, FLAT_LOWER_INDICES]
                         # Basic test:
+                        # TODO: Use lower_tril_cholesky_to_covmat()
                         test_lower_tril_mat = torch.zeros_like(cov).view(-1, 9)
                         test_lower_tril_mat[:, FLAT_LOWER_INDICES] = lower_tril_cov
                         test_lower_tril_mat = test_lower_tril_mat.view(-1, 3, 3)

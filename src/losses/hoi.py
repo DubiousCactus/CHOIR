@@ -15,6 +15,7 @@ from typing import Dict, Optional, Tuple
 import torch
 
 from model.affine_mano import AffineMANO
+from utils.dataset import lower_tril_cholesky_to_covmat
 
 
 def kl_normal(qm, qv, pm, pv):
@@ -349,8 +350,9 @@ class ContactsFittingLoss(torch.nn.Module):
         anchor_verts: torch.Tensor,
         obj_pts: torch.Tensor,
         contact_gaussians: torch.Tensor,
-        K: int = 5,
-        weights_threshold: float = 0.01,
+        K: int = 5,  # TODO: Move to init
+        weights_threshold: float = 0.01,  # TODO: Move to init
+        gaussian_activation_threshold: float = 1e-9,  # TODO: Move to init
         obj_normals: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -361,6 +363,19 @@ class ContactsFittingLoss(torch.nn.Module):
                                     regularization term to penalize penetration of the hand into
                                     the object.
         """
+        # TODO: Allow this to run in batches!!!
+        if len(verts.shape) == 3:
+            if verts.shape[0] > 1:
+                raise NotImplementedError(
+                    "ContactsFittingLoss(): Batches are not supported yet."
+                )
+            else:
+                # verts = verts.squeeze(0) # This is already batched
+                # anchor_verts = anchor_verts.squeeze(0) # This is already batched
+                obj_pts = obj_pts.squeeze(0)
+                contact_gaussians = contact_gaussians.squeeze(0)
+                if obj_normals is not None:
+                    obj_normals = obj_normals.squeeze(0)
         # 1. Compute K object nearest neighbors for each MANO vertex
         if self.knn is None:
             neighbours = torch.cdist(verts, obj_pts)  # (V, O)
@@ -392,6 +407,7 @@ class ContactsFittingLoss(torch.nn.Module):
             anchor_distances, 1, dim=-1, largest=False, sorted=False
         )
         penetration_loss = torch.tensor(0.0)
+        # TODO: Vectorize this loop
         for i in range(32):
             # Find vertices associated with anchor i
             # print(
@@ -405,11 +421,24 @@ class ContactsFittingLoss(torch.nn.Module):
             # if torch.allclose(
             # contact_gaussians[i], torch.zeros_like(contact_gaussians[i]), rtol=1e-9
             # ):
-            if torch.all(contact_gaussians[i] == 0):
+            if torch.allclose(
+                contact_gaussians[i],
+                torch.zeros_like(contact_gaussians[i]),
+                atol=gaussian_activation_threshold,
+            ):
                 # print(f"anchor {i} has not enough contacts")
                 distances[this_anchor_indices] *= 0
                 continue
-            mean, cov = contact_gaussians[i, :3], contact_gaussians[i, 3:].reshape(3, 3)
+            mean, cov = contact_gaussians[i, :3], contact_gaussians[i, 3:]
+            if cov.shape[0] == 9:
+                cov = cov.view(-1, 3, 3)
+            elif cov.shape[0] == 6:
+                # Cholesky-decomposed
+                cov = lower_tril_cholesky_to_covmat(cov[None, None, :]).squeeze((0, 1))
+            else:
+                raise ValueError(
+                    "ContactsFittingLoss(): The covariance matrix must be of shape (B, 6) or (B, 9)"
+                )
             # /!\ The mean is at the origin, so we shift it by the anchor verts:
             mean = mean + anchor_verts[:, i]
             anchor_gaussian = torch.distributions.MultivariateNormal(mean, cov)

@@ -79,7 +79,7 @@ class MultiViewDDPMTester(MultiViewTester):
             theta_dim=self._data_loader.dataset.theta_dim,
             use_deltas=self._use_deltas,
             conditional=self.conditional,
-            method="ddpm",
+            method="coddpm",
         )  # User implementation goes here (utils/training.py)
 
     # @to_cuda
@@ -98,10 +98,10 @@ class MultiViewDDPMTester(MultiViewTester):
             torch.Tensor: The loss for the batch.
         """
         max_observations = max_observations or samples["choir"].shape[1]
-        choir_pred = self._model.generate(
+        udf, contacts = self._model.generate(
             1,
             y=samples["choir"][:, :max_observations] if self.conditional else None,
-        ).squeeze(
-            1
-        )  # Only use 1 sample for now. TODO: use more samples and average?
-        return {"choir": choir_pred}
+        )
+        # Only use 1 sample for now. TODO: use more samples and average?
+        udf, contacts = udf.squeeze(1), contacts.squeeze(1)
+        return {"choir": udf, "contacts": contacts}

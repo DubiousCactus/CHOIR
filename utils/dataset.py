@@ -735,7 +735,7 @@ def snap_to_original_mano(snap_joints: torch.Tensor) -> torch.Tensor:
 def lower_tril_cholesky_to_covmat(lower_tril: torch.Tensor) -> torch.Tensor:
     assert (
         len(lower_tril.shape) == 3
-    ), "Expecting batched vectors of lower triangular matrices (non-zero elements only) of shape (B, N_ANCHORS, 6)."
+    ), f"Expecting batched vectors of lower triangular matrices (non-zero elements only) of shape (B, N_ANCHORS, 6) but got {lower_tril.shape}."
     bs, n = tuple(lower_tril.shape[:2])
     cov_mat = torch.zeros((bs, n, 3, 3)).view(bs, n, 9).to(lower_tril.device)
     cov_mat[..., FLAT_LOWER_INDICES] = lower_tril

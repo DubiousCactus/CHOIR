@@ -157,6 +157,8 @@ def compute_solid_intersection_volume(
     ):
         if path not in obj_voxels:
             obj_mesh = o3dio.read_triangle_mesh(path)
+            # At test-time we shouldn't have rotation augmentation!
+            # Rotate the object and hand
             if center_on_object_com:
                 obj_mesh.translate(-obj_mesh.get_center())
 

@@ -171,6 +171,14 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
+        object_meshes = None
+        object_meshes = {}
+        for path in mesh_pths:
+            obj_mesh = o3dio.read_triangle_mesh(path)
+            if self._data_loader.dataset.center_on_object_com:
+                obj_mesh.translate(-obj_mesh.get_center())
+                object_meshes[path] = obj_mesh
+            obj_mesh.compute_vertex_normals()
 
         if use_input:
             # For ground-truth:
@@ -247,6 +255,51 @@ class MultiViewTester(MultiViewTrainer):
                         theta_w=1e-8,
                     )
                 else:
+                    contacts_pred, obj_points, obj_normals = (
+                        y_hat.get("contacts", None),
+                        None,
+                        None,
+                    )
+                    if contacts_pred is not None:
+                        N_PTS_ON_MESH = 3000
+                        # Sample points from the object mesh:
+                        # TODO: Refactor that because we're doing it again below for contact
+                        # coverage!
+                        obj_points, obj_normals = [], []
+                        for path in mesh_pths:
+                            obj_mesh = object_meshes[path]
+                            obj_normals.append(
+                                to_cuda_(
+                                    torch.cat(
+                                        (
+                                            torch.from_numpy(
+                                                np.asarray(obj_mesh.vertices)
+                                            ).type(dtype=torch.float32),
+                                            torch.from_numpy(
+                                                np.asarray(obj_mesh.vertex_normals)
+                                            ).type(dtype=torch.float32),
+                                        ),
+                                        dim=-1,
+                                    )
+                                )
+                            )
+                            obj_points.append(
+                                to_cuda_(
+                                    torch.from_numpy(
+                                        np.asarray(
+                                            obj_mesh.sample_points_uniformly(
+                                                N_PTS_ON_MESH
+                                            ).points
+                                        )
+                                    ).float()
+                                )
+                            )
+                        obj_points = torch.stack(obj_points, dim=0)
+                        obj_normals = torch.stack(obj_normals, dim=0)
+                    print(
+                        f"contacts: {contacts_pred.shape}, obj_points: {obj_points.shape}, obj_normals: {obj_normals.shape}"
+                    )
+
                     (
                         _,
                         _,
@@ -257,6 +310,9 @@ class MultiViewTester(MultiViewTrainer):
                         joints_pred,
                     ) = optimize_pose_pca_from_choir(
                         y_hat["choir"],
+                        contact_gaussians=contacts_pred,
+                        obj_pts=obj_points,
+                        obj_normals=obj_normals,
                         bps=self._bps,
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
@@ -331,7 +387,6 @@ class MultiViewTester(MultiViewTrainer):
             # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
             # the thing to do is to skip empty voxels. I'll try to implement it.
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-            object_meshes = None
             intersection_volume = torch.zeros(1)
             # intersection_volume, object_meshes = compute_solid_intersection_volume(
             # pitch,
@@ -340,19 +395,17 @@ class MultiViewTester(MultiViewTrainer):
             # verts_pred,
             # mano_faces,
             # self._data_loader.dataset.center_on_object_com,
-            # return_meshes=True,
+            # return_meshes=True, # TODO: Only if we haven't loaded them yet
             # )
             # ======= Contact Coverage =======
             if object_meshes is None:
                 object_meshes = {}
                 for path in mesh_pths:
                     obj_mesh = o3dio.read_triangle_mesh(path)
-                    if self._data_loader.dataset.center_on_object_com:
-                        obj_mesh.translate(-obj_mesh.get_center())
                     object_meshes[path] = obj_mesh
             # Percentage of hand points within 2mm of the object surface.
             contact_coverage = []
-            N = 5000
+            N_PTS_ON_MESH = 10000
             for i, path in enumerate(mesh_pths):
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts_pred[i].detach().cpu().numpy(),
@@ -363,16 +416,19 @@ class MultiViewTester(MultiViewTrainer):
                 # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
                 # faces=self._affine_mano.faces.detach().cpu().numpy(),
                 # )
+                # At test-time we shouldn't have rotation augmentation!
+                if self._data_loader.dataset.center_on_object_com:
+                    obj_mesh.translate(-obj_mesh.get_center())
                 obj_points = to_cuda_(
                     torch.from_numpy(
                         np.asarray(
-                            object_meshes[path].sample_points_uniformly(N).points
+                            obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points
                         )
                     ).float()
                 )
                 hand_points = to_cuda_(
                     torch.from_numpy(
-                        trimesh.sample.sample_surface(pred_hand_mesh, N)[0]
+                        trimesh.sample.sample_surface(pred_hand_mesh, N_PTS_ON_MESH)[0]
                     ).float()
                 )
                 dists = torch.cdist(hand_points, obj_points)  # (N, N)
@@ -380,7 +436,9 @@ class MultiViewTester(MultiViewTrainer):
                     dim=1
                 ).values  # (N): distance of each hand point to the closest object point
                 contact_coverage.append(
-                    (dists <= (2 / self._data_loader.dataset.base_unit)).sum() / N * 100
+                    (dists <= (2 / self._data_loader.dataset.base_unit)).sum()
+                    / N_PTS_ON_MESH
+                    * 100
                 )
             contact_coverage = torch.stack(contact_coverage).mean().item()
 
@@ -662,6 +720,11 @@ class MultiViewTester(MultiViewTrainer):
             mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
             use_smplx = False  # TODO: I don't use it for now
 
+            obj_pts, obj_normals = None, None
+            raise NotImplementedError(
+                "Must compute obj pts/normals for save_batch_predictions"
+            )
+
             with torch.set_grad_enabled(True):
                 (
                     _,
@@ -673,6 +736,9 @@ class MultiViewTester(MultiViewTrainer):
                     joints_pred,
                 ) = optimize_pose_pca_from_choir(
                     y_hat["choir"],
+                    contact_gaussians=y_hat.get("contacts", None),
+                    obj_pts=obj_pts,
+                    obj_normals=obj_normals,
                     bps=self._bps,
                     anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
