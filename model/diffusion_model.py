@@ -796,7 +796,7 @@ class KPDiffusionModel(torch.nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
-        assert self.x_mean is not None, "Must call set_dataset_stats first"
+        assert self.x_hand_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
             x[..., : self.n_obj_keypoints, :] = self._standardize(
                 x[..., : self.n_obj_keypoints, :], self.x_obj_mean, self.x_obj_std
@@ -916,10 +916,7 @@ class KPDiffusionModel(torch.nn.Module):
             pbar.close()
             # ====== Postprocessing ======
             output = x_hat.view(*_in_shape)
-            if self.object_in_encoder:
-                output = self._destandardize(output, self.x_mean, self.x_std)
-            else:
-                output = self._destandardize(output, self.x_mean[1:], self.x_std[1:])
+            output = self._destandardize(output, self.x_hand_mean, self.x_hand_std)
             return output
 
 
