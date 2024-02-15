@@ -66,7 +66,7 @@ class ContactPoseDataset(BaseDataset):
     gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
         [-2.2395e-04, -8.6842e-04, 7.1034e-05]
     ), torch.tensor([3.4145e-04, -4.4793e-04, 4.5160e-05])
-    gt_kp_obj_std, gt_kp_hand_mean = torch.tensor(
+    gt_kp_obj_std, gt_kp_hand_std = torch.tensor(
         [0.0383, 0.0369, 0.0368]
     ), torch.tensor([0.0485, 0.0456, 0.0448])
     noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor(
