@@ -27,7 +27,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             self._model.backbone.set_anchor_indices(
                 self._train_loader.dataset.anchor_indices
             )
-            self._model.set_dataset_stats(self._train_loader.dataset)
+        self._model.set_dataset_stats(self._train_loader.dataset)
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )

@@ -64,12 +64,33 @@ def launch_stats_computation(
 
     gt_udf_vals, gt_gaussian_vals = [], []
     input_udf_vals = []
+    gt_kp_vals, input_kp_vals = [], []
     for batch in tqdm(train_loader_inst):
         samples, labels, _ = batch
         label_choir = labels["choir"]
         gt_udf_vals.append(label_choir[0, 0, :, :2])
         gt_gaussian_vals.append(label_choir[0, 0, :, 2:])
         input_udf_vals.append(samples["choir"][0, 0, :, :2])
+        gt_kp_vals.append(
+            torch.cat(
+                (
+                    labels["rescaled_ref_pts"][0, 0],
+                    labels["joints"][0, 0],
+                    labels["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
+        input_kp_vals.append(
+            torch.cat(
+                (
+                    samples["rescaled_ref_pts"][0, 0],
+                    samples["joints"][0, 0],
+                    samples["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
 
     for batch in tqdm(val_loader_inst):
         samples, labels, _ = batch
@@ -77,25 +98,73 @@ def launch_stats_computation(
         gt_udf_vals.append(label_choir[0, 0, :, :2])
         gt_gaussian_vals.append(label_choir[0, 0, :, 2:])
         input_udf_vals.append(samples["choir"][0, 0, :, :2])
-
+        gt_kp_vals.append(
+            torch.cat(
+                (
+                    labels["rescaled_ref_pts"][0, 0],
+                    labels["joints"][0, 0],
+                    labels["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
+        input_kp_vals.append(
+            torch.cat(
+                (
+                    samples["rescaled_ref_pts"][0, 0],
+                    samples["joints"][0, 0],
+                    samples["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
     for batch in tqdm(test_loader_inst):
         samples, labels, _ = batch
         label_choir = labels["choir"]
         gt_udf_vals.append(label_choir[0, 0, :, :2])
         gt_gaussian_vals.append(label_choir[0, 0, :, 2:])
         input_udf_vals.append(samples["choir"][0, 0, :, :2])
+        gt_kp_vals.append(
+            torch.cat(
+                (
+                    labels["rescaled_ref_pts"][0, 0],
+                    labels["joints"][0, 0],
+                    labels["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
+        input_kp_vals.append(
+            torch.cat(
+                (
+                    samples["rescaled_ref_pts"][0, 0],
+                    samples["joints"][0, 0],
+                    samples["anchors"][0, 0],
+                ),
+                dim=-2,  # Concat along the keypoints and not their dimensionality
+            )
+        )
 
     gt_udf_vals = torch.cat(gt_udf_vals, dim=0)
     gt_gaussian_vals = torch.cat(gt_gaussian_vals, dim=0)
     input_udf_vals = torch.cat(input_udf_vals, dim=0)
+    gt_kp_vals = torch.cat(gt_kp_vals, dim=0)
+    input_kp_vals = torch.cat(input_kp_vals, dim=0)
+
     gt_udf_mean = gt_udf_vals.mean(dim=0)
     gt_udf_std = gt_udf_vals.std(dim=0)
     gt_gaussian_mean = gt_gaussian_vals.mean(dim=0)
     gt_gaussian_std = gt_gaussian_vals.std(dim=0)
+    gt_kp_mean = gt_kp_vals.mean(dim=0)
+    gt_kp_std = gt_kp_vals.std(dim=0)
+    input_udf_mean = input_udf_vals.mean(dim=0)
+    input_udf_std = input_udf_vals.std(dim=0)
+    input_kp_mean = input_kp_vals.mean(dim=0)
+    input_kp_std = input_kp_vals.std(dim=0)
     print(f"[*] Ground-truth UDF: mean={gt_udf_mean}, std={gt_udf_std}")
     print(
         f"[*] Ground-truth Gaussians : mean={gt_gaussian_mean}, std={gt_gaussian_std}"
     )
-    print(
-        f"[*] Input UDF: mean={input_udf_vals.mean(dim=0)}, std={input_udf_vals.std(dim=0)}"
-    )
+    print(f"[*] Input UDF: mean={input_udf_mean}, std={input_udf_std}")
+    print(f"[*] Input keypoints: mean={input_kp_mean}, std={input_kp_std}")
+    print(f"[*] Ground-truth keypoints: mean={gt_kp_mean}, std={gt_kp_std}")

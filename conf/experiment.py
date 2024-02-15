@@ -253,7 +253,7 @@ model_store(
         temporal_dim=256,
         y_embed_dim=256,
         y_input_keypoints=MISSING,
-        embed_full_pair=True,
+        object_in_encoder=True,
         skip_connections=False,
     ),
     name="kp_ddpm",
@@ -584,11 +584,11 @@ experiment_store(
             + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
             y_embed_dim=256,
             rescale_input=False,  # Should already be around [-1, 1]... Could be outside?
-            embed_full_pair=False,
+            object_in_encoder=False,
             skip_connections=False,
         ),
         run=dict(
-            conditional=True, full_choir=False  # Must be equal to embed_full_pair!
+            conditional=True, full_choir=False  # Must be equal to object_in_encoder!
         ),  # We can reuse the "full_choir" flag for "hand_object_pair"
         bases=(Experiment,),
     ),

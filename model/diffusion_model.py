@@ -454,7 +454,7 @@ class BPSDiffusionModel(torch.nn.Module):
                     norm_groups=16,
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
-                    context_channels=[16, 32, 64, 128, y_embed_dim],
+                    context_channels=[4, 8, 16, 32, 64],
                 ),
                 partial(
                     MultiScaleResnetEncoderModel,
@@ -672,12 +672,12 @@ class KPDiffusionModel(torch.nn.Module):
         rescale_input: bool,
         y_input_keypoints: Optional[int] = None,  # Will be x3 for x,y,z
         y_embed_dim: Optional[int] = None,
-        embed_full_pair: bool = False,
+        object_in_encoder: bool = False,
         skip_connections: bool = False,
     ):
         super().__init__()
-        self.embed_full_pair = embed_full_pair
-        self.n_obj_keypoints = n_obj_keypoints if embed_full_pair else 0
+        self.object_in_encoder = object_in_encoder
+        self.n_obj_keypoints = n_obj_keypoints if object_in_encoder else 0
         # TODO: Move all this crap to config (god I'm lazy to do that)
         backbones = {
             "mlp_resnet": (
@@ -685,7 +685,7 @@ class KPDiffusionModel(torch.nn.Module):
                     MLPResNetBackboneModel,
                     input_dim=(
                         n_hand_keypoints
-                        + (self.n_obj_keypoints if embed_full_pair else 0)
+                        + (self.n_obj_keypoints if object_in_encoder else 0)
                     )
                     * 3,
                     output_dim=n_hand_keypoints * 3,
@@ -707,7 +707,7 @@ class KPDiffusionModel(torch.nn.Module):
                     MLPResNetBackboneModel,
                     input_dim=(
                         n_hand_keypoints
-                        + (self.n_obj_keypoints if embed_full_pair else 0)
+                        + (self.n_obj_keypoints if object_in_encoder else 0)
                     )
                     * 3,
                     output_dim=n_hand_keypoints * 3,
@@ -749,7 +749,25 @@ class KPDiffusionModel(torch.nn.Module):
         assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
         assert not (self.alpha < 0).any(), "Alphas contain neg"
         self._input_shape = None
-        self._rescale_input = rescale_input
+        self.x_mean, self.x_std = None, None
+        self.y_mean, self.y_std = None, None
+
+    def set_dataset_stats(
+        self,
+        dataset: torch.utils.data.Dataset,
+    ) -> None:
+        self.x_mean, self.x_std = dataset.gt_kp_mean, dataset.gt_kp_std
+        self.y_mean, self.y_std = dataset.noisy_kp_mean, dataset.noisy_kp_std
+
+    def _standardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return (x - mean.to(x.device)) / std.to(x.device)
+
+    def _destandardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return x * std.to(x.device) + mean.to(x.device)
 
     def forward(
         self,
@@ -758,14 +776,11 @@ class KPDiffusionModel(torch.nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
-        # print(f"Input shape: {x.shape}")
-        # print(f"Input range: [{x.min()}, {x.max()}]")
-        if self._rescale_input:
-            # From [0, 1] to [-1, 1]:
-            x = 2 * x - 1
-        # print(f"Input range after stdization: [{x.min()}, {x.max()}]")
-        # print(f"Input shape: {x.shape}")
-        # print(f"Y shape: {y.shape if y is not None else None}")
+        assert self.x_mean is not None, "Must call set_dataset_stats first"
+        if self.object_in_encoder:
+            x = self._standardize(x, self.x_mean, self.x_std)
+        else:
+            x = self._standardize((x, self.x_mean[1:], self.x_std[1:]))
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -774,7 +789,7 @@ class KPDiffusionModel(torch.nn.Module):
             .requires_grad_(False)
         )
         # 2. Sample the noise with shape x.shape
-        if self.embed_full_pair:
+        if self.object_in_encoder:
             obj_kpts = x[..., : self.n_obj_keypoints, :]
             x = x[..., self.n_obj_keypoints :, :]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
@@ -785,14 +800,22 @@ class KPDiffusionModel(torch.nn.Module):
             torch.sqrt(batched_alpha)[..., None] * x
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
-        if self.embed_full_pair:
-            # Fuse back the full hand-object pair: object_keypoints + diffused_hand_keypoints
-            diffused_x = torch.cat([obj_kpts, diffused_x], dim=-2)
         # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
-        y_embed = self.embedder(y) if y is not None else None
+        y_embed = (
+            self.embedder(self._standardize(y, self.y_mean, self.y_std))
+            if y is not None
+            else None
+        )
         # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
-        eps_hat = self.backbone(diffused_x, t, y_embed, debug=False)
+        eps_hat = self.backbone(
+            torch.cat([obj_kpts, diffused_x], dim=-2)
+            if self.object_in_encoder
+            else diffused_x,
+            t,
+            y_embed,
+            debug=False,
+        )
         # print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
 
@@ -811,7 +834,15 @@ class KPDiffusionModel(torch.nn.Module):
                 )
             return t_batch
 
+        # ==== Preprocessing ====
+        y = self._standardize(y, self.y_mean, self.y_std) if y is not None else None
         # ===== Inference =======
+        if self.object_in_encoder:
+            # TODO: This is a hack. In the future the object will always be in y I think
+            obj_kpts = y[..., : self.n_obj_keypoints, :]
+            assert (
+                obj_kpts is not None
+            ), "Must provide obj_kpts when object_in_encoder is True"
         assert self._input_shape is not None, "Must call forward first"
         with torch.no_grad():
             device = next(self.parameters()).device
@@ -823,7 +854,9 @@ class KPDiffusionModel(torch.nn.Module):
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat = self.backbone(
-                    z_current,
+                    torch.cat([obj_kpts, z_current], dim=-2)
+                    if self.object_in_encoder
+                    else z_current,
                     make_t_batched(t, n, y_embed),
                     y_embed,
                 )
@@ -835,29 +868,25 @@ class KPDiffusionModel(torch.nn.Module):
                 z_current = z_prev_hat + eps * self.sigma[t]
                 pbar.update()
             # Now for z_0:
-            eps_hat = self.backbone(z_current, make_t_batched(t, n, y_embed), y_embed)
+            eps_hat = self.backbone(
+                torch.cat([obj_kpts, z_current], dim=-2)
+                if self.object_in_encoder
+                else z_current,
+                make_t_batched(t, n, y_embed),
+                y_embed,
+            )
             x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
                 self.beta[0]
                 / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
             ) * eps_hat
             pbar.update()
             pbar.close()
+            # ====== Postprocessing ======
             output = x_hat.view(*_in_shape)
-            if self._rescale_input:
-                # Back to [0, 1]:
-                output = (output + 1) / 2
-                # print(f"Output range: [{output.min()}, {output.max()}]")
-                output = torch.clamp(output, 0 + 1e-5, 1 - 1e-5)
-                # print(
-                # f"Output range after stdization: [{output.min()}, {output.max()}]"
-                # )
+            if self.object_in_encoder:
+                output = self._destandardize(output, self.x_mean, self.x_std)
             else:
-                # Clamp to [-1, 1]:
-                # print(f"Output range: [{output.min()}, {output.max()}]")
-                output = torch.clamp(output, -1 + 1e-5, 1 - 1e-5)
-                # print(
-                # f"Output range after stdization: [{output.min()}, {output.max()}]"
-                # )
+                output = self._destandardize(output, self.x_mean[1:], self.x_std[1:])
             return output
 
 
