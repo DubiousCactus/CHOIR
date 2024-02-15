@@ -63,10 +63,10 @@ class ContactPoseDataset(BaseDataset):
     noisy_udf_std = torch.tensor([0.1489, 0.1392])  # object distances, hand distances
 
     # ====== Keypoints ======
-    gt_kp_mean = torch.tensor([-1.9612e-04, -8.4773e-04, 6.9761e-05])
-    gt_kp_std = torch.tensor([0.0389, 0.0374, 0.0372])
-    noisy_kp_mean = torch.tensor([-2.0500e-04, -8.4156e-04, 6.2944e-05])
-    noisy_kp_std = torch.tensor([0.0406, 0.0392, 0.0390])
+    gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor([]), torch.tensor([])
+    gt_kp_obj_std, gt_kp_hand_mean = torch.tensor([]), torch.tensor([])
+    noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor([]), torch.tensor([])
+    noisy_kp_obj_std, noisy_kp_hand_std = torch.tensor([]), torch.tensor([])
 
     # ====== Contacts ======
     contacts_mean = torch.tensor(

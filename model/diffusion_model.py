@@ -749,15 +749,35 @@ class KPDiffusionModel(torch.nn.Module):
         assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
         assert not (self.alpha < 0).any(), "Alphas contain neg"
         self._input_shape = None
-        self.x_mean, self.x_std = None, None
-        self.y_mean, self.y_std = None, None
+        self.x_hand_mean, self.x_obj_mean, self.x_hand_std, self.x_obj_std = (
+            None,
+            None,
+            None,
+            None,
+        )
+        self.y_hand_mean, self.y_obj_mean, self.y_hand_std, self.y_obj_std = (
+            None,
+            None,
+            None,
+            None,
+        )
 
     def set_dataset_stats(
         self,
         dataset: torch.utils.data.Dataset,
     ) -> None:
-        self.x_mean, self.x_std = dataset.gt_kp_mean, dataset.gt_kp_std
-        self.y_mean, self.y_std = dataset.noisy_kp_mean, dataset.noisy_kp_std
+        self.x_hand_mean, self.x_obj_mean, self.x_hand_std, self.x_obj_std = (
+            dataset.gt_kp_hand_mean,
+            dataset.gt_kp_obj_mean,
+            dataset.gt_kp_hand_std,
+            dataset.gt_kp_obj_std,
+        )
+        self.y_hand_mean, self.y_obj_mean, self.y_hand_std, self.y_obj_std = (
+            dataset.noisy_kp_hand_mean,
+            dataset.noisy_kp_obj_mean,
+            dataset.noisy_kp_hand_std,
+            dataset.noisy_kp_obj_std,
+        )
 
     def _standardize(
         self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
@@ -778,9 +798,20 @@ class KPDiffusionModel(torch.nn.Module):
             self._input_shape = x.shape[1:]
         assert self.x_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
-            x = self._standardize(x, self.x_mean, self.x_std)
+            x[..., : self.n_obj_keypoints, :] = self._standardize(
+                x[..., : self.n_obj_keypoints, :], self.x_obj_mean, self.x_obj_std
+            )
+            x[..., self.n_obj_keypoints :, :] = self._standardize(
+                (x[..., self.n_obj_keypoints :, :], self.x_hand_mean, self.x_hand_std)
+            )
         else:
-            x = self._standardize((x, self.x_mean[1:], self.x_std[1:]))
+            x = self._standardize(x, self.x_hand_mean, self.x_hand_std)
+        y[..., : self.n_obj_keypoints, :] = self._standardize(
+            y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
+        )
+        y[..., self.n_obj_keypoints :, :] = self._standardize(
+            y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
+        )
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -802,11 +833,7 @@ class KPDiffusionModel(torch.nn.Module):
         )
         # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
-        y_embed = (
-            self.embedder(self._standardize(y, self.y_mean, self.y_std))
-            if y is not None
-            else None
-        )
+        y_embed = self.embedder(y) if y is not None else None
         # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(
             torch.cat([obj_kpts, diffused_x], dim=-2)
@@ -835,7 +862,13 @@ class KPDiffusionModel(torch.nn.Module):
             return t_batch
 
         # ==== Preprocessing ====
-        y = self._standardize(y, self.y_mean, self.y_std) if y is not None else None
+        if y is not None:
+            y[..., : self.n_obj_keypoints, :] = self._standardize(
+                y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
+            )
+            y[..., self.n_obj_keypoints :, :] = self._standardize(
+                y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
+            )
         # ===== Inference =======
         if self.object_in_encoder:
             # TODO: This is a hack. In the future the object will always be in y I think
