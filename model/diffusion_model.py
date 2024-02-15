@@ -43,6 +43,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         use_encoder_self_attn: bool = False,
         object_in_encoder: bool = False,
         contacts_hidden_dim: int = 1024,
+        contacts_skip_connections: bool = False,
         y_embed_dim: Optional[int] = None,
         context_channels: Optional[int] = None,
     ):
@@ -62,6 +63,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     input_dim=2 if object_in_encoder else 1,
                     output_dim=1,
                     contacts_hidden_dim=contacts_hidden_dim,
+                    contacts_skip_connections=contacts_skip_connections,
                     contacts_dim=9,
                     use_self_attention=use_backbone_self_attn,
                 ),

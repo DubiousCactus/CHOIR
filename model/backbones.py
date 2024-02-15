@@ -537,6 +537,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         contacts_dim: int,
         temporal_dim: int,
         contacts_hidden_dim: int = 1024,
+        contacts_skip_connections: bool = False,
         pooling: str = "avg",
         normalization: str = "batch",
         norm_groups: int = 16,
@@ -551,6 +552,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         self.time_encoder = time_encoder
         self.use_self_attn = use_self_attention
         self.anchor_indices = None
+        self.contacts_skip_connections = contacts_skip_connections
         # 32 anchors assigned randomly to each BPS point, hence the repetition (see section on anchor assignment in the paper).
         self.n_gaussian_params, self.n_anchors = contacts_dim, 32
         self.n_repeats = (self.grid_len**3) // self.n_anchors
@@ -819,6 +821,8 @@ class ContactUNetBackboneModel(torch.nn.Module):
         c4 = self.contact_4(
             c3, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
         )
+        if self.contacts_skip_connections:
+            c4 = c4 + c1
         x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y[2], debug=debug)
         x8 = self.self_attn_6(x8) if self.use_self_attn else x8
         c5 = self.contact_5(
