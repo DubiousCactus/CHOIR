@@ -673,6 +673,7 @@ class KPDiffusionModel(torch.nn.Module):
         y_input_keypoints: Optional[int] = None,  # Will be x3 for x,y,z
         y_embed_dim: Optional[int] = None,
         embed_full_pair: bool = False,
+        skip_connections: bool = False,
     ):
         super().__init__()
         self.embed_full_pair = embed_full_pair
@@ -690,6 +691,7 @@ class KPDiffusionModel(torch.nn.Module):
                     output_dim=n_hand_keypoints * 3,
                     hidden_dim=512,
                     context_dim=y_embed_dim,
+                    skip_connections=skip_connections,
                 ),
                 partial(
                     MLPResNetEncoderModel,
@@ -711,6 +713,7 @@ class KPDiffusionModel(torch.nn.Module):
                     output_dim=n_hand_keypoints * 3,
                     hidden_dim=512,
                     context_dim=y_embed_dim,
+                    skip_connections=skip_connections,
                 ),
                 partial(
                     PointNet2EncoderModel,

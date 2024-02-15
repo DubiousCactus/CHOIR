@@ -254,6 +254,7 @@ model_store(
         y_embed_dim=256,
         y_input_keypoints=MISSING,
         embed_full_pair=True,
+        skip_connections=False,
     ),
     name="kp_ddpm",
 )
@@ -584,6 +585,7 @@ experiment_store(
             y_embed_dim=256,
             rescale_input=False,  # Should already be around [-1, 1]... Could be outside?
             embed_full_pair=False,
+            skip_connections=False,
         ),
         run=dict(
             conditional=True, full_choir=False  # Must be equal to embed_full_pair!

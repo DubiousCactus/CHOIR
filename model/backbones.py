@@ -81,8 +81,10 @@ class MLPResNetBackboneModel(torch.nn.Module):
         temporal_dim: int,
         hidden_dim: int = 1024,
         context_dim: Optional[int] = None,
+        skip_connections: bool = False,
     ):
         super().__init__()
+        self.skip_connections = skip_connections
         self.input_dim = input_dim
         self.time_encoder = time_encoder
         self.time_mlp = torch.nn.Sequential(
@@ -130,6 +132,8 @@ class MLPResNetBackboneModel(torch.nn.Module):
         x3 = self.block_2(x2, t_emb=time_embed, y_emb=y, debug=debug)
         x4 = self.block_3(x3, t_emb=time_embed, y_emb=y, debug=debug)
         x5 = self.block_4(x4, t_emb=time_embed, y_emb=y, debug=debug)
+        if self.skip_connections:
+            x5 = x2 + x5
         # x5 = x4
         x6 = self.output_layer(x5)
         output_shape = (*input_shape[:-2], self.output_dim // 3, 3)
@@ -260,7 +264,6 @@ class MLPResNetEncoderModel(torch.nn.Module):
         self.block_1 = ResBlock(8192, hidden_dim)
         self.block_2 = ResBlock(hidden_dim, hidden_dim)
         self.block_3 = ResBlock(hidden_dim, hidden_dim)
-        # self.block_4 = ResBlock(hidden_dim, hidden_dim)
         self.output_layer = torch.nn.Linear(hidden_dim, embed_dim)
 
     def forward(
@@ -271,12 +274,8 @@ class MLPResNetEncoderModel(torch.nn.Module):
         x1 = self.input_layer(x)
         x2 = self.block_1(x1)
         x3 = self.block_2(x2)
-        # x4 = x3
         x4 = self.block_3(x3)
-        # x5 = self.block_4(x4)
-        x5 = x4
-        x6 = self.output_layer(x5)
-        return x6
+        return self.output_layer(x4)
 
 
 class UNetBackboneModel(torch.nn.Module):
