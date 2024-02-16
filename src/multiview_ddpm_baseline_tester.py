@@ -23,7 +23,7 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
         self._use_deltas = self._data_loader.dataset.use_deltas
         self._full_choir = kwargs.get("full_choir", False)
         self._is_baseline = True
-        self._model.set_dataset_stats(self._train_loader.dataset)
+        self._model.set_dataset_stats(self._data_loader.dataset)
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         print("[*] Running the model's forward pass once...")
