@@ -61,6 +61,7 @@ class BaseTrainer:
         self._model_saver = BestNModelSaver(
             project_conf.BEST_N_MODELS_TO_KEEP, self._save_checkpoint
         )
+        self.minimize_metric = "val_loss"
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
@@ -266,7 +267,7 @@ class BaseTrainer:
                 epoch,
                 val_loss,
                 val_loss_components,
-                minimize_metric="distances_from_prior",
+                minimize_metric=self.minimize_metric,
             )
             return val_loss
 

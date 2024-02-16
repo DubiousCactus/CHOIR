@@ -174,10 +174,10 @@ class PointNet2EncoderModel(torch.nn.Module):
         self.fc1 = torch.nn.Linear(1024, 512)
         self.bn1 = torch.nn.BatchNorm1d(512)
         self.drop1 = torch.nn.Dropout(0.4)
-        self.fc2 = torch.nn.Linear(512, 256)
-        self.bn2 = torch.nn.BatchNorm1d(256)
-        self.drop2 = torch.nn.Dropout(0.4)
-        self.fc3 = torch.nn.Linear(256, embed_dim)
+        # self.fc2 = torch.nn.Linear(512, 256)
+        # self.bn2 = torch.nn.BatchNorm1d(256)
+        # self.drop2 = torch.nn.Dropout(0.4)
+        self.fc3 = torch.nn.Linear(512, embed_dim)
 
     def forward(self, points):
         B, T, N, C = points.shape
@@ -189,7 +189,7 @@ class PointNet2EncoderModel(torch.nn.Module):
         l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
         x = l3_points.view(B * T, 1024)
         x = self.drop1(torch.nn.functional.gelu(self.bn1(self.fc1(x))))
-        x = self.drop2(torch.nn.functional.gelu(self.bn2(self.fc2(x))))
+        # x = self.drop2(torch.nn.functional.gelu(self.bn2(self.fc2(x))))
         x = self.fc3(x)
         return x.view(B, T, -1)
 
@@ -613,6 +613,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         # ======== Contact layers =========
         self.contacts_dim = contacts_dim
+        self.feat_dropout = torch.nn.Dropout(0.2)
         self.contact_1 = temporal_res_block(
             dim_in=contacts_dim * self.n_anchors + 256, y_dim=None
         )  # input x + embedding from unet
@@ -795,8 +796,10 @@ class ContactUNetBackboneModel(torch.nn.Module):
         x5 = self.tunnel1(x4, t_embed, context=y[4], debug=debug)
         x5 = self.self_attn_4(x5) if self.use_self_attn else x5
         # ========= Feature fusion =========
+        unet_features = x5.mean(dim=(2, 3, 4))
+        unet_features = self.feat_dropout(unet_features)
         c1 = self.contact_1(
-            torch.cat((x_contacts, x5.mean(dim=(2, 3, 4))), dim=-1),
+            torch.cat((x_contacts, unet_features), dim=-1),
             t_emb=t_embed,
             y_emb=None,
             debug=debug,

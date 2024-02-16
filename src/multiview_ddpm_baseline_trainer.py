@@ -80,8 +80,6 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
             if self.conditional
             else None,
         )  # Only the hand distances!
-        losses = self._training_loss(
-            samples, {k: v[:, -1] for k, v in labels.items()}, y_hat
-        )
+        losses = self._training_loss(None, None, y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses

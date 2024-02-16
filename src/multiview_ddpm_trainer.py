@@ -31,6 +31,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )
+        # self.minimize_metric = "udf_mse" ?
 
     @to_cuda
     def _visualize(
