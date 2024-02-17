@@ -486,11 +486,14 @@ class ContactsFittingLoss(torch.nn.Module):
         # penetration_loss = torch.tensor(0.0)
         if obj_normals is not None:
             # We first have to find the nearest object normal to each hand vertex:
-            obj_vert_distances = torch.cdist(verts, obj_normals[:, :3])
-            nearest_normal_indices = torch.argmin(obj_vert_distances, dim=-1)
+            obj_vert_distances = torch.cdist(verts, obj_normals[..., :3])  # (V, O)
+            nearest_normal_indices = torch.argmin(obj_vert_distances, dim=-1)  # (V,)
+            nearest_normals = torch.take_along_dim(
+                obj_normals, nearest_normal_indices.unsqueeze(-1), dim=1
+            )
             nearest_normal_roots, nearest_normals = (
-                obj_normals[nearest_normal_indices, :3],
-                obj_normals[nearest_normal_indices, 3:],
+                nearest_normals[..., :3],
+                nearest_normals[..., 3:],
             )
             # Shift the nearest normal roots 2mm inwards to avoid penalizing for the hand being
             # in direct contact with the object.
