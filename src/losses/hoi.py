@@ -463,14 +463,12 @@ class ContactsFittingLoss(torch.nn.Module):
             else:
                 scale_tril = scale_tril.unsqueeze(1).expand(bs, n, 3, 3)
                 anchor_gaussian = mvn(scale_tril=scale_tril)
-            weights = torch.exp(anchor_gaussian.log_prob(neighbourhood_verts)).squeeze()
+            weights = torch.exp(anchor_gaussian.log_prob(neighbourhood_verts))
             # print(f"Max contact values for Gaussian {i}/32: {weights.max()}")
-            # print(f"weights range: {weights.min(dim=-1).values} - {weights.max(dim=-1).values}")
-            weights = (
-                (weights / weights.max(dim=-1).values)
-                if weights.max(dim=-1).values > 1.0
-                else weights
-            )
+            # weights are (B, N) and we want to normalize them to [0, 1] for each batch element.
+            weights = (weights - weights.min(dim=-1).values.unsqueeze(-1)) / (
+                weights.max(dim=-1).values - weights.min(dim=-1).values
+            ).unsqueeze(-1)
             # print(f"weights new range: {weights.min(dim=-1).values} - {weights.max(dim=-1).values}")
             # Prune the very low weights:
             weights = torch.where(
