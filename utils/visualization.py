@@ -588,6 +588,11 @@ def visualize_CHOIR_prediction(
         gt_joints = gt_joints[0].unsqueeze(0)
     if len(gt_anchors.shape) > 2:
         gt_anchors = gt_anchors[0].unsqueeze(0)
+    if contact_gaussians is not None:
+        if len(contact_gaussians.shape) > 2:
+            contact_gaussians = contact_gaussians[0].unsqueeze(0)
+        elif len(contact_gaussians.shape) == 2:
+            contact_gaussians = contact_gaussians.unsqueeze(0)
     # =============================================================
     if use_deltas:
         # TODO: directly plot the delta vectors?

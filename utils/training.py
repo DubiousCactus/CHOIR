@@ -78,13 +78,13 @@ def optimize_pose_pca_from_choir(
     else:
         raise ValueError(f"Unknown dataset '{dataset}'.")
     if initial_params is None:
-        theta = torch.rand((B, ncomps + (3 if not use_smplx else 0))) * 0.01
-        beta = torch.rand((B, 10)) * 0.01
+        theta = torch.randn((B, ncomps + (3 if not use_smplx else 0))) * 0.01
+        beta = torch.randn((B, 10)) * 0.01
         if use_smplx:
-            rot = torch.rand((B, 3)) * 0.01  # axis-angle for SMPL-X
+            rot = torch.randn((B, 3)) * 0.01  # axis-angle for SMPL-X
         else:
-            rot = torch.rand((B, 6)) * 0.01  # 6D for AffineMANO
-        trans = torch.rand((B, 3)) * 0.001
+            rot = torch.randn((B, 6)) * 0.01  # 6D for AffineMANO
+        trans = torch.randn((B, 3)) * 0.001
     else:
         theta = initial_params["theta"].detach().clone()
         beta = initial_params["beta"].detach().clone()
@@ -207,11 +207,15 @@ def optimize_pose_pca_from_choir(
         obj_normals is not None
     ), "obj_normals must be provided if contact_gaussians is."
     contacts_loss = ContactsFittingLoss(
-        use_median_filter=False, median_filter_len=50, update_knn_each_step=True
+        verts.detach()[0],
+        anchors.detach()[0],
+        use_median_filter=False,
+        median_filter_len=50,
+        update_knn_each_step=True,
     ).to(contact_gaussians.device)
     converged_pose = None
     for i in proc_bar:
-        enable_penetration_loss = i > 50  # (i > (0.5 * iterations))
+        enable_penetration_loss = i > 20  # (i > (0.5 * iterations))
         optimizer.zero_grad()
         if use_smplx:
             output = smplx_model(
@@ -254,13 +258,13 @@ def optimize_pose_pca_from_choir(
             contact_loss + abs_pose_regularizer + pose_regularizer + shape_regularizer
         )
         if enable_penetration_loss:
-            # deviation_regularizer = 1e-5 * torch.norm(verts - converged_pose) ** 2
-            loss += penetration_loss
+            deviation_regularizer = 1e-1 * torch.norm(verts - converged_pose) ** 2
+            loss += penetration_loss  # + deviation_regularizer
             # loss = contact_loss + penetration_loss + deviation_regularizer
         else:
             converged_pose = verts.detach().clone()
         # loss = loss + shape_regularizer +  abs_pose_regularizer
-        prev_loss = loss.detach().type(torch.float32)
+        prev_loss = contact_loss.detach().type(torch.float32)
         loss.backward()
         optimizer.step()
         scheduler.step()

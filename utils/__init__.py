@@ -89,7 +89,9 @@ def colorize(string: str, ansii_code: Union[int, str]) -> str:
 
 @contextmanager
 def colorize_prints(ansii_code: Union[int, str]):
-    print(f"\033[{ansii_code}m")
+    if type(ansii_code) == str:
+        ansii_code = project_conf.ANSI_COLORS[ansii_code]
+    print(f"\033[{ansii_code}m", end="")
     try:
         yield
     finally:

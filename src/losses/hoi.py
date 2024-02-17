@@ -10,6 +10,7 @@ Hand-Object Interaction loss.
 """
 
 from collections import deque
+from functools import partial
 from typing import Dict, Optional, Tuple
 
 import torch
@@ -317,6 +318,8 @@ class CHOIRFittingLoss(torch.nn.Module):
 class ContactsFittingLoss(torch.nn.Module):
     def __init__(
         self,
+        init_verts: torch.Tensor,
+        init_anchors: torch.tensor,
         update_knn_each_step: bool = True,
         use_median_filter: bool = False,
         median_filter_len: int = 15,
@@ -343,6 +346,21 @@ class ContactsFittingLoss(torch.nn.Module):
         self.knn_index_buffer = deque(
             [], maxlen=median_filter_len
         )  # For the median filter
+        with torch.no_grad():
+            # Compute anchor-vertex indices as (32, V) where each element is the index of the
+            # anchor which is closest to the corresponding vertex.
+            dists = torch.cdist(init_verts, init_anchors)  # (V, 32)
+            self.vertex_anchor_indices = torch.zeros(
+                (32, init_verts.shape[0]), dtype=torch.int64
+            )
+            closest_anchor_indices = torch.argmin(dists, dim=-1)
+            for i in range(32):
+                # I want a vector of shape (V,) where each element is a boolean indicating whether
+                # the vertex belongs to anchor i.
+                anchor_indices = (closest_anchor_indices == i).squeeze(-1)
+                self.vertex_anchor_indices[i] = anchor_indices
+            # To booleans:
+            self.vertex_anchor_indices = self.vertex_anchor_indices.bool()
 
     def forward(
         self,
@@ -363,19 +381,6 @@ class ContactsFittingLoss(torch.nn.Module):
                                     regularization term to penalize penetration of the hand into
                                     the object.
         """
-        # TODO: Allow this to run in batches!!!
-        if len(verts.shape) == 3:
-            if verts.shape[0] > 1:
-                raise NotImplementedError(
-                    "ContactsFittingLoss(): Batches are not supported yet."
-                )
-            else:
-                # verts = verts.squeeze(0) # This is already batched
-                # anchor_verts = anchor_verts.squeeze(0) # This is already batched
-                obj_pts = obj_pts.squeeze(0)
-                contact_gaussians = contact_gaussians.squeeze(0)
-                if obj_normals is not None:
-                    obj_normals = obj_normals.squeeze(0)
         # 1. Compute K object nearest neighbors for each MANO vertex
         if self.knn is None:
             neighbours = torch.cdist(verts, obj_pts)  # (V, O)
@@ -402,80 +407,79 @@ class ContactsFittingLoss(torch.nn.Module):
 
         # 3. Compute the distance weights as the PDF values of the contact Gaussians (using the
         # nearest Gaussian to each vertex).
-        anchor_distances = torch.cdist(verts, anchor_verts)  # (V, A)
-        anchor_distances, anchor_indices = torch.topk(
-            anchor_distances, 1, dim=-1, largest=False, sorted=False
-        )
         penetration_loss = torch.tensor(0.0)
-        # TODO: Vectorize this loop
+        # TODO: Vectorize this loop with masking
+        # =================================
         for i in range(32):
-            # Find vertices associated with anchor i
-            # print(
-            # f"verts: {verts.shape}, indices: {anchor_indices.shape}, "
-            # + f"this_anchor_indices: {(anchor_indices==i).shape}, "
-            # + f"contact_gaussians: {contact_gaussians.shape}"
-            # )
-            this_anchor_indices = (anchor_indices == i).squeeze(-1)
-            neighbourhood_verts = verts[this_anchor_indices]
-            # print(f"neighbourhood_verts: {neighbourhood_verts.shape}")
-            # if torch.allclose(
-            # contact_gaussians[i], torch.zeros_like(contact_gaussians[i]), rtol=1e-9
-            # ):
+            # anchor_indices is a vector of shape (B, V, 1) where each element is the index of the
+            # MANO anchor which is closest to the corresponding vertex in the batch.
+            # We want to get the vertices which are associated with anchor i.
+            this_anchor_indices = self.vertex_anchor_indices[i]
+            neighbourhood_verts = verts[:, this_anchor_indices]
+            # =====================================
             if torch.allclose(
-                contact_gaussians[i],
-                torch.zeros_like(contact_gaussians[i]),
+                contact_gaussians[:, i],
+                torch.zeros_like(contact_gaussians[:, i]),
                 atol=gaussian_activation_threshold,
             ):
-                # print(f"anchor {i} has not enough contacts")
-                distances[this_anchor_indices] *= 0
+                # print(f"anchor {i} has not enough contacts: {contact_gaussians[:, i]}")
+                distances[:, this_anchor_indices] *= 0
                 continue
-            mean, cov = contact_gaussians[i, :3], contact_gaussians[i, 3:]
-            if cov.shape[0] == 9:
+            mean, cov = contact_gaussians[:, i, :3], contact_gaussians[:, i, 3:]
+            scale_tril = None
+            if cov.shape[-1] == 9:
                 cov = cov.view(-1, 3, 3)
-            elif cov.shape[0] == 6:
+            elif cov.shape[-1] == 6:
                 # Cholesky-decomposed
-                cov = lower_tril_cholesky_to_covmat(cov[None, None, :]).squeeze((0, 1))
+                scale_tril = (
+                    lower_tril_cholesky_to_covmat(
+                        cov[:, None, :], return_lower_tril=True
+                    )
+                    .squeeze(1)
+                    .view(-1, 3, 3)
+                )
+                diag_flat_indices = [0, 4, 8]
+                # TODO: Actually learn log-diagonal of the Cholesky factors?
+                scale_tril = scale_tril.flatten(1)
+                scale_tril[:, diag_flat_indices] = torch.relu(
+                    scale_tril[:, diag_flat_indices]
+                ) + torch.max(
+                    scale_tril[:, diag_flat_indices],
+                    torch.tensor(1e-9, device=scale_tril.device),
+                )
+                scale_tril = scale_tril.view(-1, 3, 3)
             else:
                 raise ValueError(
-                    "ContactsFittingLoss(): The covariance matrix must be of shape (B, 6) or (B, 9)"
+                    f"ContactsFittingLoss(): The covariance matrix must be of shape (B, N, 6) or (B, 9) but got {cov.shape}"
                 )
             # /!\ The mean is at the origin, so we shift it by the anchor verts:
             mean = mean + anchor_verts[:, i]
-            anchor_gaussian = torch.distributions.MultivariateNormal(mean, cov)
-            weights = torch.exp(anchor_gaussian.log_prob(neighbourhood_verts))
+            bs, n = neighbourhood_verts.shape[:2]
+            mean = mean.unsqueeze(1).expand(bs, n, 3)
+            mvn = partial(torch.distributions.MultivariateNormal, loc=mean)
+            if scale_tril is None:
+                cov = cov.unsqueeze(1).expand(bs, n, 3, 3)
+                anchor_gaussian = mvn(covariance_matrix=cov)
+            else:
+                scale_tril = scale_tril.unsqueeze(1).expand(bs, n, 3, 3)
+                anchor_gaussian = mvn(scale_tril=scale_tril)
+            weights = torch.exp(anchor_gaussian.log_prob(neighbourhood_verts)).squeeze()
             # print(f"Max contact values for Gaussian {i}/32: {weights.max()}")
-            # print(
-            # f"weights: {weights.shape}. neighbour verts: {neighbourhood_verts.shape}. "
-            # + f"distances: {distances[this_anchor_indices].shape}"
-            # )
-            # weights = torch.exp(torch.clamp_min(weights, -200))
-            # print(f"weights range: {weights.min()} - {weights.max()}")
-            weights = (weights / weights.max()) if weights.max() > 1.0 else weights
-            # print(f"weights new range: {weights.min()} - {weights.max()}")
+            # print(f"weights range: {weights.min(dim=-1).values} - {weights.max(dim=-1).values}")
+            weights = (
+                (weights / weights.max(dim=-1).values)
+                if weights.max(dim=-1).values > 1.0
+                else weights
+            )
+            # print(f"weights new range: {weights.min(dim=-1).values} - {weights.max(dim=-1).values}")
             # Prune the very low weights:
             weights = torch.where(
                 weights > weights_threshold, weights, torch.zeros_like(weights)
             )
-            # print(f"Pruned weights range: {weights.min()} - {weights.max()}")
-            # print(
-            # f"distances range: {distances[this_anchor_indices].min()} - {distances[this_anchor_indices].max()}"
-            # )
-            distances[this_anchor_indices] = (
-                distances[this_anchor_indices] * weights[..., None].detach()
+            # 4. Compute the weighted sum of the distances as the loss.
+            distances[:, this_anchor_indices] = (
+                distances[:, this_anchor_indices] * weights[..., None].detach()
             )
-            # ========= Penalize for mesh penetration =========
-            # The idea is that, for fingertips (i.e. anchor 0-15), the neighbourhood vertices
-            # should have the same dot product with the object normals as the parenting phalanges.
-            # TODO
-            # print(
-            # f"distances new range: {distances[this_anchor_indices].min()} - {distances[this_anchor_indices].max()}"
-            # )
-        # 4. Compute the weighted sum of the distances as the loss.
-        # print(f"distances: {distances.shape}")
-        # print(f"distances range: {distances.min()} - {distances.max()}")
-        # print(
-        # f"distances above 5mm: {torch.where(distances > 0.005, 1.0, 0.0).sum().item()}"
-        # )
 
         # ========= Regularization =========
         # 5. Penalize penetration of the hand into the object.
@@ -490,7 +494,6 @@ class ContactsFittingLoss(torch.nn.Module):
                 obj_normals[nearest_normal_indices, :3],
                 obj_normals[nearest_normal_indices, 3:],
             )
-            # print(f"nearest_normals: {nearest_normals.shape}. verts - tgt_obj_pts: {(verts - tgt_obj_pts).shape}")
             # Shift the nearest normal roots 2mm inwards to avoid penalizing for the hand being
             # in direct contact with the object.
             nearest_normal_roots = nearest_normal_roots - 0.002 * nearest_normals
@@ -500,7 +503,6 @@ class ContactsFittingLoss(torch.nn.Module):
             # A negative dot product means the hand is penetrating the object. We allow a small
             # tolerance of 2mm as per the above shift.
             penetration_loss = (torch.nn.functional.relu(-dot_products)).mean()
-        # if obj_normals is not None:
         # A simpler approach is to strongly penalize for a hand-to-object distance being below
         # 2mm, without any penalization above 1mm.
         # penetration_loss = (torch.nn.functional.relu(0.001 - distances) ** 2).mean()

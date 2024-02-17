@@ -42,7 +42,7 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
-    visualize_CHOIR,
+    visualize_CHOIR_prediction,
     visualize_hand_contacts_from_3D_gaussians,
 )
 
@@ -747,20 +747,20 @@ class ContactPoseDataset(BaseDataset):
                             print(
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
-                            visualize_CHOIR(
-                                # choir.squeeze(0),
-                                gt_choir.squeeze(0),
-                                self._bps,
-                                self._anchor_indices,
-                                scalar,
-                                gt_verts.squeeze(0),
-                                gt_anchors.squeeze(0),
-                                obj_mesh,
-                                obj_ptcld,
-                                gt_rescaled_ref_pts.squeeze(0),
-                                affine_mano,
-                                use_deltas=self._use_deltas,
-                            )
+                            # visualize_CHOIR(
+                            # # choir.squeeze(0),
+                            # gt_choir.squeeze(0),
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # gt_verts.squeeze(0),
+                            # gt_anchors.squeeze(0),
+                            # obj_mesh,
+                            # obj_ptcld,
+                            # gt_rescaled_ref_pts.squeeze(0),
+                            # affine_mano,
+                            # use_deltas=self._use_deltas,
+                            # )
                             # faces = affine_mano.faces
                             # gt_MANO_mesh = Trimesh(
                             # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
@@ -948,29 +948,29 @@ class ContactPoseDataset(BaseDataset):
                             # plot_choir=False,
                             # )
 
-                            # visualize_CHOIR_prediction(
-                            # choir,
-                            # gt_choir,
-                            # self._bps,
-                            # self._anchor_indices,
-                            # gt_scalar,
-                            # gt_scalar,
-                            # gt_rescaled_ref_pts,
-                            # gt_rescaled_ref_pts,
-                            # gt_verts,
-                            # gt_joints,
-                            # gt_anchors,
-                            # contact_gaussians=choleksy_gaussian_params,
-                            # obj_pts=obj_ptcld.float(),
-                            # obj_normals=obj_vert_normals,
-                            # is_rhand=(hand_idx == "right"),
-                            # use_smplx=False,
-                            # dataset="ContactPose",
-                            # remap_bps_distances=self._remap_bps_distances,
-                            # exponential_map_w=self._exponential_map_w,
-                            # use_deltas=self._use_deltas,
-                            # plot_choir=False,
-                            # )
+                            visualize_CHOIR_prediction(
+                                choir,
+                                gt_choir,
+                                self._bps,
+                                self._anchor_indices,
+                                gt_scalar,
+                                gt_scalar,
+                                gt_rescaled_ref_pts,
+                                gt_rescaled_ref_pts,
+                                gt_verts,
+                                gt_joints,
+                                gt_anchors,
+                                contact_gaussians=choleksy_gaussian_params,
+                                obj_pts=obj_ptcld.float(),
+                                obj_normals=obj_vert_normals,
+                                is_rhand=(hand_idx == "right"),
+                                use_smplx=False,
+                                dataset="ContactPose",
+                                remap_bps_distances=self._remap_bps_distances,
+                                exponential_map_w=self._exponential_map_w,
+                                use_deltas=self._use_deltas,
+                                plot_choir=False,
+                            )
                             # ==============================
                             # ==============================
                             has_visualized = True
