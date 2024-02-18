@@ -95,4 +95,5 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
         y_hat = self._model(**kwargs)
         losses = self._training_loss(None, None, y_hat)
         loss = sum([v for v in losses.values()])
+        losses["contacts_mse"] /= self._training_loss.contacts_weight
         return loss, losses
