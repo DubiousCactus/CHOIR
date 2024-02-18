@@ -35,6 +35,7 @@ from model.baseline import BaselineModel
 from model.diffusion_model import (
     BPSDiffusionModel,
     ContactsBPSDiffusionModel,
+    KPContactsDiffusionModel,
     KPDiffusionModel,
 )
 from src.base_tester import BaseTester
@@ -259,6 +260,23 @@ model_store(
     name="kp_ddpm",
 )
 
+model_store(
+    pbuilds(
+        KPContactsDiffusionModel,
+        backbone="mlp_resnet",
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        n_hand_keypoints=21 + 32,  # 21 MANO joints + 32 contact anchors
+        n_obj_keypoints=MISSING,
+        temporal_dim=256,
+        y_embed_dim=256,
+        y_input_keypoints=MISSING,
+        object_in_encoder=False,
+        skip_connections=True,
+    ),
+    name="kp_coddpm",
+)
 " ================== Losses ================== "
 
 
@@ -593,6 +611,48 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="baseline_cddpm_3d_multiview_contactopt",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "kp_coddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_baseline_multiview"},
+            {"override /tester": "ddpm_baseline_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,  # We won't exploit it but then it's a fairer comparison
+            bps_dim=16**3,  # 4096 points, as used in the PointNet++ paper
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            n_obj_keypoints=4096,  # 1024 points taken from the object point cloud's target points of the BPS representation
+            y_input_keypoints=4096
+            + 21
+            + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
+            y_embed_dim=256,
+            object_in_encoder=False,
+            skip_connections=True,
+        ),
+        run=dict(
+            conditional=True,
+            full_choir=False,
+            model_contacts=True,  # Must be equal to object_in_encoder!
+        ),  # We can reuse the "full_choir" flag for "hand_object_pair"
+        bases=(Experiment,),
+    ),
+    name="baseline_coddpm_3d_multiview_contactopt",
 )
 experiment_store(
     make_config(

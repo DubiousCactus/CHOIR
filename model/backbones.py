@@ -140,6 +140,82 @@ class MLPResNetBackboneModel(torch.nn.Module):
         return x6.view(output_shape)
 
 
+class ContactMLPResNetBackboneModel(torch.nn.Module):
+    def __init__(
+        self,
+        time_encoder: torch.nn.Module,
+        input_dim: int,
+        output_dim_hand: int,
+        temporal_dim: int,
+        contact_dim: int,
+        hidden_dim: int = 1024,
+        context_dim: Optional[int] = None,
+        skip_connections: bool = False,
+    ):
+        super().__init__()
+        self.skip_connections = skip_connections
+        self.input_dim = input_dim
+        self.time_encoder = time_encoder
+        self.time_mlp = torch.nn.Sequential(
+            torch.nn.Linear(temporal_dim, temporal_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(temporal_dim, temporal_dim),
+        )
+        self.input_layer = torch.nn.Sequential(
+            torch.nn.Linear(
+                input_dim + contact_dim,
+                hidden_dim,
+            ),
+            torch.nn.GroupNorm(32, hidden_dim),
+            torch.nn.SiLU(),
+        )
+        temporal_res_block = partial(
+            TemporalResBlock,
+            dim_in=hidden_dim,
+            dim_out=hidden_dim,
+            n_norm_groups=32,
+            temporal_dim=temporal_dim,
+            y_dim=context_dim,
+        )
+        self.block_1 = temporal_res_block()
+        self.block_2 = temporal_res_block()
+        self.block_3 = temporal_res_block()
+        self.block_4 = temporal_res_block()
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim_hand + contact_dim)
+        self.output_dim_hand = output_dim_hand
+
+    def set_anchor_indices(self, anchor_indices: torch.Tensor):
+        pass
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        contacts: torch.Tensor,
+        t: torch.Tensor,
+        y: Optional[torch.Tensor] = None,
+        debug=False,
+    ) -> torch.Tensor:
+        input_shape_x, input_shape_contacts = x.shape, contacts.shape
+        bs, ctx_len = x.shape[0], (x.shape[1] if len(x.shape) == 4 else 1)
+        t = t.view(bs * ctx_len, -1)
+        x = torch.cat(
+            (x.view(bs * ctx_len, -1), contacts.view(bs * ctx_len, -1)), dim=1
+        )
+        time_embed = self.time_mlp(self.time_encoder(t))
+        x1 = self.input_layer(x)
+        x2 = self.block_1(x1, t_emb=time_embed, y_emb=y, debug=debug)
+        x3 = self.block_2(x2, t_emb=time_embed, y_emb=y, debug=debug)
+        x4 = self.block_3(x3, t_emb=time_embed, y_emb=y, debug=debug)
+        x5 = self.block_4(x4, t_emb=time_embed, y_emb=y, debug=debug)
+        if self.skip_connections:
+            x5 = x2 + x5
+        # x5 = x4
+        x6 = self.output_layer(x5)
+        kp, contacts = x6[:, : self.output_dim_hand], x6[:, self.output_dim_hand :]
+        kp_shape = (*input_shape_x[:-2], self.output_dim_hand // 3, 3)
+        return kp.view(kp_shape), contacts
+
+
 class PointNet2EncoderModel(torch.nn.Module):
     def __init__(
         self,

@@ -147,7 +147,7 @@ def compute_solid_intersection_volume(
     # TODO: This PoC works, but I need to make sure that the object mesh is always in its
     # canonical position in the test set! This might be the case for ContactPose, but probably
     # not for GRAB.
-    # TODO: Multithread this?
+    # TODO: Multithread/process this?
     # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
     intersection_volumes = []
     obj_voxels = {}

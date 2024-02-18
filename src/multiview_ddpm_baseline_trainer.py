@@ -12,6 +12,7 @@ import torch
 
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from utils import to_cuda
+from utils.dataset import fetch_gaussian_params_from_CHOIR
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
@@ -61,8 +62,7 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, _ = batch
-        y_hat = self._model(
-            # Take the last frame
+        x = (
             torch.cat(
                 (
                     labels["rescaled_ref_pts"][:, -1],
@@ -72,14 +72,27 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
                 dim=-2,  # Concat along the keypoints and not their dimensionality
             )
             if self._full_choir  # full_hand_object_pair
-            else torch.cat((labels["joints"][:, -1], labels["anchors"][:, -1]), dim=-2),
+            else torch.cat((labels["joints"][:, -1], labels["anchors"][:, -1]), dim=-2)
+        )
+        y = (
             torch.cat(
                 (samples["rescaled_ref_pts"], samples["joints"], samples["anchors"]),
                 dim=-2,
             )
             if self.conditional
-            else None,
-        )  # Only the hand distances!
+            else None
+        )
+        kwargs = {"x": x, "y": y}
+        if self._model_contacts:
+            kwargs["contacts"] = fetch_gaussian_params_from_CHOIR(
+                labels["choir"].squeeze(1),
+                self._train_loader.dataset.anchor_indices,
+                n_repeats=self._train_loader.dataset.bps_dim // 32,
+                n_anchors=32,
+                choir_includes_obj=True,
+            )[:, :, 0].squeeze(1)
+
+        y_hat = self._model(**kwargs)
         losses = self._training_loss(None, None, y_hat)
         loss = sum([v for v in losses.values()])
         return loss, losses

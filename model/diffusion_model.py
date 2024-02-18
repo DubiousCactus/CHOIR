@@ -17,6 +17,7 @@ import torch
 from tqdm import tqdm
 
 from model.backbones import (
+    ContactMLPResNetBackboneModel,
     ContactUNetBackboneModel,
     MLPResNetBackboneModel,
     MLPResNetEncoderModel,
@@ -204,7 +205,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         )
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
-        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat_udf, eps_hat_contacts = self.backbone(
             torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
             if self.object_in_encoder
@@ -562,7 +562,6 @@ class BPSDiffusionModel(torch.nn.Module):
             obj_bps = x[..., 0][..., None]
             x = x[..., 1:][..., None]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
-        # print(f"eps.shape: {eps.shape}")
         # 3. Diffuse the image
         batched_alpha = self.alpha[t]
         diffused_x = (
@@ -572,12 +571,9 @@ class BPSDiffusionModel(torch.nn.Module):
         if self.embed_full_choir:
             # Fuse back the full choir: object_bps + diffused_hand_bps
             diffused_x = torch.cat([obj_bps, diffused_x], dim=-1)
-        # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
-        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(diffused_x, t, y_embed, debug=True)
-        # print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -824,17 +820,14 @@ class KPDiffusionModel(torch.nn.Module):
             obj_kpts = x[..., : self.n_obj_keypoints, :]
             x = x[..., self.n_obj_keypoints :, :]
         eps = torch.randn_like(x).to(x.device).requires_grad_(False)
-        # print(f"eps.shape: {eps.shape}")
         # 3. Diffuse the image
         batched_alpha = self.alpha[t]
         diffused_x = (
             torch.sqrt(batched_alpha)[..., None] * x
             + torch.sqrt(1 - batched_alpha)[..., None] * eps
         )
-        # print(f"diffused_x.shape: {diffused_x.shape}")
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
-        # print(f"Y embed shape: {y_embed.shape if y_embed is not None else None}")
         eps_hat = self.backbone(
             torch.cat([obj_kpts, diffused_x], dim=-2)
             if self.object_in_encoder
@@ -843,8 +836,281 @@ class KPDiffusionModel(torch.nn.Module):
             y_embed,
             debug=False,
         )
-        # print(f"eps_hat.shape: {eps_hat.shape}")
         return eps_hat, eps
+
+    def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
+        def make_t_batched(
+            t: int, n: int, y_embed: Optional[torch.Tensor]
+        ) -> torch.Tensor:
+            if y_embed is None:
+                t_batch = torch.tensor(t).view(1, 1).repeat(n, 1).to(device)
+            else:
+                t_batch = (
+                    torch.tensor(t)
+                    .view(1, 1, 1)
+                    .repeat(y_embed.shape[0], n, 1)
+                    .to(device)
+                )
+            return t_batch
+
+        # ==== Preprocessing ====
+        if y is not None:
+            y[..., : self.n_obj_keypoints, :] = self._standardize(
+                y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
+            )
+            y[..., self.n_obj_keypoints :, :] = self._standardize(
+                y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
+            )
+        # ===== Inference =======
+        if self.object_in_encoder:
+            # TODO: This is a hack. In the future the object will always be in y I think
+            obj_kpts = y[..., : self.n_obj_keypoints, :]
+            assert (
+                obj_kpts is not None
+            ), "Must provide obj_kpts when object_in_encoder is True"
+        assert self._input_shape is not None, "Must call forward first"
+        with torch.no_grad():
+            device = next(self.parameters()).device
+            y_embed = self.embedder(y) if y is not None else None
+            z_current = torch.randn(n, *self._input_shape).to(device)
+            if y_embed is not None:
+                z_current = z_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
+            _in_shape = z_current.shape
+            pbar = tqdm(total=self.time_steps, desc="Generating")
+            for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
+                eps_hat = self.backbone(
+                    torch.cat([obj_kpts, z_current], dim=-2)
+                    if self.object_in_encoder
+                    else z_current,
+                    make_t_batched(t, n, y_embed),
+                    y_embed,
+                )
+                z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
+                    self.beta[t]
+                    / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                ) * eps_hat
+                eps = torch.randn_like(z_current)
+                z_current = z_prev_hat + eps * self.sigma[t]
+                pbar.update()
+            # Now for z_0:
+            eps_hat = self.backbone(
+                torch.cat([obj_kpts, z_current], dim=-2)
+                if self.object_in_encoder
+                else z_current,
+                make_t_batched(t, n, y_embed),
+                y_embed,
+            )
+            x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
+                self.beta[0]
+                / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+            ) * eps_hat
+            pbar.update()
+            pbar.close()
+            # ====== Postprocessing ======
+            output = x_hat.view(*_in_shape)
+            output = self._destandardize(output, self.x_hand_mean, self.x_hand_std)
+            return output
+
+
+class KPContactsDiffusionModel(torch.nn.Module):
+    def __init__(
+        self,
+        backbone: str,
+        time_steps: int,
+        beta_1: float,
+        beta_T: float,
+        n_hand_keypoints: int,  # Will be x3 for x,y,z
+        n_obj_keypoints: int,  # Will be x3 for x,y,z
+        temporal_dim: int,
+        y_input_keypoints: Optional[int] = None,  # Will be x3 for x,y,z
+        y_embed_dim: Optional[int] = None,
+        object_in_encoder: bool = False,
+        skip_connections: bool = False,
+    ):
+        super().__init__()
+        self.object_in_encoder = object_in_encoder
+        self.n_obj_keypoints = n_obj_keypoints if object_in_encoder else 0
+        # TODO: Move all this crap to config (god I'm lazy to do that)
+        backbones = {
+            "mlp_resnet": (
+                partial(
+                    ContactMLPResNetBackboneModel,
+                    input_dim=(
+                        n_hand_keypoints
+                        + (self.n_obj_keypoints if object_in_encoder else 0)
+                    )
+                    * 3,
+                    output_dim_hand=n_hand_keypoints * 3,
+                    hidden_dim=1024,
+                    contact_dim=32 * 9,
+                    context_dim=y_embed_dim,
+                    skip_connections=skip_connections,
+                ),
+                partial(
+                    MLPResNetEncoderModel,
+                    input_dim=y_input_keypoints * 3,
+                    hidden_dim=2048,
+                    embed_dim=y_embed_dim,
+                )
+                if (y_embed_dim is not None and y_input_keypoints is not None)
+                else None,
+            ),
+            "mlp_resnet_w_pointnet2": (
+                partial(
+                    MLPResNetBackboneModel,
+                    input_dim=(
+                        n_hand_keypoints
+                        + (self.n_obj_keypoints if object_in_encoder else 0)
+                    )
+                    * 3,
+                    output_dim=n_hand_keypoints * 3,
+                    hidden_dim=512,
+                    context_dim=y_embed_dim,
+                    skip_connections=skip_connections,
+                ),
+                partial(
+                    PointNet2EncoderModel,
+                    input_points=y_input_keypoints,
+                    embed_dim=y_embed_dim,
+                )
+                if (y_embed_dim is not None and y_input_keypoints is not None)
+                else None,
+            ),
+        }
+        assert backbone in backbones, f"Unknown backbone {backbone}"
+        self.backbone = backbones[backbone][0](
+            time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
+            temporal_dim=temporal_dim,
+        )
+        self.embedder = (
+            backbones[backbone][1]()
+            if (y_embed_dim is not None and y_input_keypoints is not None)
+            else None
+        )
+        self.time_steps = time_steps
+        self.beta = torch.nn.Parameter(
+            torch.linspace(beta_1, beta_T, time_steps), requires_grad=False
+        )
+        self.alpha = torch.nn.Parameter(
+            torch.exp(
+                torch.tril(torch.ones((time_steps, time_steps)))
+                @ torch.log(1 - self.beta)
+            ),
+            requires_grad=False,
+        )
+        self.sigma = torch.nn.Parameter(torch.sqrt(self.beta), requires_grad=False)
+        assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
+        assert not (self.alpha < 0).any(), "Alphas contain neg"
+        self._input_shape, self._input_contacts_shape = None, None
+        self.x_hand_mean, self.x_obj_mean, self.x_hand_std, self.x_obj_std = (
+            None,
+            None,
+            None,
+            None,
+        )
+        self.y_hand_mean, self.y_obj_mean, self.y_hand_std, self.y_obj_std = (
+            None,
+            None,
+            None,
+            None,
+        )
+        self.x_contacts_mean, self.x_contacts_std = None, None
+
+    def set_dataset_stats(
+        self,
+        dataset: torch.utils.data.Dataset,
+    ) -> None:
+        self.x_hand_mean, self.x_obj_mean, self.x_hand_std, self.x_obj_std = (
+            dataset.gt_kp_hand_mean,
+            dataset.gt_kp_obj_mean,
+            dataset.gt_kp_hand_std,
+            dataset.gt_kp_obj_std,
+        )
+        self.x_contacts_mean, self.x_contacts_std = (
+            dataset.contacts_mean,
+            dataset.contacts_std,
+        )
+        self.y_hand_mean, self.y_obj_mean, self.y_hand_std, self.y_obj_std = (
+            dataset.noisy_kp_hand_mean,
+            dataset.noisy_kp_obj_mean,
+            dataset.noisy_kp_hand_std,
+            dataset.noisy_kp_obj_std,
+        )
+
+    def _standardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return (x - mean.to(x.device)) / std.to(x.device)
+
+    def _destandardize(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        return x * std.to(x.device) + mean.to(x.device)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        contacts: torch.Tensor,
+        y: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self._input_shape is None:
+            self._input_shape = x.shape[1:]
+        assert self.x_hand_mean is not None, "Must call set_dataset_stats first"
+        if self.object_in_encoder:
+            x[..., : self.n_obj_keypoints, :] = self._standardize(
+                x[..., : self.n_obj_keypoints, :], self.x_obj_mean, self.x_obj_std
+            )
+            x[..., self.n_obj_keypoints :, :] = self._standardize(
+                (x[..., self.n_obj_keypoints :, :], self.x_hand_mean, self.x_hand_std)
+            )
+        else:
+            x = self._standardize(x, self.x_hand_mean, self.x_hand_std)
+        y[..., : self.n_obj_keypoints, :] = self._standardize(
+            y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
+        )
+        y[..., self.n_obj_keypoints :, :] = self._standardize(
+            y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
+        )
+        contacts = self._standardize(
+            contacts, self.x_contacts_mean, self.x_contacts_std
+        )
+        contacts = contacts.reshape(-1, 32 * 9)
+        if self._input_contacts_shape is None:
+            self._input_contacts_shape = contacts.shape[1:]
+        # ===== Training =========
+        # 1. Sample timestep t with shape (B, 1)
+        t = (
+            torch.randint(0, self.time_steps, (x.shape[0], 1))
+            .to(x.device)
+            .requires_grad_(False)
+        )
+        # 2. Sample the noise with shape x.shape
+        if self.object_in_encoder:
+            obj_kpts = x[..., : self.n_obj_keypoints, :]
+            x = x[..., self.n_obj_keypoints :, :]
+        eps_x, eps_contacts = torch.randn_like(x).to(x.device).requires_grad_(
+            False
+        ), torch.randn_like(contacts).to(x.device).requires_grad_(False)
+        # 3. Diffuse the image
+        batched_alpha = self.alpha[t]
+        diffused_x, diffused_contacts = (
+            torch.sqrt(batched_alpha)[..., None] * x
+            + torch.sqrt(1 - batched_alpha)[..., None] * eps_x
+        ), torch.sqrt(batched_alpha) * contacts + torch.sqrt(
+            1 - batched_alpha
+        ) * eps_contacts
+        # 4. Predict the noise sample
+        y_embed = self.embedder(y) if y is not None else None
+        eps_hat_x, eps_hat_contacts = self.backbone(
+            torch.cat([obj_kpts, diffused_x], dim=-2)
+            if self.object_in_encoder
+            else diffused_x,
+            diffused_contacts,
+            t,
+            y_embed,
+            debug=False,
+        )
+        return {"udf": (eps_hat_x, eps_x), "contacts": (eps_hat_contacts, eps_contacts)}
 
     def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
         def make_t_batched(
