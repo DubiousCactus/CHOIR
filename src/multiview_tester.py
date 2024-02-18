@@ -261,30 +261,31 @@ class MultiViewTester(MultiViewTrainer):
                         None,
                     )
                     if contacts_pred is not None:
-                        N_PTS_ON_MESH = 3000
+                        N_PTS_ON_MESH, N_NORMALS = 3000, 6000
                         # Sample points from the object mesh:
                         # TODO: Refactor that because we're doing it again below for contact
                         # coverage!
                         obj_points, obj_normals = [], []
                         for path in mesh_pths:
                             obj_mesh = object_meshes[path]
-                            # TODO: Use a subset of the object vertices/normals with random
-                            # sampling, to avoid memory issues.
-                            obj_normals.append(
-                                to_cuda_(
-                                    torch.cat(
-                                        (
-                                            torch.from_numpy(
-                                                np.asarray(obj_mesh.vertices)
-                                            ).type(dtype=torch.float32),
-                                            torch.from_numpy(
-                                                np.asarray(obj_mesh.vertex_normals)
-                                            ).type(dtype=torch.float32),
-                                        ),
-                                        dim=-1,
-                                    )
+                            normals_w_roots = to_cuda_(
+                                torch.cat(
+                                    (
+                                        torch.from_numpy(
+                                            np.asarray(obj_mesh.vertices)
+                                        ).type(dtype=torch.float32),
+                                        torch.from_numpy(
+                                            np.asarray(obj_mesh.vertex_normals)
+                                        ).type(dtype=torch.float32),
+                                    ),
+                                    dim=-1,
                                 )
                             )
+                            random_indices = torch.randperm(normals_w_roots.shape[0])[
+                                :N_NORMALS
+                            ]
+                            normals_w_roots = normals_w_roots[random_indices]
+                            obj_normals.append(normals_w_roots)
                             obj_points.append(
                                 to_cuda_(
                                     torch.from_numpy(
