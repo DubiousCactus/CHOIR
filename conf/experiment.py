@@ -406,6 +406,7 @@ class RunConfig:
     full_choir: bool = False
     disable_grad: bool = False
     model_contacts: bool = False
+    use_ema: bool = False
     # RunConfig was never meant to be soiled like this :'(
 
 

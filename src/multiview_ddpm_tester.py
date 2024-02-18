@@ -23,6 +23,7 @@ class MultiViewDDPMTester(MultiViewTester):
         self._full_choir = kwargs.get("full_choir", False)
         self._use_deltas = self._data_loader.dataset.use_deltas
         self._model_contacts = kwargs.get("model_contacts", False)
+        self._use_ema = kwargs.get("use_ema", False)
         if self._model_contacts:
             self._model.backbone.set_anchor_indices(
                 self._data_loader.dataset.anchor_indices
@@ -98,7 +99,8 @@ class MultiViewDDPMTester(MultiViewTester):
             torch.Tensor: The loss for the batch.
         """
         max_observations = max_observations or samples["choir"].shape[1]
-        udf, contacts = self._model.generate(
+        model = self._ema.ema_model if self._use_ema else self._model
+        udf, contacts = model.generate(
             1,
             y=samples["choir"][:, :max_observations] if self.conditional else None,
         )
