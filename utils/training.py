@@ -156,7 +156,7 @@ def optimize_pose_pca_from_choir(
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
-        contact_loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
+        anchor_loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
         shape_regularizer = (
             beta_w * torch.norm(beta) ** 2
         )  # Encourage the shape parameters to remain close to 0
@@ -166,18 +166,18 @@ def optimize_pose_pca_from_choir(
             )  # Shape prior
 
         proc_bar.set_description(
-            f"Anchors loss: {contact_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+            f"Anchors loss: {anchor_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
         if (
-            torch.abs(prev_loss - contact_loss.detach().type(torch.float32))
+            torch.abs(prev_loss - anchor_loss.detach().type(torch.float32))
             <= loss_thresh
         ):
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = contact_loss.detach().type(torch.float32)
-        contact_loss = contact_loss + shape_regularizer + pose_regularizer
-        contact_loss.backward()
+        prev_loss = anchor_loss.detach().type(torch.float32)
+        anchor_loss = anchor_loss + shape_regularizer + pose_regularizer
+        anchor_loss.backward()
         optimizer.step()
         scheduler.step()
         if plateau_cnt >= 10:
@@ -246,7 +246,8 @@ def optimize_pose_pca_from_choir(
             + f"/ Pose reg: {pose_regularizer.item():.8f} / Abs. pose reg: {abs_pose_regularizer.item():.8f}"
         )
         if (
-            torch.abs(prev_loss - contact_loss.detach().type(torch.float32)) <= 1e-4
+            torch.abs(prev_loss - contact_loss.detach().type(torch.float32))
+            <= loss_thresh
             and enable_penetration_loss
         ):
             plateau_cnt += 1

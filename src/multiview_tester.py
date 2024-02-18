@@ -268,6 +268,8 @@ class MultiViewTester(MultiViewTrainer):
                         obj_points, obj_normals = [], []
                         for path in mesh_pths:
                             obj_mesh = object_meshes[path]
+                            # TODO: Use a subset of the object vertices/normals with random
+                            # sampling, to avoid memory issues.
                             obj_normals.append(
                                 to_cuda_(
                                     torch.cat(
@@ -317,7 +319,7 @@ class MultiViewTester(MultiViewTrainer):
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
                         max_iterations=2000,
-                        loss_thresh=1e-6,
+                        loss_thresh=1e-7,
                         lr=8e-2,
                         is_rhand=samples["is_rhand"],
                         use_smplx=use_smplx,
