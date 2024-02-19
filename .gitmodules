@@ -16,3 +16,6 @@
 [submodule "vendor/Pointnet_Pointnet2_pytorch"]
 	path = vendor/Pointnet_Pointnet2_pytorch
 	url = https://github.com/yanx27/Pointnet_Pointnet2_pytorch/
+[submodule "vendor/OakInk"]
+	path = vendor/OakInk
+	url = https://github.com/oakink/OakInk
