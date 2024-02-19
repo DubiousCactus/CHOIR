@@ -114,7 +114,7 @@ def optimize_pose_pca_from_choir(
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
     else:
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
-    proc_bar = tqdm.tqdm(range(20))
+    proc_bar = tqdm.tqdm(range(max_iterations))
 
     prev_loss = float("inf")
 
