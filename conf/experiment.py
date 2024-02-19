@@ -236,6 +236,7 @@ model_store(
         object_in_encoder=False,
         contacts_hidden_dim=2048,
         contacts_skip_connections=False,
+        input_normalization="standard",
     ),
     name="contact_bps_ddpm",
 )

@@ -40,6 +40,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         beta_T: float,
         bps_dim: int,
         temporal_dim: int,
+        input_normalization: str = "standard",
         use_backbone_self_attn: bool = False,
         use_encoder_self_attn: bool = False,
         object_in_encoder: bool = False,
@@ -49,6 +50,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         context_channels: Optional[int] = None,
     ):
         super().__init__()
+        assert input_normalization in ["standard", "scale"], "Unknown normalization"
         y_dim = (bps_dim * 2) if y_embed_dim is not None else None
         bps_grid_len = round(bps_dim ** (1 / 3))
         # TODO: Move all this crap to config (god I'm lazy to do that)
@@ -82,6 +84,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
+        self.input_normalization = input_normalization
         self.object_in_encoder = object_in_encoder
         self.use_contacts = "contact" in backbone
         self.backbone = backbones[backbone][0](
@@ -132,12 +135,18 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
     def _standardize(
         self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
     ) -> torch.Tensor:
-        return (x - mean.to(x.device)) / std.to(x.device)
+        if self.input_normalization == "standard":
+            return (x - mean.to(x.device)) / std.to(x.device)
+        elif self.input_normalization == "scale":
+            return 2 * x - 1
 
     def _destandardize(
         self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
     ) -> torch.Tensor:
-        return x * std.to(x.device) + mean.to(x.device)
+        if self.input_normalization == "standard":
+            return x * std.to(x.device) + mean.to(x.device)
+        elif self.input_normalization == "scale":
+            return (x + 1) / 2
 
     def forward(
         self,
