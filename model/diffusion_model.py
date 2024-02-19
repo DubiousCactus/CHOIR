@@ -133,19 +133,29 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self.y_udf_mean, self.y_udf_std = dataset.noisy_udf_mean, dataset.noisy_udf_std
 
     def _standardize(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+        self,
+        x: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        input_norm: Optional[str] = None,
     ) -> torch.Tensor:
-        if self.input_normalization == "standard":
+        _input_norm = input_norm or self.input_normalization
+        if _input_norm == "standard":
             return (x - mean.to(x.device)) / std.to(x.device)
-        elif self.input_normalization == "scale":
+        elif _input_norm == "scale":
             return 2 * x - 1
 
     def _destandardize(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+        self,
+        x: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        input_norm: Optional[str] = None,
     ) -> torch.Tensor:
-        if self.input_normalization == "standard":
+        _input_norm = input_norm or self.input_normalization
+        if _input_norm == "standard":
             return x * std.to(x.device) + mean.to(x.device)
-        elif self.input_normalization == "scale":
+        elif _input_norm == "scale":
             return (x + 1) / 2
 
     def forward(
@@ -159,7 +169,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
             if self.use_contacts:
                 x[..., 2:] = self._standardize(
-                    x[..., 2:], self.x_contacts_mean, self.x_contacts_std
+                    x[..., 2:],
+                    self.x_contacts_mean,
+                    self.x_contacts_std,
+                    input_norm="standard",
                 )
         else:
             x[..., 0] = self._standardize(
@@ -167,7 +180,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             )
             if self.use_contacts:
                 x[..., 1:] = self._standardize(
-                    x[..., 1:], self.x_contacts_mean, self.x_contacts_std
+                    x[..., 1:],
+                    self.x_contacts_mean,
+                    self.x_contacts_std,
+                    input_norm="standard",
                 )
         y = (
             self._standardize(y, self.y_udf_mean, self.y_udf_std)
@@ -278,7 +294,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 z_contacts_current.shape,
             )
             pbar = tqdm(total=self.time_steps, desc="Generating")
-            for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
+            for t in range(5, 0, -1):  # Reversed from T to 1
                 eps_hat_udf, eps_hat_contacts = self.backbone(
                     torch.cat((object_udf, z_udf_current), dim=-1)
                     if self.object_in_encoder
@@ -338,7 +354,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 x_hat_udf, self.x_udf_mean[1], self.x_udf_std[1]
             )
             x_hat_contacts = self._destandardize(
-                x_hat_contacts, self.x_contacts_mean, self.x_contacts_std
+                x_hat_contacts,
+                self.x_contacts_mean,
+                self.x_contacts_std,
+                input_norm="standard",
             )
             x_hat_udf = torch.clamp(x_hat_udf, 1e-5, 1 - 1e-5)
             # Clamp the Gaussian means to have a maximum norm of 20mm:

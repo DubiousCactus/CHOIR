@@ -23,6 +23,7 @@ class MultiViewDDPMTester(MultiViewTester):
         self._full_choir = kwargs.get("full_choir", False)
         self._use_deltas = self._data_loader.dataset.use_deltas
         self._model_contacts = kwargs.get("model_contacts", False)
+        self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._use_ema = kwargs.get("use_ema", False)
         if self._model_contacts:
             self._model.backbone.set_anchor_indices(

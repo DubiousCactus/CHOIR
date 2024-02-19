@@ -95,6 +95,7 @@ class MultiViewTester(MultiViewTrainer):
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
+        self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -260,7 +261,7 @@ class MultiViewTester(MultiViewTrainer):
                         None,
                         None,
                     )
-                    if contacts_pred is not None:
+                    if self._enable_contacts_tto and contacts_pred is not None:
                         N_PTS_ON_MESH, N_NORMALS = 3000, 6000
                         # Sample points from the object mesh:
                         # TODO: Refactor that because we're doing it again below for contact
@@ -299,9 +300,6 @@ class MultiViewTester(MultiViewTrainer):
                             )
                         obj_points = torch.stack(obj_points, dim=0)
                         obj_normals = torch.stack(obj_normals, dim=0)
-                    print(
-                        f"contacts: {contacts_pred.shape}, obj_points: {obj_points.shape}, obj_normals: {obj_normals.shape}"
-                    )
 
                     (
                         _,
@@ -313,7 +311,9 @@ class MultiViewTester(MultiViewTrainer):
                         joints_pred,
                     ) = optimize_pose_pca_from_choir(
                         y_hat["choir"],
-                        contact_gaussians=contacts_pred,
+                        contact_gaussians=contacts_pred
+                        if self._enable_contacts_tto
+                        else None,
                         obj_pts=obj_points,
                         obj_normals=obj_normals,
                         bps=self._bps,
