@@ -400,7 +400,9 @@ class MultiViewTester(MultiViewTrainer):
                         trimesh.sample.sample_surface(pred_hand_mesh, N_PTS_ON_MESH)[0]
                     ).float()
                 )
-                dists = torch.cdist(hand_points, obj_points)  # (N, N)
+                dists = torch.cdist(
+                    hand_points, obj_points.to(obj_points.device)
+                )  # (N, N)
                 dists = dists.min(
                     dim=1
                 ).values  # (N): distance of each hand point to the closest object point
