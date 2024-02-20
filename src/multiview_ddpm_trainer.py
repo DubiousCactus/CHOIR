@@ -32,7 +32,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             self._model,
             beta=0.9999,
             update_after_step=100,
-            update_every=100,
+            update_every=10,
             power=3 / 4,
         )
         self.minimize_metric = "ema"
