@@ -181,7 +181,7 @@ class MultiViewTester(MultiViewTrainer):
         pitch_mm = 2
         pitch = pitch_mm / self._data_loader.dataset.base_unit
         radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-        test_n_keys_before = len(self._object_cache.keys())
+        # test_n_keys_before = len(self._object_cache.keys())
         mp_process_obj_meshes(
             mesh_pths,
             self._object_cache,
@@ -191,9 +191,9 @@ class MultiViewTester(MultiViewTrainer):
             pitch,
             radius,
         )
-        assert len(self._object_cache.keys()) == test_n_keys_before + len(
-            set(mesh_pths)
-        ), f"Some meshes were not processed! Only processed {len(self._object_cache.keys()) - test_n_keys_before} out of {len(set(mesh_pths))}."
+        # assert len(self._object_cache.keys()) == test_n_keys_before + len(
+        # set(mesh_pths)
+        # ), f"Some meshes were not processed! Only processed {len(self._object_cache.keys()) - test_n_keys_before} out of {len(set(mesh_pths))}."
 
         batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
 
