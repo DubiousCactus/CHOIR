@@ -33,8 +33,8 @@ from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.testing import (
     compute_mpjpe,
-    compute_solid_intersection_volume,
     make_batch_of_obj_data,
+    mp_compute_solid_intersection_volume,
     mp_process_obj_meshes,
 )
 from utils.training import (
@@ -373,7 +373,7 @@ class MultiViewTester(MultiViewTrainer):
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             intersection_volume = torch.zeros(1)
             if self._compute_iv:
-                intersection_volume = compute_solid_intersection_volume(
+                intersection_volume = mp_compute_solid_intersection_volume(
                     pitch,
                     radius,
                     [self._object_cache[path]["voxel"] for path in mesh_pths],
@@ -401,7 +401,7 @@ class MultiViewTester(MultiViewTrainer):
                     ).float()
                 )
                 dists = torch.cdist(
-                    hand_points, obj_points.to(obj_points.device)
+                    hand_points, obj_points.to(hand_points.device)
                 )  # (N, N)
                 dists = dists.min(
                     dim=1

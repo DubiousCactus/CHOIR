@@ -141,13 +141,13 @@ def compute_solid_intersection_volume_other():
 
 
 def compute_iv_sample(
-    obj_voxel: np.ndarray,
-    hand_verts: torch.Tensor,
+    obj_voxel_w_hand_verts: Tuple[np.ndarray, torch.Tensor],
     mesh_faces: torch.Tensor,
     pitch: float,
     radius: float,
 ) -> torch.Tensor:
-    hand_mesh = trimesh.Trimesh(hand_verts.cpu().numpy(), mesh_faces)
+    obj_voxel, hand_verts = obj_voxel_w_hand_verts
+    hand_mesh = trimesh.Trimesh(hand_verts.numpy(), mesh_faces)
     hand_voxel = voxel_create.local_voxelize(
         hand_mesh, np.array([0, 0, 0]), pitch, radius
     )
@@ -174,10 +174,13 @@ def mp_compute_solid_intersection_volume(
                     radius=radius,
                     mesh_faces=mesh_faces,
                 ),
-                batch_obj_voxels,
-                [hand_verts[i] for i in range(len(batch_obj_voxels))],
+                zip(
+                    batch_obj_voxels,
+                    [hand_verts[i].cpu() for i in range(len(batch_obj_voxels))],
+                ),
             ),
             total=len(batch_obj_voxels),
+            desc="Computing SIV",
         )
 
         # Collate the results as one tensor:
@@ -191,6 +194,7 @@ def compute_solid_intersection_volume(
     hand_verts: torch.Tensor,
     mesh_faces: torch.Tensor,
 ) -> Tuple[torch.Tensor, Dict]:
+    raise DeprecationWarning("Use mp_compute_solid_intersection_volume instead.")
     # TODO: This PoC works, but I need to make sure that the object mesh is always in its
     # canonical position in the test set! This might be the case for ContactPose, but probably
     # not for GRAB.
