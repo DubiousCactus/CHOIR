@@ -308,8 +308,10 @@ def mp_process_obj_meshes(
     pitch: float,
     radius: float,
 ):
-    unique_mesh_pths = set(mesh_pths)
+    unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
     n_unique_mesh_pths = len(unique_mesh_pths)
+    if n_unique_mesh_pths == 0:
+        return
     # print(f"[*] Processing {n_unique_mesh_pths} object meshes with {min(os.cpu_count()-2, n_unique_mesh_pths)} processes...")
     with multiprocessing.Pool(min(os.cpu_count() - 2, n_unique_mesh_pths)) as pool:
         results = tqdm(
@@ -325,6 +327,7 @@ def mp_process_obj_meshes(
                 unique_mesh_pths,
             ),
             total=n_unique_mesh_pths,
+            desc="Processing object meshes",
         )
 
         # Collate the results as one dict:
