@@ -126,7 +126,7 @@ def launch_experiment(
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
-    if project_conf.USE_WANDB:
+    if project_conf.USE_WANDB and run.training_mode:
         # exp_conf is a string, so we need to load it back to a dict:
         exp_conf = yaml.safe_load(exp_conf)
         wandb.init(

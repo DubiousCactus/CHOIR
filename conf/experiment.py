@@ -410,6 +410,7 @@ class RunConfig:
     enable_contacts_tto: bool = True
     use_ema: bool = False
     compute_iv: bool = True
+    compile_test_model: bool = False
     # RunConfig was never meant to be soiled like this :'(
 
 
@@ -727,7 +728,8 @@ experiment_store(
             use_backbone_self_attn=True,
             object_in_encoder=True,
             contacts_hidden_dim=2048,
-            contacts_skip_connections=False,
+            contacts_skip_connections=True,
+            input_normalization="scale",
         ),
         run=dict(conditional=True, full_choir=False, model_contacts=True),
         bases=(Experiment,),

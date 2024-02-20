@@ -36,6 +36,10 @@ class MultiViewDDPMTester(MultiViewTester):
             self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
+        if kwargs.get("compile_test_model", False):
+            print("[*] Compiling the model...")
+            self._model = torch.compile(self._model)
+            self._ema.ema_model = torch.compile(self._ema.ema_model)
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))

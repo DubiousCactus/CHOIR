@@ -11,6 +11,7 @@ import os
 import pickle
 import signal
 from collections import defaultdict
+from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
 import blosc
@@ -32,6 +33,9 @@ from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.testing import (
+    compute_binary_contacts,
+    compute_contact_coverage,
+    compute_contact_fidelity,
     compute_mpjpe,
     make_batch_of_obj_data,
     mp_compute_solid_intersection_volume,
@@ -43,6 +47,7 @@ from utils.training import (
 )
 from utils.visualization import (
     ScenePicAnim,
+    visualize_MANO,
     visualize_model_predictions_with_multiple_views,
 )
 
@@ -155,9 +160,7 @@ class MultiViewTester(MultiViewTrainer):
     ) -> Tuple:
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
-            input_scalar = input_scalar.mean(
-                dim=1
-            )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
+            input_scalar = input_scalar.mean(dim=1)
         y_hat = self._inference(samples, labels, use_prior=use_prior)
         mano_params_gt = {
             "pose": labels["theta"],
@@ -174,6 +177,8 @@ class MultiViewTester(MultiViewTrainer):
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
+
+        # ============== Object processing ==============
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
@@ -181,7 +186,7 @@ class MultiViewTester(MultiViewTrainer):
         pitch_mm = 2
         pitch = pitch_mm / self._data_loader.dataset.base_unit
         radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-        # test_n_keys_before = len(self._object_cache.keys())
+
         mp_process_obj_meshes(
             mesh_pths,
             self._object_cache,
@@ -191,11 +196,8 @@ class MultiViewTester(MultiViewTrainer):
             pitch,
             radius,
         )
-        # assert len(self._object_cache.keys()) == test_n_keys_before + len(
-        # set(mesh_pths)
-        # ), f"Some meshes were not processed! Only processed {len(self._object_cache.keys()) - test_n_keys_before} out of {len(set(mesh_pths))}."
-
         batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+        # ==============================================
 
         if use_input:
             # For ground-truth:
@@ -363,66 +365,122 @@ class MultiViewTester(MultiViewTrainer):
             # ====== Intersection volume ======
             # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
             # both meshes:
-            mano_faces = self._affine_mano.faces.cpu().numpy()
-            pitch_mm = 2
-            pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
-            # TODO: The radius only needs to be slightly larger than the object bounding box.
             # TODO: WARNING!! For GRAB and approaching hands I can end up with empty hand voxels
             # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
             # the thing to do is to skip empty voxels. I'll try to implement it.
-            radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-            intersection_volume = torch.zeros(1)
+            batch_intersection_volume = torch.zeros(1)
             if self._compute_iv:
-                intersection_volume = mp_compute_solid_intersection_volume(
-                    pitch,
-                    radius,
+                batch_intersection_volume = mp_compute_solid_intersection_volume(
                     [
                         self._object_cache[os.path.basename(path)]["voxel"]
                         for path in mesh_pths
                     ],
-                    verts_pred,
-                    mano_faces,
+                    hand_verts=verts_pred,
+                    # Careful to use the closed faces as they should count for the hand volume!
+                    mesh_faces=self._affine_mano.closed_faces.cpu().numpy(),
+                    pitch=pitch,
+                    radius=radius,
                 )
             # ======= Contact Coverage =======
             # Percentage of hand points within 2mm of the object surface.
-            contact_coverage = []
-            N_PTS_ON_MESH = 10000
-            for i, path in enumerate(mesh_pths):
-                pred_hand_mesh = trimesh.Trimesh(
-                    vertices=verts_pred[i].detach().cpu().numpy(),
-                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+            N_PTS_ON_MESH = 2000
+            batch_contact_coverage = compute_contact_coverage(
+                verts_pred,
+                # Careful not to use the closed faces as they shouldn't count for the hand surface points!
+                self._affine_mano.faces,
+                batch_obj_data["points"],
+                thresh_mm=2,
+                base_unit=self._data_loader.dataset.base_unit,
+                n_samples=N_PTS_ON_MESH,
+            )
+            # ============ Contact fidelity ============
+            compute_bin_contacts = partial(
+                compute_binary_contacts,
+                faces=self._affine_mano.faces,
+                obj_points=batch_obj_data["points"],
+                thresh_mm=5,
+                base_unit=self._data_loader.dataset.base_unit,
+                n_samples=N_PTS_ON_MESH,
+                seed=1,
+            )
+            pred_binary_contacts = compute_bin_contacts(hand_verts=verts_pred)
+            gt_binary_contacts = compute_bin_contacts(hand_verts=gt_verts)
+            print(gt_binary_contacts[0])
+            # TODO: Test that this works by plotting the contacts as red points on the hand mesh
+            # (gt / pred).
+            visualize_MANO(
+                Trimesh(
+                    gt_verts[0].detach().cpu().numpy(),
+                    self._affine_mano.faces.detach().cpu().numpy(),
+                ),
+                obj_mesh=batch_obj_data["mesh"][0],
+                opacity=1.0,
+            )
+            canon_verts, _ = self._affine_mano(
+                torch.zeros_like(gt_pose),
+                torch.zeros_like(gt_shape),
+                gt_rot_6d,
+                torch.zeros_like(gt_trans),
+            )
+            canonical_mesh = Trimesh(
+                canon_verts[0].detach().cpu().numpy(),
+                self._affine_mano.faces.detach().cpu().numpy(),
+            )
+            canonical_surface_pts = trimesh.sample.sample_surface(
+                canonical_mesh, N_PTS_ON_MESH, seed=1
+            )[0]
+            pv_mesh = pv.wrap(canonical_mesh)
+            pl = pv.Plotter()
+            pl.add_mesh(pv_mesh, color="lightgrey", name="hand", smooth_shading=True)
+            gt_canon_verts, _ = self._affine_mano(
+                torch.zeros_like(gt_pose),
+                torch.zeros_like(gt_shape),
+                gt_rot_6d,
+                torch.zeros_like(gt_trans)
+                + torch.tensor([0.0, 0.2, 0.0]).to(gt_trans.device),
+            )
+            gt_canonical_mesh = Trimesh(
+                gt_canon_verts[0].detach().cpu().numpy(),
+                self._affine_mano.faces.detach().cpu().numpy(),
+            )
+            gt_canonical_surface_pts = trimesh.sample.sample_surface(
+                gt_canonical_mesh, N_PTS_ON_MESH, seed=1
+            )[0]
+            pl.add_mesh(
+                pv.wrap(gt_canonical_mesh),
+                color="lightgrey",
+                name="gt_hand",
+                smooth_shading=True,
+            )
+            print(
+                f"Pred contacts: {pred_binary_contacts.shape} / Surface pts: {canonical_surface_pts.shape}"
+            )
+            for i in range(pred_binary_contacts.shape[1]):
+                pl.add_points(
+                    canonical_surface_pts[i],
+                    color="red" if pred_binary_contacts[0, i] else "orange",
+                    point_size=5,
                 )
-                # gt_hand_mesh = trimesh.Trimesh(
-                # vertices=gt_verts[i].detach().cpu().numpy(),
-                # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
-                # faces=self._affine_mano.faces.detach().cpu().numpy(),
-                # )
-                obj_points = self._object_cache[os.path.basename(path)]["points"]
-                hand_points = to_cuda_(
-                    torch.from_numpy(
-                        trimesh.sample.sample_surface(pred_hand_mesh, N_PTS_ON_MESH)[0]
-                    ).float()
+                pl.add_points(
+                    gt_canonical_surface_pts[i],
+                    color="green" if gt_binary_contacts[0, i] else "orange",
+                    point_size=5,
                 )
-                dists = torch.cdist(
-                    hand_points, obj_points.to(hand_points.device)
-                )  # (N, N)
-                dists = dists.min(
-                    dim=1
-                ).values  # (N): distance of each hand point to the closest object point
-                contact_coverage.append(
-                    (dists <= (2 / self._data_loader.dataset.base_unit)).sum()
-                    / N_PTS_ON_MESH
-                    * 100
-                )
-            contact_coverage = torch.stack(contact_coverage).mean().item()
+
+            pl.add_axes_at_origin()
+            pl.show(interactive=True)
+
+            batch_contact_fidelity = compute_contact_fidelity(
+                canonical_mesh, pred_binary_contacts, gt_binary_contacts
+            )
 
         return (
             anchor_error,
             mpjpe,
             root_aligned_mpjpe,
             mpvpe,
-            intersection_volume.detach(),
-            contact_coverage,
+            batch_intersection_volume.detach(),
+            batch_contact_coverage,
         )
 
     @to_cuda
