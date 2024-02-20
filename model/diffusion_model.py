@@ -1211,6 +1211,9 @@ class KPContactsDiffusionModel(torch.nn.Module):
             # ====== Postprocessing ======
             output = x_hat.view(*_in_shape)
             output = self._destandardize(output, self.x_hand_mean, self.x_hand_std)
+            raise NotImplementedError(
+                "KPContactsDiffusionModel: Contacts not implemented yet"
+            )
             return output
 
 

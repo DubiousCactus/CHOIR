@@ -9,7 +9,10 @@
 Eval utils.
 """
 
-from typing import Dict, List, Tuple
+import multiprocessing
+import os
+from functools import partial
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import open3d as o3d
@@ -18,6 +21,8 @@ import torch
 import trimesh
 import trimesh.voxel.creation as voxel_create
 from tqdm import tqdm
+
+from utils import to_cuda_
 
 """ Taken from https://github.com/shreyashampali/ho3d/blob/master/eval.py#L52 """
 
@@ -135,49 +140,64 @@ def compute_solid_intersection_volume_other():
     # intersection_volumes.append(intersection.volume)
 
 
+def compute_iv_sample(
+    obj_voxel: np.ndarray,
+    hand_verts: torch.Tensor,
+    mesh_faces: torch.Tensor,
+    pitch: float,
+    radius: float,
+) -> torch.Tensor:
+    hand_mesh = trimesh.Trimesh(hand_verts.cpu().numpy(), mesh_faces)
+    hand_voxel = voxel_create.local_voxelize(
+        hand_mesh, np.array([0, 0, 0]), pitch, radius
+    )
+    # If the hand voxel is empty, return 0.0:
+    if np.count_nonzero(hand_voxel) == 0:
+        return np.array([0.0])
+    hand_voxel = hand_voxel.fill().matrix
+    return np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
+
+
+def mp_compute_solid_intersection_volume(
+    pitch: float,
+    radius: float,
+    batch_obj_voxels: List,
+    hand_verts: torch.Tensor,
+    mesh_faces: torch.Tensor,
+) -> Tuple[torch.Tensor, Dict]:
+    with multiprocessing.Pool(min(os.cpu_count() - 2, len(batch_obj_voxels))) as pool:
+        results = tqdm(
+            pool.imap(
+                partial(
+                    compute_iv_sample,
+                    pitch=pitch,
+                    radius=radius,
+                    mesh_faces=mesh_faces,
+                ),
+                batch_obj_voxels,
+                [hand_verts[i] for i in range(len(batch_obj_voxels))],
+            ),
+            total=len(batch_obj_voxels),
+        )
+
+        # Collate the results as one tensor:
+        return torch.tensor(list(results)).float().mean()
+
+
 def compute_solid_intersection_volume(
     pitch: float,
     radius: float,
-    mesh_pths: List[str],
+    batch_obj_voxels: List,
     hand_verts: torch.Tensor,
     mesh_faces: torch.Tensor,
-    center_on_object_com: bool,
-    return_meshes: bool = False,
 ) -> Tuple[torch.Tensor, Dict]:
     # TODO: This PoC works, but I need to make sure that the object mesh is always in its
     # canonical position in the test set! This might be the case for ContactPose, but probably
     # not for GRAB.
-    # TODO: Multithread/process this?
-    # TODO: Do the same with PyVista or Open3D? Whatever is fastest because this is slooooow.
     intersection_volumes = []
-    obj_voxels = {}
-    obj_meshes = {}
-    for i, path in tqdm(
-        enumerate(mesh_pths), total=len(mesh_pths), desc="Computing SIV"
+    for i, obj_voxel in tqdm(
+        enumerate(batch_obj_voxels), total=len(batch_obj_voxels), desc="Computing SIV"
     ):
-        if path not in obj_voxels:
-            obj_mesh = o3dio.read_triangle_mesh(path)
-            # At test-time we shouldn't have rotation augmentation!
-            # Rotate the object and hand
-            if center_on_object_com:
-                obj_mesh.translate(-obj_mesh.get_center())
-
-            if return_meshes:
-                obj_meshes[path] = obj_mesh
-
-            obj_mesh = trimesh.Trimesh(
-                vertices=obj_mesh.vertices, faces=obj_mesh.triangles
-            )
-            obj_voxel = (
-                voxel_create.local_voxelize(
-                    obj_mesh, np.array([0, 0, 0]), pitch, radius
-                )
-                .fill()
-                .matrix
-            )
-            obj_voxels[path] = obj_voxel
-        else:
-            obj_voxel = obj_voxels[path]
         hand_mesh = trimesh.Trimesh(hand_verts[i].cpu().numpy(), mesh_faces)
         hand_voxel = voxel_create.local_voxelize(
             hand_mesh, np.array([0, 0, 0]), pitch, radius
@@ -222,7 +242,164 @@ def compute_solid_intersection_volume(
         # )
         intersection_volumes.append(intersection_volume)
 
-    return (
-        torch.tensor(intersection_volumes).float().mean(),
-        obj_meshes if return_meshes else None,
-    )
+    return torch.tensor(intersection_volumes).float().mean()
+
+
+def process_object(
+    path: str,
+    center_on_obj_com: bool,
+    enable_contacts_tto: bool,
+    compute_iv: bool,
+    pitch: float,
+    radius: float,
+) -> Dict[str, Dict]:
+    obj_mesh = o3dio.read_triangle_mesh(path)
+    if center_on_obj_com:
+        obj_mesh.translate(-obj_mesh.get_center())
+    N_PTS_ON_MESH = 5000
+    obj_points = torch.from_numpy(
+        np.asarray(obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points)
+    ).float()
+    obj_normals = None
+    if enable_contacts_tto:
+        N_NORMALS = 5000
+        obj_mesh.compute_vertex_normals()
+        normals_w_roots = torch.cat(
+            (
+                torch.from_numpy(np.asarray(obj_mesh.vertices)).type(
+                    dtype=torch.float32
+                ),
+                torch.from_numpy(np.asarray(obj_mesh.vertex_normals)).type(
+                    dtype=torch.float32
+                ),
+            ),
+            dim=-1,
+        )
+        random_indices = torch.randperm(normals_w_roots.shape[0])[:N_NORMALS]
+        obj_normals = normals_w_roots[random_indices]
+    obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles)
+    voxel = None
+    if compute_iv:
+        # TODO: Use cuda_voxelizer + libmesh's SDF-based check_mesh_contains
+        voxel = (
+            voxel_create.local_voxelize(obj_mesh, np.array([0, 0, 0]), pitch, radius)
+            .fill()
+            .matrix
+        )
+    obj_data = {
+        "mesh": obj_mesh,
+        "points": obj_points,
+        "normals": obj_normals,
+        "voxel": voxel,
+    }
+    return {path: obj_data}
+
+
+def mp_process_obj_meshes(
+    mesh_pths: List[str],
+    obj_cache: Dict[str, Any],
+    center_on_obj_com: bool,
+    enable_contacts_tto: bool,
+    compute_iv: bool,
+    pitch: float,
+    radius: float,
+):
+    unique_mesh_pths = set(mesh_pths)
+    n_unique_mesh_pths = len(unique_mesh_pths)
+    # print(f"[*] Processing {n_unique_mesh_pths} object meshes with {min(os.cpu_count()-2, n_unique_mesh_pths)} processes...")
+    with multiprocessing.Pool(min(os.cpu_count() - 2, n_unique_mesh_pths)) as pool:
+        results = tqdm(
+            pool.imap(
+                partial(
+                    process_object,
+                    center_on_obj_com=center_on_obj_com,
+                    enable_contacts_tto=enable_contacts_tto,
+                    compute_iv=compute_iv,
+                    pitch=pitch,
+                    radius=radius,
+                ),
+                unique_mesh_pths,
+            ),
+            total=n_unique_mesh_pths,
+        )
+
+        # Collate the results as one dict:
+        obj_cache.update({k: v for d in list(results) for k, v in d.items()})
+
+
+def process_obj_meshes(
+    mesh_pths: List[str],
+    obj_cache: Dict[str, Any],
+    center_on_obj_com: bool,
+    enable_contacts_tto: bool,
+    compute_iv: bool,
+    pitch: float,
+    radius: float,
+):
+    raise DeprecationWarning("Use mp_process_obj_meshes instead.")
+    unique_mesh_pths = set(mesh_pths)
+    for path in tqdm(unique_mesh_pths, desc="Processing object meshes"):
+        if path in obj_cache:
+            continue
+        obj_mesh = o3dio.read_triangle_mesh(path)
+        if center_on_obj_com:
+            obj_mesh.translate(-obj_mesh.get_center())
+        N_PTS_ON_MESH = 5000
+        obj_points = to_cuda_(
+            torch.from_numpy(
+                np.asarray(obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points)
+            ).float()
+        )
+        obj_normals = None
+        if enable_contacts_tto:
+            N_NORMALS = 5000
+            obj_mesh.compute_vertex_normals()
+            normals_w_roots = to_cuda_(
+                torch.cat(
+                    (
+                        torch.from_numpy(np.asarray(obj_mesh.vertices)).type(
+                            dtype=torch.float32
+                        ),
+                        torch.from_numpy(np.asarray(obj_mesh.vertex_normals)).type(
+                            dtype=torch.float32
+                        ),
+                    ),
+                    dim=-1,
+                )
+            )
+            random_indices = torch.randperm(normals_w_roots.shape[0])[:N_NORMALS]
+            obj_normals = normals_w_roots[random_indices]
+        voxel = None
+        if compute_iv:
+            # TODO: Use cuda_voxelizer + libmesh's SDF-based check_mesh_contains
+            tmesh = trimesh.Trimesh(
+                vertices=obj_mesh.vertices, faces=obj_mesh.triangles
+            )
+            voxel = (
+                voxel_create.local_voxelize(tmesh, np.array([0, 0, 0]), pitch, radius)
+                .fill()
+                .matrix
+            )
+        obj_data = {
+            "mesh": obj_mesh,
+            "points": obj_points,
+            "normals": obj_normals,
+            "voxel": voxel,
+        }
+        obj_cache[path] = obj_data
+
+
+def make_batch_of_obj_data(
+    obj_data_cache: Dict[str, Any], mesh_pths: List[str]
+) -> Dict[str, torch.Tensor]:
+    batch_obj_data = {}
+    for path in mesh_pths:
+        for k, v in obj_data_cache[path].items():
+            if k not in batch_obj_data:
+                batch_obj_data[k] = []
+            batch_obj_data[k].append(v)
+    for k, v in batch_obj_data.items():
+        batch_obj_data[k] = (
+            to_cuda_(torch.stack(v, dim=0)) if type(v[0]) == torch.Tensor else v
+        )
+    return batch_obj_data

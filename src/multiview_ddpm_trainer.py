@@ -221,7 +221,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         losses = self._training_loss(None, None, y_hat)
         # dict: {"udf_mse": torch.Tensor, "contacts_mse": torch.Tensor}
         if validation:
-            ema_y_hat = self._ema.ema_model(x, y)
+            ema_y_hat = self._ema(x, y)
             ema_loss = self._training_loss(None, None, ema_y_hat)
             losses["ema"] = sum([v for v in ema_loss.values()])
 

@@ -409,6 +409,7 @@ class RunConfig:
     model_contacts: bool = False
     enable_contacts_tto: bool = True
     use_ema: bool = False
+    compute_iv: bool = True
     # RunConfig was never meant to be soiled like this :'(
 
 

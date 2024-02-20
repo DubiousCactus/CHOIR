@@ -15,7 +15,6 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import blosc
 import matplotlib.pyplot as plt
-import numpy as np
 import open3d.io as o3dio
 import pyvista as pv
 import torch
@@ -32,7 +31,12 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
-from utils.testing import compute_mpjpe
+from utils.testing import (
+    compute_mpjpe,
+    compute_solid_intersection_volume,
+    make_batch_of_obj_data,
+    mp_process_obj_meshes,
+)
 from utils.training import (
     optimize_mesh_from_joints_and_anchors,
     optimize_pose_pca_from_choir,
@@ -96,6 +100,8 @@ class MultiViewTester(MultiViewTrainer):
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
+        self._compute_iv = kwargs.get("compute_iv", False)
+        self._object_cache = {}
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -172,14 +178,24 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
-        object_meshes = None
-        object_meshes = {}
-        for path in mesh_pths:
-            obj_mesh = o3dio.read_triangle_mesh(path)
-            if self._data_loader.dataset.center_on_object_com:
-                obj_mesh.translate(-obj_mesh.get_center())
-                object_meshes[path] = obj_mesh
-            obj_mesh.compute_vertex_normals()
+        pitch_mm = 2
+        pitch = pitch_mm / self._data_loader.dataset.base_unit
+        radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
+        test_n_keys_before = len(self._object_cache.keys())
+        mp_process_obj_meshes(
+            mesh_pths,
+            self._object_cache,
+            self._data_loader.dataset.center_on_object_com,
+            self._enable_contacts_tto,
+            self._compute_iv,
+            pitch,
+            radius,
+        )
+        assert len(self._object_cache.keys()) == test_n_keys_before + len(
+            set(mesh_pths)
+        ), f"Some meshes were not processed! Only processed {len(self._object_cache.keys()) - test_n_keys_before} out of {len(set(mesh_pths))}."
+
+        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
 
         if use_input:
             # For ground-truth:
@@ -262,45 +278,10 @@ class MultiViewTester(MultiViewTrainer):
                         None,
                     )
                     if self._enable_contacts_tto and contacts_pred is not None:
-                        N_PTS_ON_MESH, N_NORMALS = 3000, 6000
-                        # Sample points from the object mesh:
-                        # TODO: Refactor that because we're doing it again below for contact
-                        # coverage!
-                        obj_points, obj_normals = [], []
-                        for path in mesh_pths:
-                            obj_mesh = object_meshes[path]
-                            normals_w_roots = to_cuda_(
-                                torch.cat(
-                                    (
-                                        torch.from_numpy(
-                                            np.asarray(obj_mesh.vertices)
-                                        ).type(dtype=torch.float32),
-                                        torch.from_numpy(
-                                            np.asarray(obj_mesh.vertex_normals)
-                                        ).type(dtype=torch.float32),
-                                    ),
-                                    dim=-1,
-                                )
-                            )
-                            random_indices = torch.randperm(normals_w_roots.shape[0])[
-                                :N_NORMALS
-                            ]
-                            normals_w_roots = normals_w_roots[random_indices]
-                            obj_normals.append(normals_w_roots)
-                            obj_points.append(
-                                to_cuda_(
-                                    torch.from_numpy(
-                                        np.asarray(
-                                            obj_mesh.sample_points_uniformly(
-                                                N_PTS_ON_MESH
-                                            ).points
-                                        )
-                                    ).float()
-                                )
-                            )
-                        obj_points = torch.stack(obj_points, dim=0)
-                        obj_normals = torch.stack(obj_normals, dim=0)
-
+                        obj_points, obj_normals = (
+                            batch_obj_data["points"],
+                            batch_obj_data["normals"],
+                        )
                     (
                         _,
                         _,
@@ -391,21 +372,15 @@ class MultiViewTester(MultiViewTrainer):
             # the thing to do is to skip empty voxels. I'll try to implement it.
             radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
             intersection_volume = torch.zeros(1)
-            # intersection_volume, object_meshes = compute_solid_intersection_volume(
-            # pitch,
-            # radius,
-            # mesh_pths,
-            # verts_pred,
-            # mano_faces,
-            # self._data_loader.dataset.center_on_object_com,
-            # return_meshes=True, # TODO: Only if we haven't loaded them yet
-            # )
+            if self._compute_iv:
+                intersection_volume = compute_solid_intersection_volume(
+                    pitch,
+                    radius,
+                    [self._object_cache[path]["voxel"] for path in mesh_pths],
+                    verts_pred,
+                    mano_faces,
+                )
             # ======= Contact Coverage =======
-            if object_meshes is None:
-                object_meshes = {}
-                for path in mesh_pths:
-                    obj_mesh = o3dio.read_triangle_mesh(path)
-                    object_meshes[path] = obj_mesh
             # Percentage of hand points within 2mm of the object surface.
             contact_coverage = []
             N_PTS_ON_MESH = 10000
@@ -419,16 +394,7 @@ class MultiViewTester(MultiViewTrainer):
                 # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
                 # faces=self._affine_mano.faces.detach().cpu().numpy(),
                 # )
-                # At test-time we shouldn't have rotation augmentation!
-                if self._data_loader.dataset.center_on_object_com:
-                    obj_mesh.translate(-obj_mesh.get_center())
-                obj_points = to_cuda_(
-                    torch.from_numpy(
-                        np.asarray(
-                            obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points
-                        )
-                    ).float()
-                )
+                obj_points = self._object_cache[path]["points"]
                 hand_points = to_cuda_(
                     torch.from_numpy(
                         trimesh.sample.sample_surface(pred_hand_mesh, N_PTS_ON_MESH)[0]
@@ -681,6 +647,7 @@ class MultiViewTester(MultiViewTrainer):
     ):
         plots = {}
         gt_is_plotted = False
+        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
             print(samples["choir"].shape, samples["choir"][:, :n].shape)
@@ -722,12 +689,16 @@ class MultiViewTester(MultiViewTrainer):
             # element.
             mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
             use_smplx = False  # TODO: I don't use it for now
-
-            obj_pts, obj_normals = None, None
-            raise NotImplementedError(
-                "Must compute obj pts/normals for save_batch_predictions"
+            contacts_pred, obj_points, obj_normals = (
+                y_hat.get("contacts", None),
+                None,
+                None,
             )
-
+            if self._enable_contacts_tto and contacts_pred is not None:
+                obj_points, obj_normals = (
+                    batch_obj_data["points"],
+                    batch_obj_data["normals"],
+                )
             with torch.set_grad_enabled(True):
                 (
                     _,
@@ -740,7 +711,7 @@ class MultiViewTester(MultiViewTrainer):
                 ) = optimize_pose_pca_from_choir(
                     y_hat["choir"],
                     contact_gaussians=y_hat.get("contacts", None),
-                    obj_pts=obj_pts,
+                    obj_pts=obj_points,
                     obj_normals=obj_normals,
                     bps=self._bps,
                     anchor_indices=self._anchor_indices,
@@ -772,21 +743,22 @@ class MultiViewTester(MultiViewTrainer):
                 if not os.path.exists(image_dir):
                     os.makedirs(image_dir)
                 viewed_meshes = []
-                obj_meshes = {}
+                pyvista_obj_meshes, hands_trimesh = {}, {}
                 for i, mesh_pth in enumerate(mesh_pths_iter):
-                    mesh_name = os.path.basename(mesh_pth)
-                    pred_hand_mesh = trimesh.Trimesh(
-                        vertices=verts_pred[i].detach().cpu().numpy(),
-                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                    )
-                    if mesh_name not in obj_meshes:
-                        obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                        if self._data_loader.dataset.center_on_object_com:
-                            obj_mesh.translate(-obj_mesh.get_center())
-                        obj_mesh_pv = pv.wrap(
-                            Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                    if mesh_pth in hands_trimesh:
+                        pred_hand_mesh = hands_trimesh[mesh_pth]
+                    else:
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[i].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                         )
-                        obj_meshes[mesh_name] = obj_mesh_pv
+                        hands_trimesh[mesh_pth] = pred_hand_mesh
+                    if mesh_pth in pyvista_obj_meshes:
+                        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
+                    else:
+                        obj_mesh = self._object_cache[mesh_pth]["mesh"]
+                        obj_mesh_pv = pv.wrap(obj_mesh)
+                        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
 
                     grasp_key = (mesh_name, i)
                     if grasp_key not in plots:
