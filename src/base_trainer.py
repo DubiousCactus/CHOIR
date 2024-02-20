@@ -173,6 +173,8 @@ class BaseTrainer:
             if not self._disable_grad:
                 loss.backward()
                 self._opt.step()
+                if self._ema is not None:
+                    self._ema.update()
             epoch_loss.update(loss.item())
             for k, v in loss_components.items():
                 epoch_loss_components[k].update(v.item())
@@ -314,8 +316,6 @@ class BaseTrainer:
                     else float("inf"),
                 )
             )
-            if not self._disable_grad and self._ema is not None:
-                self._ema.update()
             if epoch % val_every == 0:
                 self._model.eval()
                 self._pbar.colour = project_conf.Theme.VALIDATION.value
