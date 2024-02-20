@@ -324,9 +324,13 @@ def mp_process_obj_meshes(
     if keep_mesh_contact_indentity:
         unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
     else:
-        unique_mesh_pths = [
-            path for path in set(mesh_pths) if os.path.basename(path) not in obj_cache
-        ]
+        unique_mesh_pths, visited = [], []
+        for path in set(mesh_pths):
+            file_name = os.path.basename(path)
+            if file_name in obj_cache or file_name in visited:
+                continue
+            visited.append(file_name)
+            unique_mesh_pths.append(path)
     n_unique_mesh_pths = len(unique_mesh_pths)
     if n_unique_mesh_pths == 0:
         return
