@@ -376,7 +376,10 @@ class MultiViewTester(MultiViewTrainer):
                 intersection_volume = mp_compute_solid_intersection_volume(
                     pitch,
                     radius,
-                    [self._object_cache[path]["voxel"] for path in mesh_pths],
+                    [
+                        self._object_cache[os.path.basename(path)]["voxel"]
+                        for path in mesh_pths
+                    ],
                     verts_pred,
                     mano_faces,
                 )
@@ -394,7 +397,7 @@ class MultiViewTester(MultiViewTrainer):
                 # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
                 # faces=self._affine_mano.faces.detach().cpu().numpy(),
                 # )
-                obj_points = self._object_cache[path]["points"]
+                obj_points = self._object_cache[os.path.basename(path)]["points"]
                 hand_points = to_cuda_(
                     torch.from_numpy(
                         trimesh.sample.sample_surface(pred_hand_mesh, N_PTS_ON_MESH)[0]
@@ -758,7 +761,9 @@ class MultiViewTester(MultiViewTrainer):
                     if mesh_pth in pyvista_obj_meshes:
                         obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
                     else:
-                        obj_mesh = self._object_cache[mesh_pth]["mesh"]
+                        obj_mesh = self._object_cache[os.path.basename(mesh_pth)][
+                            "mesh"
+                        ]
                         obj_mesh_pv = pv.wrap(obj_mesh)
                         pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
 

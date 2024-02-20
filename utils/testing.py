@@ -307,8 +307,26 @@ def mp_process_obj_meshes(
     compute_iv: bool,
     pitch: float,
     radius: float,
+    keep_mesh_contact_indentity: bool = False,
 ):
-    unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
+    """
+    Process a list of object meshes in parallel.
+    Args:
+        mesh_pths: List of paths to object meshes.
+        obj_cache: Dict containing the processed object meshes.
+        center_on_obj_com: Whether to center the object meshes on their center of mass.
+        enable_contacts_tto: Whether to compute contact maps for the object meshes.
+        compute_iv: Whether to compute the intersection volume between the object meshes and the hand meshes.
+        pitch: Voxel pitch.
+        radius: Voxel radius.
+        keep_mesh_contact_indentity: Whether to treat all meshes as unique (they have their own contact maps) or reduce all identitical meshes to a single one.
+    """
+    if keep_mesh_contact_indentity:
+        unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
+    else:
+        unique_mesh_pths = [
+            path for path in set(mesh_pths) if os.path.basename(path) not in obj_cache
+        ]
     n_unique_mesh_pths = len(unique_mesh_pths)
     if n_unique_mesh_pths == 0:
         return
@@ -331,7 +349,12 @@ def mp_process_obj_meshes(
         )
 
         # Collate the results as one dict:
-        obj_cache.update({k: v for d in list(results) for k, v in d.items()})
+        if keep_mesh_contact_indentity:
+            obj_cache.update({k: v for d in list(results) for k, v in d.items()})
+        else:
+            obj_cache.update(
+                {os.path.basename(k): v for d in list(results) for k, v in d.items()}
+            )
 
 
 def process_obj_meshes(
@@ -397,9 +420,13 @@ def process_obj_meshes(
 
 
 def make_batch_of_obj_data(
-    obj_data_cache: Dict[str, Any], mesh_pths: List[str]
+    obj_data_cache: Dict[str, Any],
+    mesh_pths: List[str],
+    keep_mesh_contact_indentity: bool = False,
 ) -> Dict[str, torch.Tensor]:
     batch_obj_data = {}
+    if not keep_mesh_contact_indentity:
+        mesh_pths = [os.path.basename(path) for path in mesh_pths]
     for path in mesh_pths:
         for k, v in obj_data_cache[path].items():
             if k not in batch_obj_data:
