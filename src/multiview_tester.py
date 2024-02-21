@@ -105,6 +105,7 @@ class MultiViewTester(MultiViewTrainer):
         self._n_ctrl_c = 0
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._compute_iv = kwargs.get("compute_iv", False)
+        self._compute_contact_fidelity = kwargs.get("compute_contact_fidelity", False)
         self._object_cache = {}
         self._pitch_mm = 2
         self._pitch = self._pitch_mm / self._data_loader.dataset.base_unit
@@ -227,27 +228,29 @@ class MultiViewTester(MultiViewTrainer):
                 n_samples=self._n_pts_on_mesh,
             )
             # ============ Contact fidelity ============
-            compute_bin_contacts = partial(
-                compute_binary_contacts,
-                faces=self._affine_mano.faces,
-                obj_points=batch_obj_data["points"],
-                thresh_mm=2,
-                base_unit=self._data_loader.dataset.base_unit,
-                n_mesh_upsamples=2,
-                return_upsampled_verts=False,
-            )
-            """
-            n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
-            they aren't evenly distributed so it's not ideal, but as opposed to random sampling
-            on the mesh, we can exactly recover contact points even on different poses.
-            """
-            pred_binary_contacts, _ = compute_bin_contacts(hand_verts=verts_pred)
-            gt_binary_contacts, upsampled_verts = compute_bin_contacts(
-                hand_verts=gt_verts, return_upsampled_verts=True
-            )
-            batch_contact_fidelity = compute_contact_fidelity(
-                upsampled_verts, pred_binary_contacts, gt_binary_contacts
-            )
+            batch_contact_fidelity = -torch.inf
+            if self._compute_contact_fidelity:
+                compute_bin_contacts = partial(
+                    compute_binary_contacts,
+                    faces=self._affine_mano.faces,
+                    obj_points=batch_obj_data["points"],
+                    thresh_mm=2,
+                    base_unit=self._data_loader.dataset.base_unit,
+                    n_mesh_upsamples=1,
+                    return_upsampled_verts=False,
+                )
+                """
+                n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
+                they aren't evenly distributed so it's not ideal, but as opposed to random sampling
+                on the mesh, we can exactly recover contact points even on different poses.
+                """
+                pred_binary_contacts, _ = compute_bin_contacts(hand_verts=verts_pred)
+                gt_binary_contacts, upsampled_verts = compute_bin_contacts(
+                    hand_verts=gt_verts, return_upsampled_verts=True
+                )
+                batch_contact_fidelity = compute_contact_fidelity(
+                    upsampled_verts, pred_binary_contacts, gt_binary_contacts
+                )
 
         return {
             "Anchor error [mm] (↓)": anchor_error,

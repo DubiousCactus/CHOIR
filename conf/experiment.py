@@ -411,6 +411,7 @@ class RunConfig:
     use_ema: bool = False
     compute_iv: bool = True
     compile_test_model: bool = False
+    compute_contact_fidelity: bool = True
     # RunConfig was never meant to be soiled like this :'(
 
 

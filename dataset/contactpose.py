@@ -243,7 +243,7 @@ class ContactPoseDataset(BaseDataset):
             or self._eval_anchor_assignment
         )
         cp_dataset = {} if not participant_splits else []
-        n_participants = 3 if tiny else 51
+        n_participants = 2 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(p_num, intent):

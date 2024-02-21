@@ -195,8 +195,7 @@ def optimize_pose_pca_from_choir(
         )
 
     plateau_cnt = 0
-    iterations = 300
-    proc_bar = tqdm.tqdm(range(iterations))
+    proc_bar = tqdm.tqdm(range(max_iterations))
     prev_loss = float("inf")
     optimizer.zero_grad()
     trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
@@ -213,7 +212,8 @@ def optimize_pose_pca_from_choir(
         median_filter_len=50,
         update_knn_each_step=True,
     ).to(contact_gaussians.device)
-    converged_pose = None
+    converged_verts = verts.detach().clone()
+    converged_pose = None  # Pre penetration loss
     for i in proc_bar:
         enable_penetration_loss = i > 20  # (i > (0.5 * iterations))
         optimizer.zero_grad()
@@ -238,9 +238,10 @@ def optimize_pose_pca_from_choir(
             10 * torch.norm(beta) ** 2
         )  # Encourage the shape parameters to remain close to 0
         pose_regularizer = 1e-6 * torch.norm(theta) ** 2
-        abs_pose_regularizer = 1e-2 * (torch.norm(trans - trans_base) ** 2) + 1e-3 * (
-            torch.norm(rot - rot_base) ** 2
-        )
+        # abs_pose_regularizer = 1e-2 * (torch.norm(trans - trans_base) ** 2) + 1e-3 * (
+        # torch.norm(rot - rot_base) ** 2
+        # )
+        abs_pose_regularizer = 1e-1 * (torch.norm(verts - converged_verts))
         proc_bar.set_description(
             f"Contacts: {contact_loss.item():.8f} / Penetration: {penetration_loss.item():.8f}  / Shape reg: {shape_regularizer.item():.8f} "
             + f"/ Pose reg: {pose_regularizer.item():.8f} / Abs. pose reg: {abs_pose_regularizer.item():.8f}"
