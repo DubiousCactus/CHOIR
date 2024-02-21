@@ -50,7 +50,6 @@ def optimize_pose_pca_from_choir(
     before the exponential map, if they are used. So we must first apply the inverse exponential
     map, and then the inverse of the scalar.
     """
-    max_iterations = 2
     assert len(choir.shape) == 3
     B = choir.shape[0]
     affine_mano, smplx_model = None, None
@@ -195,10 +194,9 @@ def optimize_pose_pca_from_choir(
             joints.detach(),
         )
 
-    converged_pose = verts.detach().clone()
-
     plateau_cnt = 0
-    proc_bar = tqdm.tqdm(range(max_iterations))
+    iterations = 300
+    proc_bar = tqdm.tqdm(range(iterations))
     prev_loss = float("inf")
     optimizer.zero_grad()
     trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
@@ -257,16 +255,15 @@ def optimize_pose_pca_from_choir(
             plateau_cnt = 0
         # loss = contact_loss #+ penetration_loss #+ shape_regularizer + pose_regularizer + abs_pose_regularizer
         # loss = contact_loss + abs_pose_regularizer + shape_regularizer + pose_regularizer
-        # deviation_regularizer = 1e-1 * torch.norm(verts - converged_pose) ** 2
         loss = (
-            contact_loss
-            + abs_pose_regularizer
-            + pose_regularizer
-            + shape_regularizer  # + deviation_regularizer
+            contact_loss + abs_pose_regularizer + pose_regularizer + shape_regularizer
         )
         if enable_penetration_loss:
+            deviation_regularizer = 1e-1 * torch.norm(verts - converged_pose) ** 2
             loss += penetration_loss  # + deviation_regularizer
             # loss = contact_loss + penetration_loss + deviation_regularizer
+        else:
+            converged_pose = verts.detach().clone()
         # loss = loss + shape_regularizer +  abs_pose_regularizer
         prev_loss = contact_loss.detach().type(torch.float32)
         loss.backward()

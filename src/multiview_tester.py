@@ -47,7 +47,6 @@ from utils.training import (
 )
 from utils.visualization import (
     ScenePicAnim,
-    visualize_MANO,
     visualize_model_predictions_with_multiple_views,
 )
 
@@ -383,9 +382,9 @@ class MultiViewTester(MultiViewTrainer):
                 )
             # ======= Contact Coverage =======
             # Percentage of hand points within 2mm of the object surface.
-            N_PTS_ON_MESH = 2000
+            N_PTS_ON_MESH = 5000
             batch_contact_coverage = compute_contact_coverage(
-                verts_pred,
+                gt_verts,
                 # Careful not to use the closed faces as they shouldn't count for the hand surface points!
                 self._affine_mano.faces,
                 batch_obj_data["points"],
@@ -398,80 +397,23 @@ class MultiViewTester(MultiViewTrainer):
                 compute_binary_contacts,
                 faces=self._affine_mano.faces,
                 obj_points=batch_obj_data["points"],
-                thresh_mm=5,
+                thresh_mm=2,
                 base_unit=self._data_loader.dataset.base_unit,
-                n_samples=N_PTS_ON_MESH,
-                seed=1,
+                n_mesh_upsamples=2,
+                return_canonical_verts_faces=True,
             )
-            pred_binary_contacts = compute_bin_contacts(hand_verts=verts_pred)
-            gt_binary_contacts = compute_bin_contacts(hand_verts=gt_verts)
-            print(gt_binary_contacts[0])
-            # TODO: Test that this works by plotting the contacts as red points on the hand mesh
-            # (gt / pred).
-            visualize_MANO(
-                Trimesh(
-                    gt_verts[0].detach().cpu().numpy(),
-                    self._affine_mano.faces.detach().cpu().numpy(),
-                ),
-                obj_mesh=batch_obj_data["mesh"][0],
-                opacity=1.0,
+            """
+            n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
+            they aren't evenly distributed so it's not ideal, but as opposed to random sampling
+            on the mesh, we can exactly recover contact points even on different poses.
+            """
+            pred_binary_contacts, canonical_vf = compute_bin_contacts(
+                hand_verts=verts_pred
             )
-            canon_verts, _ = self._affine_mano(
-                torch.zeros_like(gt_pose),
-                torch.zeros_like(gt_shape),
-                gt_rot_6d,
-                torch.zeros_like(gt_trans),
-            )
-            canonical_mesh = Trimesh(
-                canon_verts[0].detach().cpu().numpy(),
-                self._affine_mano.faces.detach().cpu().numpy(),
-            )
-            canonical_surface_pts = trimesh.sample.sample_surface(
-                canonical_mesh, N_PTS_ON_MESH, seed=1
-            )[0]
-            pv_mesh = pv.wrap(canonical_mesh)
-            pl = pv.Plotter()
-            pl.add_mesh(pv_mesh, color="lightgrey", name="hand", smooth_shading=True)
-            gt_canon_verts, _ = self._affine_mano(
-                torch.zeros_like(gt_pose),
-                torch.zeros_like(gt_shape),
-                gt_rot_6d,
-                torch.zeros_like(gt_trans)
-                + torch.tensor([0.0, 0.2, 0.0]).to(gt_trans.device),
-            )
-            gt_canonical_mesh = Trimesh(
-                gt_canon_verts[0].detach().cpu().numpy(),
-                self._affine_mano.faces.detach().cpu().numpy(),
-            )
-            gt_canonical_surface_pts = trimesh.sample.sample_surface(
-                gt_canonical_mesh, N_PTS_ON_MESH, seed=1
-            )[0]
-            pl.add_mesh(
-                pv.wrap(gt_canonical_mesh),
-                color="lightgrey",
-                name="gt_hand",
-                smooth_shading=True,
-            )
-            print(
-                f"Pred contacts: {pred_binary_contacts.shape} / Surface pts: {canonical_surface_pts.shape}"
-            )
-            for i in range(pred_binary_contacts.shape[1]):
-                pl.add_points(
-                    canonical_surface_pts[i],
-                    color="red" if pred_binary_contacts[0, i] else "orange",
-                    point_size=5,
-                )
-                pl.add_points(
-                    gt_canonical_surface_pts[i],
-                    color="green" if gt_binary_contacts[0, i] else "orange",
-                    point_size=5,
-                )
-
-            pl.add_axes_at_origin()
-            pl.show(interactive=True)
-
+            gt_binary_contacts, _ = compute_bin_contacts(hand_verts=gt_verts)
+            canon_verts, _ = canonical_vf
             batch_contact_fidelity = compute_contact_fidelity(
-                canonical_mesh, pred_binary_contacts, gt_binary_contacts
+                canon_verts, pred_binary_contacts, gt_binary_contacts
             )
 
         return (
@@ -479,8 +421,9 @@ class MultiViewTester(MultiViewTrainer):
             mpjpe,
             root_aligned_mpjpe,
             mpvpe,
-            batch_intersection_volume.detach(),
+            batch_intersection_volume,
             batch_contact_coverage,
+            batch_contact_fidelity,
         )
 
     @to_cuda
@@ -498,14 +441,6 @@ class MultiViewTester(MultiViewTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, mesh_pths = batch  # type: ignore
-        # (
-        # anchor_error_x,
-        # mpjpe_x,
-        # root_aligned_mpjpe_x,
-        # mpvpe_x,
-        # intesection_volume_x,
-        # contact_coverage_x,
-        # ) = self._test_batch(samples, labels, mesh_pths, n_observations, batch_idx, use_input=True)
         (
             anchor_error_p,
             mpjpe_p,
@@ -513,6 +448,7 @@ class MultiViewTester(MultiViewTrainer):
             mpvpe_p,
             intersection_volume_p,
             contact_coverage_p,
+            contact_fidelity_p,
         ) = self._test_batch(
             samples,
             labels,
@@ -521,35 +457,14 @@ class MultiViewTester(MultiViewTrainer):
             batch_idx,
             use_prior=True,
         )
-        # (
-        # anchor_error,
-        # mpjpe,
-        # root_aligned_mpjpe,
-        # mpvpe,
-        # intersection_volume,
-        # contact_coverage,
-        # ) = self._test_batch(
-        # samples, labels, mesh_pths, n_observations, batch_idx, use_prior=False
-        # )
         return {
-            "[PRIOR] Anchor error (mm)": anchor_error_p,
-            "[PRIOR] MPJPE (mm)": mpjpe_p,
-            "[PRIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe_p,
-            "[PRIOR] MPVPE (mm)": mpvpe_p,
-            "[PRIOR] Intersection volume (cm3)": intersection_volume_p,
-            "[PRIOR] Contact coverage (%)": contact_coverage_p,
-            # "[POSTERIOR] Anchor error (mm)": anchor_error,
-            # "[POSTERIOR] MPJPE (mm)": mpjpe,
-            # "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
-            # "[POSTERIOR] MPVPE (mm)": mpvpe,
-            # "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
-            # "[POSTERIOR] Contact coverage (%)": contact_coverage,
-            # "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
-            # "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
-            # "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
-            # "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
-            # "[NOISY INPUT] Intersection volume (cm3)": intesection_volume_x,
-            # "[NOISY INPUT] Contact coverage (%)": contact_coverage_x,
+            "Anchor error [mm] (↓)": anchor_error_p,
+            "MPJPE [mm] (↓)": mpjpe_p,
+            "Root-aligned MPJPE [mm] (↓)": root_aligned_mpjpe_p,
+            "MPVPE [mm] (↓)": mpvpe_p,
+            "Intersection volume [cm3] (↓)": intersection_volume_p,
+            "Contact coverage [%] (↑)": contact_coverage_p,
+            "Contact fidelity score (↑)": contact_fidelity_p,
         }
 
     @to_cuda

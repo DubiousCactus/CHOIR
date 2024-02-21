@@ -418,7 +418,7 @@ class UNetBackboneModel(torch.nn.Module):
             SpatialTransformer,
             n_heads=8,
             dim_heads=32,
-            dropout=0.0,
+            dropout=0.1,
             gated_ff=False,
             norm_groups=norm_groups,
         )

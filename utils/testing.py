@@ -12,7 +12,7 @@ Eval utils.
 import multiprocessing
 import os
 from functools import partial
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import open3d as o3d
@@ -20,6 +20,7 @@ import open3d.io as o3dio
 import torch
 import trimesh
 import trimesh.voxel.creation as voxel_create
+from manotorch.upsamplelayer import UpSampleLayer
 from tqdm import tqdm
 
 from utils import to_cuda_
@@ -354,27 +355,62 @@ def compute_binary_contacts(
     obj_points: torch.Tensor,
     thresh_mm: float,
     base_unit: float,
-    n_samples: int = 10000,
-    seed: int = 1,
-) -> torch.Tensor:
-    binary_contacts = []
-    for i in range(hand_verts.shape[0]):
-        pred_hand_mesh = trimesh.Trimesh(
-            vertices=hand_verts[i].detach().cpu().numpy(),
-            faces=faces.detach().cpu().numpy(),
-        )
-        hand_points = torch.from_numpy(
-            trimesh.sample.sample_surface(pred_hand_mesh, n_samples, seed=seed)[0]
-        ).float()
-        dists = torch.cdist(hand_points, obj_points[i].to(hand_points.device))
-        dists = dists.min(dim=1).values
-        binary_contacts.append((dists <= (thresh_mm / base_unit)).int())
-    return torch.stack(binary_contacts)
+    n_mesh_upsamples: int = 2,
+    return_canonical_verts_faces: bool = True,
+) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    bs = hand_verts.shape[0]
+    if n_mesh_upsamples > 0:
+        if type(faces) is not list:
+            faces = [faces] * bs
+        upsample_layer = UpSampleLayer()
+        for _ in range(n_mesh_upsamples):
+            hand_verts, faces = upsample_layer(hand_verts, faces)
+    dists = torch.cdist(
+        hand_verts, obj_points.to(hand_verts.device)
+    )  # (B, VERTS, N_OBJ_POINTS)
+    dists = dists.min(dim=-1).values
+    binary_contacts = (dists <= (thresh_mm / base_unit)).int()
+    return (
+        binary_contacts,
+        (hand_verts, faces) if return_canonical_verts_faces else None,
+    )
 
 
 def compute_contact_fidelity(
-    canonical_mesh: torch.Tensor,
+    canonical_verts: torch.Tensor,
     pred_bin_contacts: torch.Tensor,
     gt_bin_contacts: torch.Tensor,
+    normalize_false_positives: bool = False,
 ) -> torch.Tensor:
-    pass
+    """
+    Compute the contact fidelity between the predicted and ground-truth binary contacts, as a
+    modified Hamming distance with a normalized L2-norm-based penalty term for false positives and
+    a binary term corresponding to "Hamming score" for false negatives.
+    """
+    # Compute the true positives as the binary AND between the predicted and ground-truth binary contacts:
+    true_positive_scores = (pred_bin_contacts & gt_bin_contacts).sum(dim=-1).float()
+    # Compute the normalized L2-norm-based penalty term for false positives:
+    false_positive_bool_indices = (gt_bin_contacts == 0) & (pred_bin_contacts == 1)
+    dists = torch.cdist(canonical_verts, canonical_verts)  # (B, VERTS, VERTS)
+    true_positive_indices = gt_bin_contacts == 1
+    dists = torch.where(
+        true_positive_indices[:, None, :], dists, torch.inf
+    )  # (B, VERTS, VERTS). All GT vertices that aren't in contact have inf distance so they won't be selected.
+    # This seems much slower than torch.where: dists = dists * (torch.ones_like(dists) + true_positive_indices[:, None, :].int() * torch.inf)
+    nearest_true_contacts = dists.min(dim=-1).values  # (B, VERTS)
+    normalizer = 1.0
+    if normalize_false_positives:
+        # Compute the normalizing constant for the false positive penalty term, as the cardinality of
+        # the set of direct neighbors of the false positive vertices:
+        raise NotImplementedError("This is not implemented yet.")
+    # Now mask out the nearest true contact distances to keep only the false positive distances:
+    false_positive_penalties = (
+        torch.where(
+            false_positive_bool_indices,
+            torch.exp(nearest_true_contacts) * normalizer,
+            torch.zeros_like(nearest_true_contacts),
+        )
+        .sum(dim=-1)
+        .float()
+    )
+    return (true_positive_scores - false_positive_penalties).mean().cpu()
