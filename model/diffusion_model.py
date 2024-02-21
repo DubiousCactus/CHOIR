@@ -294,7 +294,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 z_contacts_current.shape,
             )
             pbar = tqdm(total=self.time_steps, desc="Generating")
-            for t in range(1, 0, -1):  # Reversed from T to 1
+            for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat_udf, eps_hat_contacts = self.backbone(
                     torch.cat((object_udf, z_udf_current), dim=-1)
                     if self.object_in_encoder
