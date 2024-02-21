@@ -233,20 +233,19 @@ class MultiViewTester(MultiViewTrainer):
                 thresh_mm=2,
                 base_unit=self._data_loader.dataset.base_unit,
                 n_mesh_upsamples=2,
-                return_canonical_verts_faces=True,
+                return_upsampled_verts=False,
             )
             """
             n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
             they aren't evenly distributed so it's not ideal, but as opposed to random sampling
             on the mesh, we can exactly recover contact points even on different poses.
             """
-            pred_binary_contacts, canonical_vf = compute_bin_contacts(
-                hand_verts=verts_pred
+            pred_binary_contacts, _ = compute_bin_contacts(hand_verts=verts_pred)
+            gt_binary_contacts, upsampled_verts = compute_bin_contacts(
+                hand_verts=gt_verts, return_upsampled_verts=True
             )
-            gt_binary_contacts, _ = compute_bin_contacts(hand_verts=gt_verts)
-            canon_verts, _ = canonical_vf
             batch_contact_fidelity = compute_contact_fidelity(
-                canon_verts, pred_binary_contacts, gt_binary_contacts
+                upsampled_verts, pred_binary_contacts, gt_binary_contacts
             )
 
         return {
@@ -467,6 +466,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                     )
                     if self._enable_contacts_tto and contacts_pred is not None:
+                        del anchors_pred, verts_pred, joints_pred
                         contacts_pred, obj_points, obj_normals = (
                             y_hat.get("contacts", None),
                             batch_obj_data["points"],

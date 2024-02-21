@@ -356,7 +356,7 @@ def compute_binary_contacts(
     thresh_mm: float,
     base_unit: float,
     n_mesh_upsamples: int = 2,
-    return_canonical_verts_faces: bool = True,
+    return_upsampled_verts: bool = True,
 ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
     bs = hand_verts.shape[0]
     if n_mesh_upsamples > 0:
@@ -372,7 +372,7 @@ def compute_binary_contacts(
     binary_contacts = (dists <= (thresh_mm / base_unit)).int()
     return (
         binary_contacts,
-        (hand_verts, faces) if return_canonical_verts_faces else None,
+        hand_verts if return_upsampled_verts else None,
     )
 
 
