@@ -111,6 +111,8 @@ class MultiViewTester(MultiViewTrainer):
         self._radius = int(
             0.2 / self._pitch
         )  # 20cm in each direction for the voxel grid
+        self._n_pts_on_mesh = 5000
+        self._n_normals_on_mesh = 5000
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -215,7 +217,6 @@ class MultiViewTester(MultiViewTrainer):
                 )
             # ======= Contact Coverage =======
             # Percentage of hand points within 2mm of the object surface.
-            N_PTS_ON_MESH = 5000
             batch_contact_coverage = compute_contact_coverage(
                 gt_verts,
                 # Careful not to use the closed faces as they shouldn't count for the hand surface points!
@@ -223,7 +224,7 @@ class MultiViewTester(MultiViewTrainer):
                 batch_obj_data["points"],
                 thresh_mm=2,
                 base_unit=self._data_loader.dataset.base_unit,
-                n_samples=N_PTS_ON_MESH,
+                n_samples=self._n_pts_on_mesh,
             )
             # ============ Contact fidelity ============
             compute_bin_contacts = partial(
@@ -302,6 +303,8 @@ class MultiViewTester(MultiViewTrainer):
             self._compute_iv,
             self._pitch,
             self._radius,
+            self._n_pts_on_mesh,
+            self._n_normals_on_mesh,
         )
         batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
         # ==============================================
@@ -465,7 +468,7 @@ class MultiViewTester(MultiViewTrainer):
                         gt_joints,
                         batch_obj_data,
                     )
-                    if self._enable_contacts_tto and contacts_pred is not None:
+                    if self._enable_contacts_tto:
                         del anchors_pred, verts_pred, joints_pred
                         contacts_pred, obj_points, obj_normals = (
                             y_hat.get("contacts", None),

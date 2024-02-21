@@ -195,17 +195,17 @@ def process_object(
     compute_iv: bool,
     pitch: float,
     radius: float,
+    n_samples: int = 5000,
+    n_normals: int = 5000,
 ) -> Dict[str, Dict]:
     obj_mesh = o3dio.read_triangle_mesh(path)
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
-    N_PTS_ON_MESH = 5000
     obj_points = torch.from_numpy(
-        np.asarray(obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points)
+        np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
     ).float()
     obj_normals = None
     if enable_contacts_tto:
-        N_NORMALS = 5000
         obj_mesh.compute_vertex_normals()
         normals_w_roots = torch.cat(
             (
@@ -218,7 +218,7 @@ def process_object(
             ),
             dim=-1,
         )
-        random_indices = torch.randperm(normals_w_roots.shape[0])[:N_NORMALS]
+        random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
     obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles)
     voxel = None
@@ -246,6 +246,8 @@ def mp_process_obj_meshes(
     compute_iv: bool,
     pitch: float,
     radius: float,
+    n_samples: int,
+    n_normals: int,
     keep_mesh_contact_indentity: bool = False,
 ):
     """
@@ -284,6 +286,8 @@ def mp_process_obj_meshes(
                     compute_iv=compute_iv,
                     pitch=pitch,
                     radius=radius,
+                    n_samples=n_samples,
+                    n_normals=n_normals,
                 ),
                 unique_mesh_pths,
             ),
