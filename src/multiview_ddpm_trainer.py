@@ -69,10 +69,39 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             method="ddpm",
         )  # User implementation goes here (utils/training.py)
 
+    def _sample_modality(
+        self,
+        epoch: int,
+        max_epoch_to_equilibrium: int = 300,
+        initial_p0: float = 0.01,
+        target_p0: float = 0.5,
+    ) -> str:
+        """Sample a modality (either "noisy_pair" or "object") for the curent batch, according to a
+        sampling schedule. The schedule initially samples only "object" and then gradually ramps up
+        to 50-50 sampling, following a linear schedule.
+        Args:
+            epoch: The current epoch.
+            max_epoch_to_equilibrium: The number of epochs to reach the 50-50 sampling schedule.
+        Returns:
+            str: The sampled modality.
+        """
+        # Linear interpolation function:  y = y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+        if epoch >= max_epoch_to_equilibrium:
+            p_0 = target_p0
+        else:
+            p_0 = initial_p0 + (epoch - 0) * (target_p0 - initial_p0) / (
+                max_epoch_to_equilibrium - 0
+            )
+        # p_1 is the probability of event 1 (object). We want to start with high p_1 (close to 1.0)
+        # and ramp down to p_1 = 0.5.
+        s = torch.bernoulli(1.0 - torch.tensor(p_0)).int().item()
+        return ["noisy_pair", "object"][s]
+
     @to_cuda
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
         validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
@@ -211,9 +240,14 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             )
         )
         y = samples["choir"] if self.conditional else None
+        y_modality = self._sample_modality(epoch)
+        if y_modality == "object":
+            y = y[..., 0].unsqueeze(-1)
+        elif y_modality == "noisy_pair":
+            pass  # Already comes in noisy_pair modality
 
         if not self._use_deltas:
-            y_hat = self._model(x, y)
+            y_hat = self._model(x, y, y_modality)
         else:
             raise NotImplementedError(
                 "Have to scrap embed_full_choir in DiffusionModel. I tried and it's not better."
@@ -221,7 +255,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         losses = self._training_loss(None, None, y_hat)
         # dict: {"udf_mse": torch.Tensor, "contacts_mse": torch.Tensor}
         if validation:
-            ema_y_hat = self._ema(x, y)
+            ema_y_hat = self._ema(x, y, y_modality)
             ema_loss = self._training_loss(None, None, ema_y_hat)
             losses["ema"] = sum([v for v in ema_loss.values()])
 

@@ -72,7 +72,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 ),
                 partial(
                     ResnetEncoderModel,
-                    choir_dim=2,
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
@@ -94,9 +93,19 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.embedder = (
+        self.noisy_y_embedder = (
             backbones[backbone][1](
                 bps_grid_len=bps_grid_len,
+                choir_dim=2,
+                embed_channels=y_embed_dim,
+            )
+            if y_embed_dim is not None
+            else None
+        )
+        self.object_y_embedder = (
+            backbones[backbone][1](
+                bps_grid_len=bps_grid_len,
+                choir_dim=1,
                 embed_channels=y_embed_dim,
             )
             if y_embed_dim is not None
@@ -162,8 +171,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self,
         x: torch.Tensor,
         y: Optional[torch.Tensor] = None,
+        y_modality: Optional[str] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # ============= Preprocessing =============
+        if y is not None:
+            assert y_modality is not None, "Must provide y_modality when y is not None"
+            assert y_modality in ["noisy_pair", "object"], "Unknown y_modality"
         assert self.x_udf_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
             x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
@@ -185,11 +198,11 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     self.x_contacts_std,
                     input_norm="standard",
                 )
-        y = (
-            self._standardize(y, self.y_udf_mean, self.y_udf_std)
-            if y is not None
-            else None
-        )
+        if y is not None:
+            if y_modality == "noisy_pair":
+                y = self._standardize(y, self.y_udf_mean, self.y_udf_std)
+            elif y_modality == "object":
+                y = self._standardize(y, self.y_udf_mean[0], self.y_udf_std[0])
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -229,7 +242,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             + torch.sqrt(1 - batched_alpha) * eps_contacts
         )
         # 4. Predict the noise sample
-        y_embed = self.embedder(y) if y is not None else None
+        if y_modality == "noisy_pair":
+            y_embed = self.noisy_y_embedder(y) if y is not None else None
+        elif y_modality == "object":
+            y_embed = self.object_y_embedder(y) if y is not None else None
         eps_hat_udf, eps_hat_contacts = self.backbone(
             torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
             if self.object_in_encoder
@@ -244,7 +260,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             "contacts": (eps_hat_contacts, eps_contacts),
         }
 
-    def generate(self, n: int, y: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def generate(
+        self,
+        n: int,
+        y: Optional[torch.Tensor] = None,
+        y_modality: Optional[str] = "noisy_pair",
+    ) -> torch.Tensor:
         def make_t_batched(
             t: int, n: int, y_embed: Optional[torch.Tensor]
         ) -> torch.Tensor:
@@ -259,12 +280,13 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 )
             return t_batch
 
+        assert y_modality in ["noisy_pair", "object"], "Unknown y_modality"
         # ==== Preprocessing ====
-        y = (
-            self._standardize(y, self.y_udf_mean, self.y_udf_std)
-            if y is not None
-            else None
-        )
+        if y is not None:
+            if y_modality == "noisy_pair":
+                y = self._standardize(y, self.y_udf_mean, self.y_udf_std)
+            elif y_modality == "object":
+                y = self._standardize(y, self.y_udf_mean[0], self.y_udf_std[0])
         # ===== Inference =======
         assert (
             self._input_udf_shape is not None or self._input_contacts_shape is not None
@@ -277,7 +299,11 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             ), "Must provide object_udf when object_in_encoder is True"
         with torch.no_grad():
             device = next(self.parameters()).device
-            y_embed = self.embedder(y) if y is not None else None
+            # 4. Predict the noise sample
+            if y_modality == "noisy_pair":
+                y_embed = self.noisy_y_embedder(y) if y is not None else None
+            elif y_modality == "object":
+                y_embed = self.object_y_embedder(y) if y is not None else None
             z_udf_current, z_contacts_current = (
                 torch.randn(n, *self._input_udf_shape).to(device),
                 torch.randn(n, *self._input_contacts_shape).to(device),
