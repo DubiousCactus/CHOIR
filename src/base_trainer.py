@@ -100,6 +100,7 @@ class BaseTrainer:
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
         validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
@@ -168,7 +169,7 @@ class BaseTrainer:
                 break
             self._opt.zero_grad()
             loss, loss_components = self._train_val_iteration(
-                batch
+                batch, epoch
             )  # User implementation goes here (train.py)
             if not self._disable_grad:
                 loss.backward()
@@ -229,7 +230,7 @@ class BaseTrainer:
                 # Blink the progress bar to indicate that the validation loop is running
                 blink_pbar(i, self._pbar, 4)
                 loss, loss_components = self._train_val_iteration(
-                    batch, validation=True
+                    batch, epoch, validation=True
                 )  # User implementation goes here (train.py)
                 val_loss.update(loss.item())
                 for k, v in loss_components.items():

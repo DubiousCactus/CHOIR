@@ -400,7 +400,7 @@ class ContactsFittingLoss(torch.nn.Module):
             if not self.update_knn_each_step:
                 self.knn = knn
         else:
-            knn = self.knn.detach()
+            knn = self.knn
 
         # 2. Compute the squared distance between each MANO vertex and its K nearest neighbors
         distances = knn
@@ -476,7 +476,7 @@ class ContactsFittingLoss(torch.nn.Module):
             )
             # 4. Compute the weighted sum of the distances as the loss.
             distances[:, this_anchor_indices] = (
-                distances[:, this_anchor_indices] * weights[..., None].detach()
+                distances[:, this_anchor_indices] * weights[..., None]
             )
 
         # ========= Regularization =========
@@ -507,4 +507,4 @@ class ContactsFittingLoss(torch.nn.Module):
         # A simpler approach is to strongly penalize for a hand-to-object distance being below
         # 2mm, without any penalization above 1mm.
         # penetration_loss = (torch.nn.functional.relu(0.001 - distances) ** 2).mean()
-        return (distances**2).mean(), penetration_loss
+        return distances.mean(), penetration_loss

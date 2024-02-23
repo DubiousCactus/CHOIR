@@ -47,6 +47,7 @@ from utils.training import (
 )
 from utils.visualization import (
     ScenePicAnim,
+    visualize_MANO,
     visualize_model_predictions_with_multiple_views,
 )
 
@@ -275,7 +276,16 @@ class MultiViewTester(MultiViewTrainer):
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(dim=1)
-        y_hat = self._inference(samples, labels, use_prior=use_prior)
+        cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+        if os.path.exists(cached_pred_path):
+            with open(cached_pred_path, "rb") as f:
+                y_hat = pickle.load(f)
+                y_hat = to_cuda_(y_hat)
+        else:
+            y_hat = self._inference(samples, labels, use_prior=use_prior)
+            with open(cached_pred_path, "wb") as f:
+                y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                pickle.dump(y_hat, f)
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -297,6 +307,7 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
+        print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
         mp_process_obj_meshes(
             mesh_pths,
@@ -404,6 +415,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-8,
                     )
+
                     eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
                         anchors_pred,
                         verts_pred,
@@ -437,7 +449,7 @@ class MultiViewTester(MultiViewTrainer):
                         bps=self._bps,
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
-                        max_iterations=2000,
+                        max_iterations=1000,
                         loss_thresh=1e-7,
                         lr=8e-2,
                         is_rhand=samples["is_rhand"],
@@ -461,6 +473,22 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                    )
+                    pred_hand_mesh = trimesh.Trimesh(
+                        vertices=verts_pred[-1].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    gt_hand_mesh = trimesh.Trimesh(
+                        vertices=gt_verts[-1].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    visualize_MANO(
+                        pred_hand_mesh,
+                        obj_mesh=batch_obj_data["mesh"][-1],
+                        gt_hand=gt_hand_mesh,
+                    )
+                    visualize_MANO(
+                        pred_hand_mesh, obj_mesh=batch_obj_data["mesh"][-1], opacity=1.0
                     )
                     eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
                         anchors_pred,
@@ -496,7 +524,7 @@ class MultiViewTester(MultiViewTrainer):
                             bps=self._bps,
                             anchor_indices=self._anchor_indices,
                             scalar=input_scalar,
-                            max_iterations=2000,
+                            max_iterations=1000,
                             loss_thresh=1e-7,
                             lr=8e-2,
                             is_rhand=samples["is_rhand"],
@@ -520,6 +548,24 @@ class MultiViewTester(MultiViewTrainer):
                             beta_w=1e-4,
                             theta_w=1e-7,
                             choir_w=1000,
+                        )
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[-1].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[-1].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][-1],
+                            gt_hand=gt_hand_mesh,
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][-1],
+                            opacity=1.0,
                         )
                         eval_metrics[
                             "With contact fitting"

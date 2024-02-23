@@ -158,7 +158,7 @@ class ContactPoseDataset(BaseDataset):
             if split == "train":
                 noisy_samples_per_grasp = 16
             else:
-                noisy_samples_per_grasp = 4
+                noisy_samples_per_grasp = 2
 
         self._eval_observation_plateau = eval_observations_plateau
         if eval_observations_plateau:
@@ -246,7 +246,9 @@ class ContactPoseDataset(BaseDataset):
         n_participants = 2 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
-                for obj_name in get_object_names(p_num, intent):
+                for obj_name in get_object_names(
+                    p_num, intent
+                ):  # TODO Fix this non-deterministic pieace of shit function!!!!!
                     if participant_splits:
                         cp_dataset.append((p_num, intent, obj_name))
                     else:
