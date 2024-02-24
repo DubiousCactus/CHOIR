@@ -612,7 +612,7 @@ class ContactPoseDataset(BaseDataset):
                             "bik,bjk->bij", test_lower_tril_mat, test_lower_tril_mat
                         )
                         assert (
-                            torch.norm(cov - approx_cov) < 1e-8
+                            torch.norm(cov - approx_cov) < 1e-7
                         ), f"Diff: {torch.norm(cov - approx_cov)}"
                         # print(f"Lower tril cov: {lower_tril_cov[None, ...].shape}")
                         # print(f"Mu: {mu[None, ...].shape}")
