@@ -683,16 +683,13 @@ class ContactUNetBackboneModel(torch.nn.Module):
             SpatialTransformer,
             n_heads=8,
             dim_heads=32,
-            dropout=0.0,
+            dropout=0.1,
             gated_ff=False,
             norm_groups=norm_groups,
         )
         # ======== Contact layers =========
         self.contacts_dim = contacts_dim
-        self.feat_prop = torch.nn.Sequential(
-            torch.nn.GroupNorm(32, 256),
-            torch.nn.Dropout(0.1),
-        )
+        self.feat_prop = torch.nn.Dropout(0.1)
         self.contact_1 = temporal_res_block(
             dim_in=contacts_dim * self.n_anchors + 256
         )  # input x + embedding from unet
