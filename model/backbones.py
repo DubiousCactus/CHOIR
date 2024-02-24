@@ -689,13 +689,13 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         # ======== Contact layers =========
         self.contacts_dim = contacts_dim
-        self.feat_dropout = torch.nn.Dropout(0.2)
+        self.feat_dropout = torch.nn.Dropout(0.1)
         self.contact_1 = temporal_res_block(
-            dim_in=contacts_dim * self.n_anchors + 256, y_dim=None
+            dim_in=contacts_dim * self.n_anchors + 256
         )  # input x + embedding from unet
+        self.contact_2 = temporal_res_block()
         self.contact_3 = temporal_res_block()
         self.contact_4 = temporal_res_block()
-        self.contact_5 = temporal_res_block()
         self.contact_output = torch.nn.Linear(
             contacts_hidden_dim, contacts_dim * self.n_anchors
         )
@@ -864,23 +864,23 @@ class ContactUNetBackboneModel(torch.nn.Module):
         x1 = self.identity1(x_udf, t_embed, context=y[0], debug=debug)
         x2 = self.down1(x1, t_embed, context=y[1], debug=debug)
         # x2 = self.self_attn_1(x2) if self.use_self_attn else x2
-        # c2 = self.contact_2(c1, t_emb=t_embed, y_emb=y[4].view(bs*ctx_len, -1), debug=debug)
         x3 = self.down2(x2, t_embed, context=y[2], debug=debug)
         x3 = self.self_attn_2(x3) if self.use_self_attn else x3
         x4 = self.down3(x3, t_embed, context=y[3], debug=debug)
         x4 = self.self_attn_3(x4) if self.use_self_attn else x4
         x5 = self.tunnel1(x4, t_embed, context=y[4], debug=debug)
         x5 = self.self_attn_4(x5) if self.use_self_attn else x5
+        x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # ========= Feature fusion =========
-        unet_features = x5.mean(dim=(2, 3, 4))
+        unet_features = x6.mean(dim=(2, 3, 4))
         unet_features = self.feat_dropout(unet_features)
         c1 = self.contact_1(
             torch.cat((x_contacts, unet_features), dim=-1),
             t_emb=t_embed,
-            y_emb=None,
+            y_emb=y[4].view(bs * ctx_len, -1),
             debug=debug,
         )
-        c3 = self.contact_3(
+        c2 = self.contact_2(
             c1, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
         )
         # cx6 = x6 + self.feature_fusion_contacts_to_dist(
@@ -889,27 +889,28 @@ class ContactUNetBackboneModel(torch.nn.Module):
         # c3x = c3 + self.feature_fusion_dist_to_contacts(
         # q=c3[..., None, None, None], k=x6, v=x6
         # ).view(bs * ctx_len, c3.shape[1])
-        x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # The output of the final downsampling layer is concatenated with the output of the final
         # tunnel layer because they have the same shape H and W. Then we upscale those features and
         # conctenate the upscaled features with the output of the previous downsampling layer, and
         # so on.
         x7 = self.up1(torch.cat((x6, x4), dim=1), t_embed, context=y[3], debug=debug)
         x7 = self.self_attn_5(x7) if self.use_self_attn else x7
+        c3 = self.contact_3(
+            c2, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
+        )
+        if self.contacts_skip_connections:
+            c3 = c3 + c1
+        x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y[2], debug=debug)
+        x8 = self.self_attn_6(x8) if self.use_self_attn else x8
         c4 = self.contact_4(
             c3, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
         )
         if self.contacts_skip_connections:
-            c4 = c4 + c1
-        x8 = self.up2(torch.cat((x7, x3), dim=1), t_embed, context=y[2], debug=debug)
-        x8 = self.self_attn_6(x8) if self.use_self_attn else x8
-        c5 = self.contact_5(
-            c4, t_emb=t_embed, y_emb=y[4].view(bs * ctx_len, -1), debug=debug
-        )
+            c4 = c4 + c2
         x9 = self.up3(torch.cat((x8, x2), dim=1), t_embed, context=y[1], debug=debug)
         # x9 = self.self_attn_7(x9) if self.use_self_attn else x9
         x10 = self.identity3(x9, t_embed, context=y[0], debug=debug)
-        c6 = self.contact_output(c5)
+        c5 = self.contact_output(c4)
         comp_output_shape = (
             bs * ctx_len,
             self.output_dim,
@@ -927,7 +928,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
             .reshape(comp_output_shape)
             .view(output_shape)
         )
-        return output, c6.view(contacts_input_shape)
+        return output, c5.view(contacts_input_shape)
 
 
 class ContactUNetBackboneModel_legacy(UNetBackboneModel):
