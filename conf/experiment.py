@@ -29,6 +29,7 @@ from unique_names_generator.data import ADJECTIVES, NAMES
 import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
+from dataset.oakink import OakInkDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
@@ -109,6 +110,15 @@ dataset_store(
         model_contacts=False,
     ),
     name="contactpose",
+)
+dataset_store(
+    pbuilds(
+        OakInkDataset,
+        builds_bases=(GraspingDatasetConf,),
+        root_path="/home/cactus/Code/OakInkData",
+        model_contacts=True,
+    ),
+    name="oakink",
 )
 dataset_store(
     pbuilds(
@@ -361,7 +371,7 @@ sched_store(
     pbuilds(
         torch.optim.lr_scheduler.StepLR,
         step_size=100,
-        gamma=0.5,
+        gamma=0.7,
     ),
     name="step",
 )
