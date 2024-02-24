@@ -161,7 +161,7 @@ class OakInkDataset(BaseDataset):
         os.environ["OAKINK_DIR"] = self._dataset_root
         dataset = OakInkShape(
             data_split=split,
-            mano_assets_root="vendor/manotorch/assets/anchor",
+            mano_assets_root="vendor/manotorch/assets/",
         )
         idx = 0
         n_samples = len(dataset) if not tiny else (1000 if split == "train" else 100)
