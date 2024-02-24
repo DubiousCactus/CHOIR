@@ -751,6 +751,43 @@ experiment_store(
     make_config(
         hydra_defaults=[
             "_self_",
+            {"override /model": "contact_bps_ddpm"},
+            {"override /dataset": "oakink"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=128,
+            context_channels=MISSING,
+            use_encoder_self_attn=False,
+            use_backbone_self_attn=True,
+            object_in_encoder=True,
+            contacts_hidden_dim=2048,
+            contacts_skip_connections=True,
+            input_normalization="scale",
+        ),
+        run=dict(conditional=True, full_choir=False, model_contacts=True),
+        bases=(Experiment,),
+    ),
+    name="coddpm_3d_multiview_oakink",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
             {"override /model": "bps_ddpm"},
             {"override /dataset": "contactpose"},
             {"override /trainer": "ddpm_multiview"},
