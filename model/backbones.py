@@ -689,7 +689,10 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         # ======== Contact layers =========
         self.contacts_dim = contacts_dim
-        self.feat_dropout = torch.nn.Dropout(0.1)
+        self.feat_prop = torch.nn.Sequential(
+            torch.nn.GroupNorm(32, 256),
+            torch.nn.Dropout(0.1),
+        )
         self.contact_1 = temporal_res_block(
             dim_in=contacts_dim * self.n_anchors + 256
         )  # input x + embedding from unet
@@ -873,7 +876,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         x6 = self.tunnel2(x5, t_embed, context=y[4], debug=debug)
         # ========= Feature fusion =========
         unet_features = x6.mean(dim=(2, 3, 4))
-        unet_features = self.feat_dropout(unet_features)
+        unet_features = self.feat_prop(unet_features)
         c1 = self.contact_1(
             torch.cat((x_contacts, unet_features), dim=-1),
             t_emb=t_embed,
