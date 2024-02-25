@@ -161,17 +161,20 @@ class OakInkDataset(BaseDataset):
         os.environ["OAKINK_DIR"] = self._dataset_root
         dataset = OakInkShape(
             data_split=split,
-            mano_assets_root="vendor/manotorch/assets/",
+            mano_assets_root="vendor/manotorch/assets/mano",
         )
         idx = 0
         n_samples = len(dataset) if not tiny else (1000 if split == "train" else 100)
         dataset_path = osp.join(
             self._cache_dir,
             f"{split}_{n_samples}-samples"
-            + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"{'_tiny' if tiny else ''}"
-            + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
+            + f"{'_tiny' if tiny else ''}.pkl",
         )
+        obj_and_grasps_path = osp.join(self._cache_dir, 
+            f"{split}_{n_samples}-samples"
+            + f"{'_tiny' if tiny else ''}",
+            )
+        os.makedirs(obj_and_grasps_path, exist_ok=True)
         objects, grasps = [], []
         print(f"[*] Loading OakInk{' (tiny)' if tiny else ''}...")
         if osp.isfile(dataset_path):
@@ -218,15 +221,15 @@ class OakInkDataset(BaseDataset):
                     alt_hand_tsl: (3,)
                 }
                 """
-                print(list(shape.keys()))
-                obj_path = osp.join(dataset_path, f"{shape['obj_id']}.obj")
+                obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.obj")
                 obj_tmesh = Trimesh(
                     vertices=shape["obj_verts"], faces=shape["obj_faces"]
                 )
-                with open(obj_path, "w") as f:
-                    f.write(obj_tmesh.export("obj"))
+                with open(obj_path, "wb") as f:
+                    obj_tmesh.export(f, file_type="obj")
+
                 grasp_path = osp.join(
-                    dataset_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
+                    obj_and_grasps_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
                 )
                 with open(grasp_path, "wb") as f:
                     pickle.dump(

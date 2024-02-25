@@ -115,7 +115,7 @@ dataset_store(
     pbuilds(
         OakInkDataset,
         builds_bases=(GraspingDatasetConf,),
-        dataset_root="/home/cactus/Code/OakInkData",
+        dataset_root="/home/moralest/ssd_storage/OakInkData",
         model_contacts=True,
     ),
     name="oakink",
