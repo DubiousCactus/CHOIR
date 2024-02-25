@@ -57,8 +57,8 @@ class MultiViewDDPMTester(MultiViewTester):
                 )
             )
             y = samples["choir"] if self.conditional else None
-            self._model(x, y)
-            self._ema.ema_model(x, y)
+            self._model(x, y, y_modality="noisy_pair")
+            self._ema.ema_model(x, y, y_modality="noisy_pair")
         print("[+] Done!")
 
     @to_cuda

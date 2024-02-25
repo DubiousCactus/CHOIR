@@ -32,6 +32,7 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
+from utils.dataset import lower_tril_cholesky_to_covmat
 from utils.testing import (
     compute_binary_contacts,
     compute_contact_coverage,
@@ -47,6 +48,8 @@ from utils.training import (
 )
 from utils.visualization import (
     ScenePicAnim,
+    visualize_3D_gaussians_on_hand_mesh,
+    visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
     visualize_model_predictions_with_multiple_views,
 )
@@ -301,6 +304,9 @@ class MultiViewTester(MultiViewTrainer):
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
+        gt_contact_gaussian_params = (
+            labels["contact_gaussians"] if self._enable_contacts_tto else None
+        )
 
         # ============== Object processing ==============
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
@@ -426,6 +432,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                     )
                 else:
+                    sample_to_viz = 2
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         None,
@@ -475,37 +482,82 @@ class MultiViewTester(MultiViewTrainer):
                         choir_w=1000,
                     )
                     pred_hand_mesh = trimesh.Trimesh(
-                        vertices=verts_pred[-1].detach().cpu().numpy(),
+                        vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
                         faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                     )
                     gt_hand_mesh = trimesh.Trimesh(
-                        vertices=gt_verts[-1].detach().cpu().numpy(),
+                        vertices=gt_verts[sample_to_viz].detach().cpu().numpy(),
                         faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                     )
                     visualize_MANO(
                         pred_hand_mesh,
-                        obj_mesh=batch_obj_data["mesh"][-1],
+                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
                         gt_hand=gt_hand_mesh,
                     )
                     visualize_MANO(
-                        pred_hand_mesh, obj_mesh=batch_obj_data["mesh"][-1], opacity=1.0
+                        pred_hand_mesh,
+                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
+                        opacity=1.0,
                     )
-                    eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
-                        anchors_pred,
-                        verts_pred,
-                        joints_pred,
-                        gt_anchors,
-                        gt_verts,
-                        gt_joints,
-                        batch_obj_data,
-                    )
+                    # eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
+                    # anchors_pred,
+                    # verts_pred,
+                    # joints_pred,
+                    # gt_anchors,
+                    # gt_verts,
+                    # gt_joints,
+                    # batch_obj_data,
+                    # )
                     if self._enable_contacts_tto:
-                        del anchors_pred, verts_pred, joints_pred
+                        # del anchors_pred, verts_pred, joints_pred
                         contacts_pred, obj_points, obj_normals = (
                             y_hat.get("contacts", None),
                             batch_obj_data["points"],
                             batch_obj_data["normals"],
                         )
+                        # Visualize the Gaussian parameters
+                        print(
+                            "====== Reconstructing contacts from GT 3D Gaussians ======"
+                        )
+                        print(
+                            f"GT gaussian params shape: {gt_contact_gaussian_params[sample_to_viz, -1].shape}"
+                        )
+                        visualize_3D_gaussians_on_hand_mesh(
+                            gt_hand_mesh,
+                            batch_obj_data["mesh"][sample_to_viz],
+                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                            base_unit=self._data_loader.dataset.base_unit,
+                            anchors=gt_anchors[sample_to_viz].cpu(),
+                        )
+                        visualize_hand_contacts_from_3D_gaussians(
+                            gt_hand_mesh,
+                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                            gt_anchors[sample_to_viz].cpu(),
+                        )
+
+                        print("====== Reconstructing contacts from 3D Gaussians ======")
+                        pred_contact_gaussian_params = torch.cat(
+                            (
+                                contacts_pred[sample_to_viz, ..., :3],
+                                lower_tril_cholesky_to_covmat(contacts_pred[..., 3:])[
+                                    sample_to_viz
+                                ].view(-1, 9),
+                            ),
+                            dim=-1,
+                        )
+                        visualize_3D_gaussians_on_hand_mesh(
+                            pred_hand_mesh,
+                            batch_obj_data["mesh"][sample_to_viz],
+                            pred_contact_gaussian_params.cpu(),
+                            base_unit=self._data_loader.dataset.base_unit,
+                            anchors=anchors_pred[sample_to_viz].cpu(),
+                        )
+                        visualize_hand_contacts_from_3D_gaussians(
+                            pred_hand_mesh,
+                            pred_contact_gaussian_params.cpu(),
+                            anchors_pred[sample_to_viz].cpu(),
+                        )
+
                         (
                             _,
                             _,
@@ -559,12 +611,12 @@ class MultiViewTester(MultiViewTrainer):
                         )
                         visualize_MANO(
                             pred_hand_mesh,
-                            obj_mesh=batch_obj_data["mesh"][-1],
+                            obj_mesh=batch_obj_data["mesh"][0],
                             gt_hand=gt_hand_mesh,
                         )
                         visualize_MANO(
                             pred_hand_mesh,
-                            obj_mesh=batch_obj_data["mesh"][-1],
+                            obj_mesh=batch_obj_data["mesh"][0],
                             opacity=1.0,
                         )
                         eval_metrics[

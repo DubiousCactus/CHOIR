@@ -1130,7 +1130,13 @@ def visualize_3D_gaussians_on_hand_mesh(
         )
         geometries.append(pcd)
 
-    geometries.append(hand_mesh)
+    if type(hand_mesh) == Trimesh:
+        o3d_hand_mesh = open3d.geometry.TriangleMesh()
+        o3d_hand_mesh.vertices = open3d.utility.Vector3dVector(hand_mesh.vertices)
+        o3d_hand_mesh.triangles = open3d.utility.Vector3iVector(hand_mesh.faces)
+        geometries.append(o3d_hand_mesh)
+    else:
+        geometries.append(hand_mesh)
     # geometries.append(obj_mesh)
     if debug_anchor is not None:
         assert anchors is not None
@@ -1189,8 +1195,15 @@ def visualize_hand_contacts_from_3D_gaussians(
     colours[:, 0] = vertex_contacts  # / vertex_contacts.max()
     colours[:, 1] = 0.58 - colours[:, 0]
     colours[:, 2] = 0.66 - colours[:, 0]
-    hand_mesh.vertex_colors = open3d.utility.Vector3dVector(colours)
-    geometries.append(hand_mesh)
+    if type(hand_mesh) == Trimesh:
+        o3d_hand_mesh = open3d.geometry.TriangleMesh()
+        o3d_hand_mesh.vertices = open3d.utility.Vector3dVector(hand_mesh.vertices)
+        o3d_hand_mesh.triangles = open3d.utility.Vector3iVector(hand_mesh.faces)
+        o3d_hand_mesh.vertex_colors = open3d.utility.Vector3dVector(colours)
+        geometries.append(o3d_hand_mesh)
+    else:
+        hand_mesh.vertex_colors = open3d.utility.Vector3dVector(colours)
+        geometries.append(hand_mesh)
 
     if gt_contacts is not None:
         gt_hand_mesh = copy.deepcopy(hand_mesh)

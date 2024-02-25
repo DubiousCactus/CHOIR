@@ -23,6 +23,7 @@ from pytorch3d.transforms.rotation_conversions import (
     rotation_6d_to_matrix,
 )
 from scipy.spatial import cKDTree
+from trimesh import Trimesh
 
 from globals import FLAT_LOWER_INDICES
 from utils import to_cuda
@@ -609,7 +610,10 @@ def get_scalar(anchors, obj_ptcld, scaling) -> torch.Tensor:
 
 
 def augment_hand_object_pose(
-    obj_mesh: open3d.geometry.TriangleMesh, hTm: torch.Tensor, around_z: bool = True
+    obj_mesh: open3d.geometry.TriangleMesh,
+    hTm: torch.Tensor,
+    around_z: bool = True,
+    return_trimesh: bool = False,
 ) -> None:
     """
     Augment the object mesh with a random rotation and translation.
@@ -623,6 +627,11 @@ def augment_hand_object_pose(
         R = random_rotation().cpu().numpy()
     # It is CRUCIAL to translate both to the center of the object before rotating, because the hand joints
     # are expressed w.r.t. the object center. Otherwise, weird things happen.
+    if type(obj_mesh) is Trimesh:
+        o3d_obj_mesh = open3d.geometry.TriangleMesh()
+        o3d_obj_mesh.vertices = open3d.utility.Vector3dVector(obj_mesh.vertices)
+        o3d_obj_mesh.triangles = open3d.utility.Vector3iVector(obj_mesh.faces)
+        obj_mesh = o3d_obj_mesh
     rotate_origin = obj_mesh.get_center()
     obj_mesh.translate(-rotate_origin)
     # Rotate the object and hand
@@ -635,6 +644,8 @@ def augment_hand_object_pose(
     hTm[:, :3, 3] -= torch.from_numpy(rotate_origin).to(hTm.device, dtype=hTm.dtype)
     r_hTm = R4.to(hTm.device) @ hTm
     hTm = r_hTm
+    if return_trimesh and type(obj_mesh) is open3d.geometry.TriangleMesh:
+        obj_mesh = Trimesh(np.array(obj_mesh.vertices), np.array(obj_mesh.triangles))
     return obj_mesh, hTm
 
 

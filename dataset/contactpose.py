@@ -530,7 +530,7 @@ class ContactPoseDataset(BaseDataset):
                         gt_trans -= obj_center.to(gt_trans.device, dtype=torch.float32)
                     # ================ Compute GT anchors and verts ==================
                     gt_verts, gt_joints = affine_mano(
-                        gt_theta, gt_beta, gt_rot_6d, gt_trans
+                        gt_theta, gt_beta, gt_trans, rot_6d=gt_rot_6d
                     )
                     gt_anchors = affine_mano.get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
@@ -682,7 +682,7 @@ class ContactPoseDataset(BaseDataset):
                         theta += pose_noise
                         trans += trans_noise
 
-                        verts, joints = affine_mano(theta, beta, rot_6d, trans)
+                        verts, joints = affine_mano(theta, beta, trans, rot_6d=rot_6d)
 
                         mpjpe = torch.linalg.vector_norm(
                             joints.squeeze(0) - gt_joints.squeeze(0), dim=1, ord=2
