@@ -307,7 +307,7 @@ class OakInkDataset(BaseDataset):
             for k in range(n_augs + 1):
                 grasp_name = f"{obj_id}_{seq_id}_{action_id}_aug-{k}"
             if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
-                    os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
+                os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
                 if (
                     len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
                     >= self._seq_len
