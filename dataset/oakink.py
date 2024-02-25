@@ -18,7 +18,6 @@ from typing import List, Tuple
 
 import blosc
 import torch
-from oikit.oi_shape import OakInkShape
 from tqdm import tqdm
 from trimesh import Trimesh
 
@@ -158,11 +157,7 @@ class OakInkDataset(BaseDataset):
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[dict, list, list, str]:
-        os.environ["OAKINK_DIR"] = self._dataset_root
-        dataset = OakInkShape(
-            data_split=split,
-            mano_assets_root="vendor/manotorch/assets/mano",
-        )
+        
         idx = 0
         n_samples = len(dataset) if not tiny else (1000 if split == "train" else 100)
         dataset_path = osp.join(
@@ -182,8 +177,10 @@ class OakInkDataset(BaseDataset):
                 compressed_pkl = f.read()
                 objects, grasps = pickle.loads(blosc.decompress(compressed_pkl))
         else:
+            os.environ["OAKINK_DIR"] = self._dataset_root
+            from oikit.oi_shape import OakInkShape
             pbar = tqdm(total=n_samples)
-            for shape in dataset:
+            for shape in OakInkShape(data_split=split, mano_assets_root="vendor/manotorch/assets/mano"):
                 if tiny and idx == n_samples:
                     break
                 """
@@ -221,12 +218,15 @@ class OakInkDataset(BaseDataset):
                     alt_hand_tsl: (3,)
                 }
                 """
-                obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.obj")
-                obj_tmesh = Trimesh(
-                    vertices=shape["obj_verts"], faces=shape["obj_faces"]
-                )
+                obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.pkl")
                 with open(obj_path, "wb") as f:
-                    obj_tmesh.export(f, file_type="obj")
+                    pickle.dump(
+                        {
+                            "verts": shape['obj_verts'],
+                            "faces": shape['obj_faces'],
+                        },
+                        f
+                    )
 
                 grasp_path = osp.join(
                     obj_and_grasps_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
@@ -234,6 +234,9 @@ class OakInkDataset(BaseDataset):
                 with open(grasp_path, "wb") as f:
                     pickle.dump(
                         {
+                            "seq_id": shape['seq_id'],
+                            "obj_id": shape['obj_id'],
+                            "action_id": shape["action_id"],
                             "joints": shape["joints"],
                             "verts": shape["verts"],
                             "hand_pose": shape["hand_pose"],
@@ -261,13 +264,71 @@ class OakInkDataset(BaseDataset):
 
     def _load(
         self,
-        dataset_root: str,
-        tiny: bool,
         split: str,
-        seed: int,
-        # ) -> Tuple[Union[dict, list], Union[dict, list]]:
+        objects: List[str],
+        grasps: List,
+        dataset_name: str,
     ) -> List[str]:
-        raise NotImplementedError("This method is not implemented.")
+        samples_labels_pickle_pth = osp.join(
+            self._cache_dir,
+            "samples_and_labels",
+            f"perturbed-{self._perturbation_level}_"
+            + f"_{self._obj_ptcld_size}-obj-pts"
+            + f"_{self._bps_dim}-bps"
+            + (f"-grid" if self._use_bps_grid else "")
+            + f"{'_object-centered' if self._center_on_object_com else ''}"
+            + f"_{self._rescale}-rescaled"
+            + f"{'_exponential_mapped' if self._remap_bps_distances else ''}"
+            + (f"-{self._exponential_map_w}" if self._remap_bps_distances else "")
+            + f"_{'random-anchors' if self._random_anchor_assignment else 'ordered-anchors'}"
+            + f"{'_deltas' if self._use_deltas else ''}"
+            + f"{'_contact-gaussians' if self._model_contacts else ''}"
+            + f"_{split}{'-augmented' if self._augment else ''}",
+        )
+        if not osp.isdir(samples_labels_pickle_pth):
+            os.makedirs(samples_labels_pickle_pth)
+        affine_mano: AffineMANO = AffineMANO(for_oakink=True)  # type: ignore
+
+        n_augs = self._n_augs if self._augment else 0
+
+        # For each object-grasp pair, compute the CHOIR field.
+        print("[*] Computing CHOIR fields...")
+        grasp_paths = []
+        pbar = tqdm(total=len(objects) * (n_augs + 1))
+        dataset_mpjpe = MeanMetric()
+        dataset_root_aligned_mpjpe = MeanMetric()
+        computed = False
+        for obj_pth, grasp_pth in zip(objects, grasps):
+            with open(grasp_pth, "rb") as f:
+                grasp = pickle.load(f)
+            with open(obj_pth, "rb") as f:
+                obj = pickle.load(f)
+            obj_id, seq_id, action_id = grasp['obj_id'], grasp['seq_id'], grasp['action_id']
+            for k in range(n_augs + 1):
+                grasp_name = f"{obj_id}_{seq_id}_{action_id}_aug-{k}"
+            if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
+                    os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
+                if (
+                    len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
+                    >= self._seq_len
+                ):
+                    grasp_paths.append(
+                        [
+                            osp.join(
+                                samples_labels_pickle_pth,
+                                grasp_name,
+                                f"sample_{i:06d}.pkl",
+                            )
+                            for i in range(self._seq_len)
+                        ]
+                    )
+                else:
+                    visualize = self._debug and (random.Random().random() < 0.5)
+                    has_visualized = False
+                    computed = True
+                    # ================== Original Hand-Object Pair ==================
+                    obj_mesh = Trimesh(vertices=obj['verts'], faces=obj['faces'])
+                    
 
     def __len__(self):
         return len(self._samples)
