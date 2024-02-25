@@ -117,7 +117,7 @@ dataset_store(
         builds_bases=(GraspingDatasetConf,),
         dataset_root="/home/moralest/ssd_storage/OakInkData",
         model_contacts=True,
-        noisy_samples_per_grasp=1,
+        noisy_samples_per_grasp=5,
     ),
     name="oakink",
 )
