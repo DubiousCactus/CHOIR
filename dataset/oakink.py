@@ -179,6 +179,10 @@ class OakInkDataset(BaseDataset):
             debug=debug,
         )
 
+    @property
+    def theta_dim(self):
+        return 48
+
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[dict, list, list, str]:
@@ -899,6 +903,3 @@ class OakInkDataset(BaseDataset):
                 f"[*] Dataset Root-aligned MPJPE (mm): {dataset_root_aligned_mpjpe.compute().item() * self.base_unit}"
             )
         return grasp_paths
-
-    def __len__(self):
-        return len(self._samples)
