@@ -171,6 +171,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+        assert len(self._sample_paths) > 0
 
     @property
     def use_bps_grid(self):
