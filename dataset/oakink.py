@@ -263,32 +263,34 @@ class OakInkDataset(BaseDataset):
                 }
                 """
                 obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.pkl")
-                with open(obj_path, "wb") as f:
-                    pickle.dump(
-                        {
-                            "verts": shape["obj_verts"],
-                            "faces": shape["obj_faces"],
-                        },
-                        f,
-                    )
-
                 grasp_path = osp.join(
                     obj_and_grasps_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
                 )
-                with open(grasp_path, "wb") as f:
-                    pickle.dump(
-                        {
-                            "seq_id": shape["seq_id"],
-                            "obj_id": shape["obj_id"],
-                            "action_id": shape["action_id"],
-                            "joints": shape["joints"],
-                            "verts": shape["verts"],
-                            "hand_pose": shape["hand_pose"],
-                            "hand_shape": shape["hand_shape"],
-                            "hand_tsl": shape["hand_tsl"],
-                        },
-                        f,
-                    )
+
+                if not osp.isfile(obj_path) and not osp.isfile(grasp_path):
+                    with open(obj_path, "wb") as f:
+                        pickle.dump(
+                            {
+                                "verts": shape["obj_verts"],
+                                "faces": shape["obj_faces"],
+                            },
+                            f,
+                        )
+
+                    with open(grasp_path, "wb") as f:
+                        pickle.dump(
+                            {
+                                "seq_id": shape["seq_id"],
+                                "obj_id": shape["obj_id"],
+                                "action_id": shape["action_id"],
+                                "joints": shape["joints"],
+                                "verts": shape["verts"],
+                                "hand_pose": shape["hand_pose"],
+                                "hand_shape": shape["hand_shape"],
+                                "hand_tsl": shape["hand_tsl"],
+                            },
+                            f,
+                        )
 
                 objects.append(obj_path)
                 grasps.append(grasp_path)
