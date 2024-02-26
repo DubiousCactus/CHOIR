@@ -358,66 +358,64 @@ class OakInkDataset(BaseDataset):
                 grasp_name = f"{obj_id}_{seq_id}_{action_id}_aug-{k}"
                 if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                     os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
-                    if (
-                        len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
-                        >= self._seq_len
-                    ):
-                        grasp_paths.append(
-                            [
-                                osp.join(
-                                    samples_labels_pickle_pth,
-                                    grasp_name,
-                                    f"sample_{i:06d}.pkl",
-                                )
-                                for i in range(self._seq_len)
-                            ]
+                if (
+                    len(os.listdir(osp.join(samples_labels_pickle_pth, grasp_name)))
+                    >= self._seq_len
+                ):
+                    grasp_paths.append(
+                        [
+                            osp.join(
+                                samples_labels_pickle_pth,
+                                grasp_name,
+                                f"sample_{i:06d}.pkl",
+                            )
+                            for i in range(self._seq_len)
+                        ]
+                    )
+                else:
+                    visualize = self._debug and (random.Random().random() < 0.5)
+                    has_visualized = False
+                    computed = True
+                    # ================== Original Hand-Object Pair ==================
+                    obj_mesh = o3dg.TriangleMesh()
+                    obj_mesh.vertices = o3du.Vector3dVector(obj["verts"])
+                    obj_mesh.triangles = o3du.Vector3iVector(obj["faces"])
+                    gt_verts, gt_joints = (
+                        torch.from_numpy(grasp["verts"])[None, ...],
+                        torch.from_numpy(grasp["joints"])[None, ...],
+                    )
+                    gt_pose, gt_shape, gt_trans = (
+                        torch.from_numpy(grasp["hand_pose"].copy())[None, ...],
+                        torch.from_numpy(grasp["hand_shape"].copy())[None, ...],
+                        torch.from_numpy(grasp["hand_tsl"].copy())[None, ...],
+                    )
+                    # print("ORIGINAL")
+                    # print(gt_verts.shape, gt_joints.shape)
+                    # hand_tmesh = Trimesh(
+                    # vertices=gt_verts, faces=affine_mano.faces.cpu().numpy()
+                    # )
+                    # # Plot the axes gizmo:
+                    # pyvista.plot([obj_mesh, hand_tmesh])
+                    # =================== Apply augmentation =========================
+                    if self._augment and k > 0:
+                        # Let's build a 4x4 homogeneous matrix from the MANO root rotation
+                        # (axis-angle quaternion) and translation (3D vector):
+                        hTm = torch.eye(4)[None, ...]
+                        root_rot_quat = gt_pose[:, :3]
+                        hTm[:, :3, :3] = axis_angle_to_matrix(root_rot_quat)
+                        hTm[:, :3, 3] = gt_trans
+                        obj_mesh, hTm = augment_hand_object_pose(
+                            obj_mesh, hTm, around_z=True
                         )
-                    else:
-                        visualize = self._debug and (random.Random().random() < 0.5)
-                        has_visualized = False
-                        computed = True
-                        # ================== Original Hand-Object Pair ==================
-                        obj_mesh = o3dg.TriangleMesh()
-                        obj_mesh.vertices = o3du.Vector3dVector(obj["verts"])
-                        obj_mesh.triangles = o3du.Vector3iVector(obj["faces"])
-                        gt_verts, gt_joints = (
-                            torch.from_numpy(grasp["verts"])[None, ...],
-                            torch.from_numpy(grasp["joints"])[None, ...],
-                        )
-                        gt_pose, gt_shape, gt_trans = (
-                            torch.from_numpy(grasp["hand_pose"].copy())[None, ...],
-                            torch.from_numpy(grasp["hand_shape"].copy())[None, ...],
-                            torch.from_numpy(grasp["hand_tsl"].copy())[None, ...],
-                        )
-                        # print("ORIGINAL")
-                        # print(gt_verts.shape, gt_joints.shape)
+                        gt_pose[:, :3] = matrix_to_axis_angle(hTm[:, :3, :3])
+                        gt_trans = hTm[:, :3, 3]
+                        gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_trans)
+                        # print("AUGMENTED")
                         # hand_tmesh = Trimesh(
-                        # vertices=gt_verts, faces=affine_mano.faces.cpu().numpy()
+                        # vertices=gt_verts[0].cpu().numpy(),
+                        # faces=affine_mano.faces.cpu().numpy(),
                         # )
-                        # # Plot the axes gizmo:
                         # pyvista.plot([obj_mesh, hand_tmesh])
-                        # =================== Apply augmentation =========================
-                        if self._augment and k > 0:
-                            # Let's build a 4x4 homogeneous matrix from the MANO root rotation
-                            # (axis-angle quaternion) and translation (3D vector):
-                            hTm = torch.eye(4)[None, ...]
-                            root_rot_quat = gt_pose[:, :3]
-                            hTm[:, :3, :3] = axis_angle_to_matrix(root_rot_quat)
-                            hTm[:, :3, 3] = gt_trans
-                            obj_mesh, hTm = augment_hand_object_pose(
-                                obj_mesh, hTm, around_z=True
-                            )
-                            gt_pose[:, :3] = matrix_to_axis_angle(hTm[:, :3, :3])
-                            gt_trans = hTm[:, :3, 3]
-                            gt_verts, gt_joints = affine_mano(
-                                gt_pose, gt_shape, gt_trans
-                            )
-                            # print("AUGMENTED")
-                            # hand_tmesh = Trimesh(
-                            # vertices=gt_verts[0].cpu().numpy(),
-                            # faces=affine_mano.faces.cpu().numpy(),
-                            # )
-                            # pyvista.plot([obj_mesh, hand_tmesh])
                     # =================================================================
                     # gt_verts, gt_joints = affine_mano(
                     # torch.from_numpy(gt_pose).float().unsqueeze(0),
