@@ -16,7 +16,7 @@ import sys
 from contextlib import redirect_stdout
 from typing import List, Tuple
 
-import blosc
+import blosc2
 import numpy as np
 import torch
 from hydra.utils import get_original_cwd
@@ -355,7 +355,7 @@ class ContactPoseDataset(BaseDataset):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
                 objects_w_contacts, grasps, n_left, n_right = pickle.loads(
-                    blosc.decompress(compressed_pkl)
+                    blosc2.decompress(compressed_pkl)
                 )
         else:
             n_left, n_right = 0, 0
@@ -388,7 +388,7 @@ class ContactPoseDataset(BaseDataset):
                     n_right += 1 if hand == "right" else 0
             with open(dataset_path, "wb") as f:
                 pkl = pickle.dumps((objects_w_contacts, grasps, n_left, n_right))
-                compressed_pkl = blosc.compress(pkl)
+                compressed_pkl = blosc2.compress(pkl)
                 f.write(compressed_pkl)
 
         print(
@@ -741,7 +741,7 @@ class ContactPoseDataset(BaseDataset):
 
                         with open(sample_pth, "wb") as f:
                             pkl = pickle.dumps((sample, label, mesh_pth))
-                            compressed_pkl = blosc.compress(pkl)
+                            compressed_pkl = blosc2.compress(pkl)
                             f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
 

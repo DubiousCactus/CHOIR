@@ -17,7 +17,7 @@ import pickle
 import random
 from typing import List, Tuple
 
-import blosc
+import blosc2
 import numpy as np
 import open3d
 import open3d.geometry as o3dg
@@ -52,49 +52,53 @@ from utils.visualization import (
 
 @debug_methods
 class OakInkDataset(BaseDataset):
-    base_unit = 1000.0  # The dataset is in meters, we want to work in mm. # TODO: Is it in meters???
+    base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
 
     # ====== UDFs ======
-    gt_udf_mean = torch.tensor([0.00, 0.00])  # object distances, hand distances
-    gt_udf_std = torch.tensor([0.00, 0.00])  # object distances, hand distances
-    noisy_udf_mean = torch.tensor([0.00, 0.00])  # object distances, hand distances
-    noisy_udf_std = torch.tensor([0.00, 0.00])  # object distances, hand distances
+    gt_udf_mean = torch.tensor([0.5061, 0.3595])  # object distances, hand distances
+    gt_udf_std = torch.tensor([0.1584, 0.1309])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.5061, 0.3387])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1584, 0.1407])  # object distances, hand distances
 
     # ====== Keypoints ======
-    gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor([0, 0, 0]), torch.tensor([0, 0, 0])
-    gt_kp_obj_std, gt_kp_hand_std = torch.tensor([0, 0, 0]), torch.tensor([0, 0, 0])
-    noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor([0, 0, 0]), torch.tensor(
-        [0, 0, 0]
-    )
-    noisy_kp_obj_std, noisy_kp_hand_std = torch.tensor([0, 0, 0]), torch.tensor(
-        [0, 0, 0]
-    )
+    gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
+        [8.6208e-05, -1.5328e-04, -1.1284e-0]
+    ), torch.tensor([-0.0005, -0.0014, -0.0169])
+    gt_kp_obj_std, gt_kp_hand_std = torch.tensor(
+        [0.0318, 0.0310, 0.0690]
+    ), torch.tensor([0.0441, 0.0448, 0.0549])
+    noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor(
+        [8.6208e-05, -1.5328e-04, -1.1284e-02]
+    ), torch.tensor([-0.0008, -0.0017, -0.0176])
+    noisy_kp_obj_std, noisy_kp_hand_std = torch.tensor(
+        [0.0318, 0.0310, 0.0690]
+    ), torch.tensor([0.0706, 0.0706, 0.0783])
 
     # ====== Contacts ======
     contacts_mean = torch.tensor(
         [
-            0,  # mean x
-            0,  # mean y
-            0,  # mean z
-            0,  # cholesky-decomped cov 00
-            0,  # cholesky-decomped cov 03
-            0,  # cholesky-decomped cov 04
-            0,  # cholesky-decomped cov 06
-            0,  # cholesky-decomped cov 07
-            0,  # cholesky-decomped cov 08
+            -1.7441e-06,  # mean x
+            6.4501e-06,  # mean y
+            1.6437e-04,  # mean z
+            6.0590e-04,  # cholesky-decomped cov 00
+            1.5361e-05,  # cholesky-decomped cov 03
+            4.2540e-04,  # cholesky-decomped cov 04
+            7.2579e-08,  # cholesky-decomped cov 06
+            1.2935e-06,  # cholesky-decomped cov 07
+            4.4217e-04,  # cholesky-decomped cov 08
         ]
     )
     contacts_std = torch.tensor(
         [
-            0.0,  # mean x
-            0.0,  # mean y
-            0.0,  # mean z
-            0.0,  # cholesky-decomped cov 00
-            0.0,  # cholesky-decomped cov 03
-            0.0,  # cholesky-decomped cov 04
-            0.0,  # cholesky-decomped cov 06
-            0.0,  # cholesky-decomped cov 07
-            0.0,  # cholesky-decomped cov 08
+            0.0013,  # mean x
+            0.0013,  # mean y
+            0.0012,  # mean z
+            0.0014,  # cholesky-decomped cov 00
+            0.0011,  # cholesky-decomped cov 03
+            0.0010,  # cholesky-decomped cov 04
+            0.0008,  # cholesky-decomped cov 06
+            0.0008,  # cholesky-decomped cov 07
+            0.0010,  # cholesky-decomped cov 08
         ]
     )
 
@@ -212,7 +216,7 @@ class OakInkDataset(BaseDataset):
         if osp.isfile(dataset_path):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
-                objects, grasps = pickle.loads(blosc.decompress(compressed_pkl))
+                objects, grasps = pickle.loads(blosc2.decompress(compressed_pkl))
         else:
             os.environ["OAKINK_DIR"] = self._dataset_root
             from oikit.oi_shape import OakInkShape
@@ -292,7 +296,7 @@ class OakInkDataset(BaseDataset):
                 pbar.update()
             with open(dataset_path, "wb") as f:
                 pkl = pickle.dumps((objects, grasps))
-                compressed_pkl = blosc.compress(pkl)
+                compressed_pkl = blosc2.compress(pkl)
                 f.write(compressed_pkl)
         print(f"[*] Loaded {len(objects)} objects and {len(grasps)} grasps.")
         assert len(objects) == len(grasps)
@@ -654,7 +658,7 @@ class OakInkDataset(BaseDataset):
 
                         with open(sample_pth, "wb") as f:
                             pkl = pickle.dumps((sample, label, obj_pth))
-                            compressed_pkl = blosc.compress(pkl)
+                            compressed_pkl = blosc2.compress(pkl)
                             f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
 

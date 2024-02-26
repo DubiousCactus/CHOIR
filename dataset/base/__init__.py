@@ -21,7 +21,7 @@ import pickle
 import random
 from typing import Any, List, Optional, Tuple
 
-import blosc
+import blosc2
 import numpy as np
 import torch
 from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
@@ -412,7 +412,9 @@ class BaseDataset(TaskSet, abc.ABC):
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
                 compressed_pkl = f.read()
-                sample, label, mesh_pth = pickle.loads(blosc.decompress(compressed_pkl))
+                sample, label, mesh_pth = pickle.loads(
+                    blosc2.decompress(compressed_pkl)
+                )
             choir.append(sample[0])
             rescaled_ref_pts.append(sample[1])
             scalar.append(sample[2])

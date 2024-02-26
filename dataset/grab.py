@@ -18,7 +18,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 
-import blosc
+import blosc2
 import numpy as np
 import smplx
 import torch
@@ -574,7 +574,7 @@ class GRABDataset(BaseDataset):
 
                     with open(sample_pth, "wb") as f:
                         pkl = pickle.dumps((sample, label, mesh_pth))
-                        compressed_pkl = blosc.compress(pkl)
+                        compressed_pkl = blosc2.compress(pkl)
                         f.write(compressed_pkl)
                     choir_sequence_paths.append(sample_pth)
                     if (
@@ -749,7 +749,7 @@ class GRABDataset(BaseDataset):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
                 objects, grasp_sequences, n_left, n_right = pickle.loads(
-                    blosc.decompress(compressed_pkl)
+                    blosc2.decompress(compressed_pkl)
                 )
         else:
             n_left, n_right = 0, 0
@@ -1019,7 +1019,7 @@ class GRABDataset(BaseDataset):
                             )
                 pbar.update()
             with open(dataset_path, "wb") as f:
-                compressed_pkl = blosc.compress(
+                compressed_pkl = blosc2.compress(
                     pickle.dumps((objects, grasp_sequences, n_left, n_right))
                 )
                 f.write(compressed_pkl)
