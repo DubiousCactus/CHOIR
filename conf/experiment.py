@@ -29,10 +29,16 @@ from unique_names_generator.data import ADJECTIVES, NAMES
 import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
+from dataset.oakink import OakInkDataset
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
-from model.diffusion_model import BPSDiffusionModel, KPDiffusionModel
+from model.diffusion_model import (
+    BPSDiffusionModel,
+    ContactsBPSDiffusionModel,
+    KPContactsDiffusionModel,
+    KPDiffusionModel,
+)
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
@@ -101,8 +107,19 @@ dataset_store(
         use_improved_contactopt_splits=False,
         eval_observations_plateau=False,
         eval_anchor_assignment=False,
+        model_contacts=False,
     ),
     name="contactpose",
+)
+dataset_store(
+    pbuilds(
+        OakInkDataset,
+        builds_bases=(GraspingDatasetConf,),
+        dataset_root="/home/moralest/ssd_storage/OakInkData",
+        model_contacts=True,
+        noisy_samples_per_grasp=5,
+    ),
+    name="oakink",
 )
 dataset_store(
     pbuilds(
@@ -133,7 +150,7 @@ class DataloaderConf:
     batch_size: int = 32
     drop_last: bool = True
     shuffle: bool = True
-    num_workers: int = 0
+    num_workers: int = 2
     pin_memory: bool = False
     n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
@@ -216,6 +233,28 @@ model_store(
 
 model_store(
     pbuilds(
+        ContactsBPSDiffusionModel,
+        backbone="3d_unet",
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        bps_dim=MISSING,
+        temporal_dim=256,
+        y_embed_dim=256,
+        context_channels=MISSING,
+        use_backbone_self_attn=False,
+        use_encoder_self_attn=False,
+        object_in_encoder=False,
+        contacts_hidden_dim=2048,
+        contacts_skip_connections=False,
+        input_normalization="standard",
+    ),
+    name="contact_bps_ddpm",
+)
+
+
+model_store(
+    pbuilds(
         KPDiffusionModel,
         backbone="mlp_resnet",
         time_steps=1000,
@@ -227,11 +266,29 @@ model_store(
         temporal_dim=256,
         y_embed_dim=256,
         y_input_keypoints=MISSING,
-        embed_full_pair=True,
+        object_in_encoder=True,
+        skip_connections=False,
     ),
     name="kp_ddpm",
 )
 
+model_store(
+    pbuilds(
+        KPContactsDiffusionModel,
+        backbone="mlp_resnet",
+        time_steps=1000,
+        beta_1=1e-4,
+        beta_T=0.02,
+        n_hand_keypoints=21 + 32,  # 21 MANO joints + 32 contact anchors
+        n_obj_keypoints=MISSING,
+        temporal_dim=256,
+        y_embed_dim=256,
+        y_input_keypoints=MISSING,
+        object_in_encoder=False,
+        skip_connections=True,
+    ),
+    name="kp_coddpm",
+)
 " ================== Losses ================== "
 
 
@@ -269,6 +326,7 @@ training_loss_store(
 training_loss_store(
     pbuilds(
         DDPMLoss,
+        contacts_weight=0.5,
         reduction="mean",
     ),
     name="diffusion",
@@ -314,7 +372,7 @@ sched_store(
     pbuilds(
         torch.optim.lr_scheduler.StepLR,
         step_size=100,
-        gamma=0.5,
+        gamma=0.7,
     ),
     name="step",
 )
@@ -355,9 +413,18 @@ class RunConfig:
     fine_tune: bool = False
     save_predictions: bool = False
     max_observations: int = 1  # For testing
+    # As ideas changed and I had to try many things quickly, I became increasingly lazy and this
+    # bullshit is the result:
     conditional: bool = False
     full_choir: bool = False
     disable_grad: bool = False
+    model_contacts: bool = False
+    enable_contacts_tto: bool = True
+    use_ema: bool = False
+    compute_iv: bool = True
+    compile_test_model: bool = False
+    compute_contact_fidelity: bool = True
+    # RunConfig was never meant to be soiled like this :'(
 
 
 run_store = store(group="run")
@@ -553,14 +620,57 @@ experiment_store(
             + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
             y_embed_dim=256,
             rescale_input=False,  # Should already be around [-1, 1]... Could be outside?
-            embed_full_pair=False,
+            object_in_encoder=False,
+            skip_connections=False,
         ),
         run=dict(
-            conditional=True, full_choir=False  # Must be equal to embed_full_pair!
+            conditional=True, full_choir=False  # Must be equal to object_in_encoder!
         ),  # We can reuse the "full_choir" flag for "hand_object_pair"
         bases=(Experiment,),
     ),
     name="baseline_cddpm_3d_multiview_contactopt",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "kp_coddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_baseline_multiview"},
+            {"override /tester": "ddpm_baseline_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,  # We won't exploit it but then it's a fairer comparison
+            bps_dim=16**3,  # 4096 points, as used in the PointNet++ paper
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            n_obj_keypoints=4096,  # 1024 points taken from the object point cloud's target points of the BPS representation
+            y_input_keypoints=4096
+            + 21
+            + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
+            y_embed_dim=256,
+            object_in_encoder=False,
+            skip_connections=True,
+        ),
+        run=dict(
+            conditional=True,
+            full_choir=False,
+            model_contacts=True,  # Must be equal to object_in_encoder!
+        ),  # We can reuse the "full_choir" flag for "hand_object_pair"
+        bases=(Experiment,),
+    ),
+    name="baseline_coddpm_3d_multiview_contactopt",
 )
 experiment_store(
     make_config(
@@ -599,6 +709,82 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="cddpm_3d_multiview_contactopt",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "contact_bps_ddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=128,
+            context_channels=MISSING,
+            use_encoder_self_attn=False,
+            use_backbone_self_attn=True,
+            object_in_encoder=True,
+            contacts_hidden_dim=2048,
+            contacts_skip_connections=True,
+            input_normalization="scale",
+        ),
+        run=dict(conditional=True, full_choir=False, model_contacts=True),
+        bases=(Experiment,),
+    ),
+    name="coddpm_3d_multiview_contactopt",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "contact_bps_ddpm"},
+            {"override /dataset": "oakink"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "ddpm_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=128,
+            context_channels=MISSING,
+            use_encoder_self_attn=False,
+            use_backbone_self_attn=True,
+            object_in_encoder=True,
+            contacts_hidden_dim=2048,
+            contacts_skip_connections=True,
+            input_normalization="scale",
+        ),
+        run=dict(conditional=True, full_choir=False, model_contacts=True),
+        bases=(Experiment,),
+    ),
+    name="coddpm_3d_multiview_oakink",
 )
 experiment_store(
     make_config(

@@ -9,6 +9,7 @@
 Visualization utilities.
 """
 
+import copy
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -118,7 +119,7 @@ def visualize_model_predictions_with_multiple_views(
         temporal (bool, optional): Whether the model is temporal or not.
     """
     assert bps_dim == bps.shape[0]
-    samples, labels, _ = batch
+    samples, labels, mesh_paths = batch
     is_baseline = kwargs.get("method", "aggved") == "baseline"
     if not project_conf.HEADLESS:
         # ============ Get the first element of the batch ============
@@ -135,6 +136,27 @@ def visualize_model_predictions_with_multiple_views(
         )
         # gt_scalar = labels["scalar"][0].view(-1, *labels["scalar"].shape[2:])
         gt_ref_pts = labels["rescaled_ref_pts"][0, -1].unsqueeze(0)
+        mesh_paths = mesh_paths[-1]  # Now we have a list of B entries.
+        N_PTS_ON_MESH = 3000
+        obj_mesh = open3d.io.read_triangle_mesh(mesh_paths[0])
+        obj_normals = to_cuda_(
+            torch.cat(
+                (
+                    torch.from_numpy(np.asarray(obj_mesh.vertices)).type(
+                        dtype=torch.float32
+                    ),
+                    torch.from_numpy(np.asarray(obj_mesh.vertex_normals)).type(
+                        dtype=torch.float32
+                    ),
+                ),
+                dim=-1,
+            )
+        )
+        obj_points = to_cuda_(
+            torch.from_numpy(
+                np.asarray(obj_mesh.sample_points_uniformly(N_PTS_ON_MESH).points)
+            ).float()
+        )
         # =============================================================
 
         if dataset.lower() == "grab":
@@ -239,6 +261,14 @@ def visualize_model_predictions_with_multiple_views(
                 y=samples["choir"][0].unsqueeze(0) if conditional else None,
             )
             choir_pred = choir_pred[:, 0]  # TODO: Plot all preds
+        elif kwargs.get("method", "aggved") == "coddpm":
+            conditional = kwargs["conditional"]
+            n = 1
+            choir_pred, contacts_pred = model.generate(
+                n,
+                y=samples["choir"][0].unsqueeze(0) if conditional else None,
+            )
+            choir_pred, contacts_pred = choir_pred.squeeze(1), contacts_pred.squeeze(1)
         elif kwargs.get("method", "aggved") == "aggved":
             y_hat = model(samples["choir"], use_mean=True)
             choir_pred = y_hat["choir"][0].unsqueeze(0)
@@ -290,6 +320,9 @@ def visualize_model_predictions_with_multiple_views(
                     joints_pred,
                 ) = optimize_pose_pca_from_choir(
                     choir_pred,
+                    contact_gaussians=contacts_pred,
+                    obj_pts=obj_points,
+                    obj_normals=obj_normals,
                     bps=bps,
                     anchor_indices=anchor_indices,
                     scalar=torch.mean(input_scalar)
@@ -529,6 +562,9 @@ def visualize_CHOIR_prediction(
     use_smplx: bool,
     dataset: str,
     remap_bps_distances: bool,
+    contact_gaussians: Optional[torch.Tensor] = None,
+    obj_pts: Optional[torch.Tensor] = None,
+    obj_normals: Optional[torch.Tensor] = None,
     exponential_map_w: Optional[float] = None,
     plot_choir: bool = True,
     use_deltas: bool = False,
@@ -552,6 +588,11 @@ def visualize_CHOIR_prediction(
         gt_joints = gt_joints[0].unsqueeze(0)
     if len(gt_anchors.shape) > 2:
         gt_anchors = gt_anchors[0].unsqueeze(0)
+    if contact_gaussians is not None:
+        if len(contact_gaussians.shape) > 2:
+            contact_gaussians = contact_gaussians[0].unsqueeze(0)
+        elif len(contact_gaussians.shape) == 2:
+            contact_gaussians = contact_gaussians.unsqueeze(0)
     # =============================================================
     if use_deltas:
         # TODO: directly plot the delta vectors?
@@ -590,6 +631,9 @@ def visualize_CHOIR_prediction(
             joints_pred,
         ) = optimize_pose_pca_from_choir(
             _choir_pred,
+            contact_gaussians=contact_gaussians,
+            obj_pts=obj_pts,
+            obj_normals=obj_normals,
             bps=bps,
             anchor_indices=anchor_indices.int(),
             scalar=input_scalar,
@@ -608,7 +652,7 @@ def visualize_CHOIR_prediction(
     # ====== Metrics and qualitative comparison ======
     # === Anchor error ===
     print(
-        f"Anchor error (mm): {torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0).item() * 1000:.2f}"
+        f"\nAnchor error (mm): {torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2).mean(dim=1).mean(dim=0).item() * 1000:.2f}"
     )
     # === MPJPE ===
     if gt_joints.shape[1] == 16 and joints_pred.shape[1] == 21:
@@ -655,7 +699,14 @@ def visualize_CHOIR_prediction(
     tmesh_gt = Trimesh(V_gt, F)
     gt_hand_mesh = pv.wrap(tmesh_gt)
     visualize_MANO(
-        tmesh, obj_ptcld=input_ref_pts[0] / input_scalar[0], gt_hand=gt_hand_mesh
+        tmesh,
+        obj_ptcld=(input_ref_pts[0] / input_scalar[0]) if obj_pts is None else obj_pts,
+        gt_hand=gt_hand_mesh,
+    )
+    visualize_MANO(
+        tmesh,
+        obj_ptcld=(input_ref_pts[0] / input_scalar[0]) if obj_pts is None else obj_pts,
+        opacity=1.0,
     )
     # ===================================================================================
     if plot_choir:
@@ -1035,3 +1086,132 @@ class ScenePicAnim:
     def save_animation(self, sp_anim_name):
         self.scene.link_canvas_events(self.main)
         self.scene.save_as_html(sp_anim_name, title=os.path.basename(sp_anim_name))
+
+
+def visualize_3D_gaussians_on_hand_mesh(
+    hand_mesh: Trimesh,
+    obj_mesh: Trimesh,
+    gaussian_params: torch.Tensor,
+    base_unit: float,
+    anchors: torch.Tensor,
+    debug_anchor: Optional[int] = None,
+    anchor_contacts: Optional[torch.Tensor] = None,
+):
+    geometries = []
+    for i in range(gaussian_params.shape[0]):
+        if debug_anchor is not None and i != debug_anchor:
+            continue
+        # print(f"Visualizing Gaussian {i + 1} / {gaussian_params.shape[0]}")
+        if torch.all(gaussian_params[i] == 0):
+            continue
+        mean = gaussian_params[i, :3] + anchors[i]
+        covariance = gaussian_params[i, 3:].reshape(3, 3)
+        # print(covariance)
+        # Sample points from the Gaussian
+        num_points = 5000
+        points = np.random.multivariate_normal(mean, covariance, num_points)
+
+        # Create a point cloud from the sampled points
+        pcd = open3d.geometry.PointCloud()
+        pcd.points = open3d.utility.Vector3dVector(points)
+        # Partition RGB colourspace in 32 and use a different colour for each anchor:
+        pcd.paint_uniform_color(
+            np.array(
+                [
+                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 0,
+                    (int((i * 16) % 255) / 255.0)
+                    if (i >= 32 / 3 and i < 64 / 3)
+                    else 0,
+                    (int((i * 16) % 255) / 255.0) if i >= 64 / 3 else 0,
+                ]
+            )
+            if debug_anchor is None
+            else np.array([0, 0, 1])
+        )
+        geometries.append(pcd)
+
+    if type(hand_mesh) == Trimesh:
+        o3d_hand_mesh = open3d.geometry.TriangleMesh()
+        o3d_hand_mesh.vertices = open3d.utility.Vector3dVector(hand_mesh.vertices)
+        o3d_hand_mesh.triangles = open3d.utility.Vector3iVector(hand_mesh.faces)
+        geometries.append(o3d_hand_mesh)
+    else:
+        geometries.append(hand_mesh)
+    # geometries.append(obj_mesh)
+    if debug_anchor is not None:
+        assert anchors is not None
+        # Draw a green cube around the debug anchor
+        debug_color = [0.04, 0.66, 0.43]
+        box = open3d.geometry.TriangleMesh.create_box(
+            5 / base_unit, 5 / base_unit, 5 / base_unit
+        ).translate(anchors[debug_anchor] - np.array([2.5, 2.5, 2.5]) / base_unit)
+        box.paint_uniform_color(debug_color)
+        geometries.append(box)
+        print(
+            f"Anchor {debug_anchor} has vertices: {anchor_contacts[debug_anchor][0].shape}, "
+            + f"contact-weighted vertices={anchor_contacts[debug_anchor][1].shape}"
+            + f" and total contact points={anchor_contacts[debug_anchor][2].sum()}"
+        )
+        pcd = open3d.geometry.PointCloud()
+        pts = anchor_contacts[debug_anchor][0].cpu().numpy()
+        # Remove the pts that have a contact value of 0:
+        # pts = pts[contacts > 0]
+        pcd.points = open3d.utility.Vector3dVector(pts)
+        pcd.paint_uniform_color(debug_color)
+        geometries.append(pcd)
+    # Visualize the point cloud
+    open3d.visualization.draw_geometries(geometries)
+
+
+def visualize_hand_contacts_from_3D_gaussians(
+    hand_mesh: Trimesh,
+    gaussian_params: torch.Tensor,
+    anchors: torch.Tensor,
+    gt_contacts: Optional[torch.Tensor] = None,
+):
+    geometries = []
+    vertex_contacts = torch.zeros(np.asarray(hand_mesh.vertices).shape[0])
+
+    hand_verts = torch.from_numpy(np.asarray(hand_mesh.vertices)).float()
+    anchors = anchors.float()
+    anchor_distances = torch.cdist(hand_verts, anchors)  # (V, A)
+    anchor_distances, anchor_indices = torch.topk(
+        anchor_distances, 1, dim=-1, largest=False, sorted=False
+    )
+    for i in range(gaussian_params.shape[0]):
+        if torch.all(gaussian_params[i] == 0):
+            continue
+        mean = gaussian_params[i, :3] + anchors[i]
+        covariance = gaussian_params[i, 3:].reshape(3, 3)
+        gaussian = torch.distributions.MultivariateNormal(mean, covariance)
+        this_anchor_indices = (anchor_indices == i).squeeze(-1)
+        anchor_verts = hand_verts[this_anchor_indices]
+        # vertex_contacts[this_anchor_indices] = torch.clamp_max(torch.exp(gaussian.log_prob(anchor_verts)), 1.0)
+        contact_vals = torch.exp(gaussian.log_prob(anchor_verts))
+        print(f"Max contact values for Gaussian {i}/32: {contact_vals.max()}")
+        vertex_contacts[this_anchor_indices] = contact_vals / contact_vals.max()
+
+    colours = np.zeros_like(hand_mesh.vertices)
+    colours[:, 0] = vertex_contacts  # / vertex_contacts.max()
+    colours[:, 1] = 0.58 - colours[:, 0]
+    colours[:, 2] = 0.66 - colours[:, 0]
+    if type(hand_mesh) == Trimesh:
+        o3d_hand_mesh = open3d.geometry.TriangleMesh()
+        o3d_hand_mesh.vertices = open3d.utility.Vector3dVector(hand_mesh.vertices)
+        o3d_hand_mesh.triangles = open3d.utility.Vector3iVector(hand_mesh.faces)
+        o3d_hand_mesh.vertex_colors = open3d.utility.Vector3dVector(colours)
+        geometries.append(o3d_hand_mesh)
+    else:
+        hand_mesh.vertex_colors = open3d.utility.Vector3dVector(colours)
+        geometries.append(hand_mesh)
+
+    if gt_contacts is not None:
+        gt_hand_mesh = copy.deepcopy(hand_mesh)
+        gt_colours = np.zeros_like(hand_mesh.vertices)
+        gt_colours[:, 0] = gt_contacts / gt_contacts.max()
+        gt_colours[:, 1] = 0.04 - colours[:, 0]
+        gt_colours[:, 2] = 0.77 - colours[:, 0]
+        gt_hand_mesh.vertex_colors = open3d.utility.Vector3dVector(gt_colours)
+        gt_hand_mesh.translate([0.1, 0, 0])
+        geometries.append(gt_hand_mesh)
+    open3d.visualization.draw_geometries(geometries)

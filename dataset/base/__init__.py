@@ -21,7 +21,7 @@ import pickle
 import random
 from typing import Any, List, Optional, Tuple
 
-import blosc
+import blosc2
 import numpy as np
 import torch
 from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
@@ -171,6 +171,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._sample_paths: List[List[str]] = self._load(
             split, objects_w_contacts, grasps, dataset_name
         )
+        assert len(self._sample_paths) > 0
 
     @property
     def use_bps_grid(self):
@@ -382,8 +383,10 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta,
             gt_rot_6d,
             gt_trans,
+            gt_contact_gaussians,
             mesh_pths,
         ) = (
+            [],
             [],
             [],
             [],
@@ -409,7 +412,9 @@ class BaseDataset(TaskSet, abc.ABC):
         for sample_path in samples_paths:
             with open(sample_path, "rb") as f:
                 compressed_pkl = f.read()
-                sample, label, mesh_pth = pickle.loads(blosc.decompress(compressed_pkl))
+                sample, label, mesh_pth = pickle.loads(
+                    blosc2.decompress(compressed_pkl)
+                )
             choir.append(sample[0])
             rescaled_ref_pts.append(sample[1])
             scalar.append(sample[2])
@@ -432,6 +437,7 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta.append(label[6])
             gt_rot_6d.append(label[7])
             gt_trans.append(label[8])
+            gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
             mesh_pths.append(mesh_pth)
         # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
         sample = {
@@ -460,5 +466,8 @@ class BaseDataset(TaskSet, abc.ABC):
             "beta": torch.from_numpy(np.array([a for a in gt_beta])),
             "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
             "trans": torch.from_numpy(np.array([a for a in gt_trans])),
+            "contact_gaussians": torch.from_numpy(
+                np.array([a for a in gt_contact_gaussians])
+            ),
         }
         return sample, label, mesh_pths

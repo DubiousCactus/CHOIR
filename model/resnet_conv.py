@@ -65,7 +65,7 @@ class TemporalResidualBlock(torch.nn.Module):
         x_attn_head_dim: int = 64,
         pooling: str = "none",
         interpolate: bool = False,
-        p_dropout: float = 0.0,
+        p_dropout: float = 0.1,
     ):
         super().__init__()
         assert dim in (2, 3), "Only 2D and 3D convolutions are supported"

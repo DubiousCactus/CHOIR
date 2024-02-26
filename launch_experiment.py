@@ -25,7 +25,7 @@ import conf.experiment  # Must import the config to add all components to the st
 import wandb
 from conf import project as project_conf
 from model.aggregate_ved import Aggregate_VED
-from model.diffusion_model import BPSDiffusionModel
+from model.diffusion_model import BPSDiffusionModel, ContactsBPSDiffusionModel
 from src.base_trainer import BaseTrainer
 from src.losses.hoi import CHOIRLoss
 from utils import colorize
@@ -84,7 +84,7 @@ def launch_experiment(
             # predict_deltas=just(training_loss).temporal,
             frame_to_predict="last" if just(training_loss).temporal else "average",
         )  # Use just() to get the config out of the Zen-Partial
-    elif model.func is BPSDiffusionModel:
+    elif model.func in [BPSDiffusionModel, ContactsBPSDiffusionModel]:
         model_inst = model(bps_dim=just(dataset).bps_dim)
     else:
         model_inst = model()
@@ -142,7 +142,7 @@ def launch_experiment(
     # model_inst = torch.compile(model_inst)
 
     "============ Weights & Biases ============"
-    if project_conf.USE_WANDB and accelerator.is_main_process:
+    if project_conf.USE_WANDB and accelerator.is_main_process and run.training_mode:
         # exp_conf is a string, so we need to load it back to a dict:
         exp_conf = yaml.safe_load(exp_conf)
         wandb.init(

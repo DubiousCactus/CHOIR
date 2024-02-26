@@ -19,7 +19,7 @@ import tqdm
 
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
-from src.losses.hoi import CHOIRFittingLoss
+from src.losses.hoi import CHOIRFittingLoss, ContactsFittingLoss
 from utils import to_cuda, to_cuda_
 
 
@@ -33,6 +33,9 @@ def optimize_pose_pca_from_choir(
     is_rhand: bool,
     use_smplx: bool,
     dataset: str,
+    contact_gaussians: Optional[torch.Tensor] = None,
+    obj_pts: Optional[torch.Tensor] = None,
+    obj_normals: Optional[torch.Tensor] = None,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-11,
     lr: float = 5e-2,
@@ -75,13 +78,13 @@ def optimize_pose_pca_from_choir(
     else:
         raise ValueError(f"Unknown dataset '{dataset}'.")
     if initial_params is None:
-        theta = torch.rand((B, ncomps + (3 if not use_smplx else 0))) * 0.01
-        beta = torch.rand((B, 10)) * 0.01
+        theta = torch.randn((B, ncomps + (3 if not use_smplx else 0))) * 0.01
+        beta = torch.randn((B, 10)) * 0.01
         if use_smplx:
-            rot = torch.rand((B, 3)) * 0.01  # axis-angle for SMPL-X
+            rot = torch.randn((B, 3)) * 0.01  # axis-angle for SMPL-X
         else:
-            rot = torch.rand((B, 6)) * 0.01  # 6D for AffineMANO
-        trans = torch.rand((B, 3)) * 0.001
+            rot = torch.randn((B, 6)) * 0.01  # 6D for AffineMANO
+        trans = torch.randn((B, 3)) * 0.001
     else:
         theta = initial_params["theta"].detach().clone()
         beta = initial_params["beta"].detach().clone()
@@ -153,24 +156,114 @@ def optimize_pose_pca_from_choir(
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
-        loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
-        shape_regularizer = (
-            beta_w * torch.norm(beta) ** 2
+        anchor_loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
+        shape_regularizer = beta_w * torch.norm(
+            beta
         )  # Encourage the shape parameters to remain close to 0
         if initial_params is not None:
-            pose_regularizer = (
-                theta_w * torch.norm(theta - theta_reg) ** 2
-            )  # Shape prior
+            pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
 
         proc_bar.set_description(
-            f"Anchors loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+            f"Anchors loss: {anchor_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
-        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
+        if (
+            torch.abs(prev_loss - anchor_loss.detach().type(torch.float32))
+            <= loss_thresh
+        ):
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = loss.detach().type(torch.float64)
-        loss = loss + shape_regularizer + pose_regularizer
+        prev_loss = anchor_loss.detach().type(torch.float32)
+        anchor_loss = anchor_loss + shape_regularizer + pose_regularizer
+        anchor_loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if plateau_cnt >= 10:
+            break
+
+    if contact_gaussians is None:
+        return (
+            theta.detach(),
+            beta.detach(),
+            rot.detach(),
+            trans.detach(),
+            anchors.detach(),
+            verts.detach(),
+            joints.detach(),
+        )
+
+    plateau_cnt = 0
+    proc_bar = tqdm.tqdm(range(max_iterations))
+    prev_loss = float("inf")
+    optimizer.zero_grad()
+    trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
+    trans_base.requires_grad = False
+    rot_base.requires_grad = False
+    optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
+    assert obj_pts is not None, "obj_pts must be provided if contact_gaussians is."
+    assert (
+        obj_normals is not None
+    ), "obj_normals must be provided if contact_gaussians is."
+    contacts_loss = ContactsFittingLoss(
+        verts.detach()[0],
+        anchors.detach()[0],
+        use_median_filter=False,
+        median_filter_len=50,
+        update_knn_each_step=True,
+    ).to(contact_gaussians.device)
+    converged_pose = None  # Pre penetration loss
+    for i in proc_bar:
+        enable_contact_fitting = i > 100
+        optimizer.zero_grad()
+        if use_smplx:
+            output = smplx_model(
+                hand_pose=theta, betas=beta, global_orient=rot, transl=trans
+            )
+            verts, joints = output.vertices, output.joints
+        else:
+            verts, joints = affine_mano(theta, beta, rot, trans)
+        anchors = affine_mano.get_anchors(verts)
+        contact_loss, penetration_loss = contacts_loss(
+            verts,
+            anchors.detach(),
+            obj_pts,
+            contact_gaussians,
+            obj_normals=obj_normals,
+            weights_threshold=0.01,
+            gaussian_activation_threshold=1e-8,
+        )
+        contact_loss = 10 * contact_loss
+        penetration_loss = 1000 * penetration_loss
+        shape_regularizer = beta_w * torch.norm(
+            beta
+        )  # Encourage the shape parameters to remain close to 0
+        pose_regularizer = theta_w * torch.norm(theta)
+        abs_pose_regularizer = 0.1 * (
+            1e-1 * (torch.norm(trans - trans_base) ** 2)
+            + 1e-2 * (torch.norm(rot - rot_base) ** 2)
+        )
+        proc_bar.set_description(
+            f"Contacts: {contact_loss.item():.8f} / Penetration: {penetration_loss.item():.8f}  / Shape reg: {shape_regularizer.item():.8f} "
+            + f"/ Pose reg: {pose_regularizer.item():.8f} / Abs. pose reg: {abs_pose_regularizer.item():.8f}"
+        )
+        if (
+            torch.abs(prev_loss - contact_loss.detach().type(torch.float32))
+            <= loss_thresh
+            and enable_contact_fitting
+        ):
+            plateau_cnt += 1
+        else:
+            plateau_cnt = 0
+        loss = (
+            penetration_loss
+            + abs_pose_regularizer
+            + pose_regularizer
+            + shape_regularizer
+        )
+        if enable_contact_fitting:
+            loss += contact_loss
+        prev_loss = contact_loss.detach().type(torch.float32)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -298,22 +391,20 @@ def optimize_mesh_from_joints_and_anchors(
         loss = torch.nn.functional.mse_loss(
             joints_and_anchors, torch.cat((joints, anchors), dim=-2)
         )
-        shape_regularizer = (
-            beta_w * torch.norm(beta) ** 2
+        shape_regularizer = beta_w * torch.norm(
+            beta
         )  # Encourage the shape parameters to remain close to 0
         if initial_params is not None:
-            pose_regularizer = (
-                theta_w * torch.norm(theta - theta_reg) ** 2
-            )  # Shape prior
+            pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
 
         proc_bar.set_description(
             f"Anchors loss: {loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
-        if torch.abs(prev_loss - loss.detach().type(torch.float64)) <= loss_thresh:
+        if torch.abs(prev_loss - loss.detach().type(torch.float32)) <= loss_thresh:
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = loss.detach().type(torch.float64)
+        prev_loss = loss.detach().type(torch.float32)
         loss = loss + shape_regularizer + pose_regularizer
         loss.backward()
         optimizer.step()

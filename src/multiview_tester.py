@@ -11,15 +11,16 @@ import os
 import pickle
 import signal
 from collections import defaultdict
+from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
 import blosc
 import matplotlib.pyplot as plt
-import numpy as np
 import open3d.io as o3dio
 import pyvista as pv
 import torch
 import trimesh
+from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
@@ -31,13 +32,25 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
-from utils.testing import compute_mpjpe
+from utils.dataset import lower_tril_cholesky_to_covmat
+from utils.testing import (
+    compute_binary_contacts,
+    compute_contact_coverage,
+    compute_contact_fidelity,
+    compute_mpjpe,
+    make_batch_of_obj_data,
+    mp_compute_solid_intersection_volume,
+    mp_process_obj_meshes,
+)
 from utils.training import (
     optimize_mesh_from_joints_and_anchors,
     optimize_pose_pca_from_choir,
 )
 from utils.visualization import (
     ScenePicAnim,
+    visualize_3D_gaussians_on_hand_mesh,
+    visualize_hand_contacts_from_3D_gaussians,
+    visualize_MANO,
     visualize_model_predictions_with_multiple_views,
 )
 
@@ -62,6 +75,9 @@ class MultiViewTester(MultiViewTrainer):
         self._is_baseline = False
         self._run_name = run_name
         self._model = model
+        self._ema = EMA(
+            self._model, beta=0.9999, update_after_step=100, update_every=10
+        )
         assert "max_observations" in kwargs, "max_observations must be provided."
         assert "save_predictions" in kwargs, "save_predictions must be provided."
         self._max_observations = kwargs["max_observations"]
@@ -91,6 +107,17 @@ class MultiViewTester(MultiViewTrainer):
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
+        self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
+        self._compute_iv = kwargs.get("compute_iv", False)
+        self._compute_contact_fidelity = kwargs.get("compute_contact_fidelity", False)
+        self._object_cache = {}
+        self._pitch_mm = 2
+        self._pitch = self._pitch_mm / self._data_loader.dataset.base_unit
+        self._radius = int(
+            0.2 / self._pitch
+        )  # 20cm in each direction for the voxel grid
+        self._n_pts_on_mesh = 5000
+        self._n_normals_on_mesh = 5000
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -132,155 +159,16 @@ class MultiViewTester(MultiViewTrainer):
             )
         return y_hat
 
-    def _test_batch(
+    def _compute_eval_metrics(
         self,
-        samples: Dict,
-        labels: Dict,
-        mesh_pths: List[str],
-        n_observations: int,
-        batch_idx: int,
-        use_prior: bool = True,
-        use_input: bool = False,
-    ) -> Tuple:
-        input_scalar = samples["scalar"]
-        if len(input_scalar.shape) == 2:
-            input_scalar = input_scalar.mean(
-                dim=1
-            )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        y_hat = self._inference(samples, labels, use_prior=use_prior)
-        mano_params_gt = {
-            "pose": labels["theta"],
-            "beta": labels["beta"],
-            "rot_6d": labels["rot"],
-            "trans": labels["trans"],
-        }
-        # Only use the last view for each batch element (they're all the same anyway for static
-        # grasps, but for dynamic grasps we want to predict the LAST frame!).
-        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
-        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-        gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
-        gt_anchors = self._affine_mano.get_anchors(gt_verts)
-        if not self._data_loader.dataset.is_right_hand_only:
-            raise NotImplementedError("Right hand only is implemented for testing.")
-        multiple_obs = len(samples["theta"].shape) > 2
-        # For mesh_pths we have a tuple of N lists of B entries. N is the number of
-        # observations and B is the batch size. We'll take the last observation for each batch
-        # element.
-        mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
-
-        if use_input:
-            # For ground-truth:
-            if not self._data_loader.dataset.eval_anchor_assignment:
-                input_params = {
-                    k: (v[:, -1] if multiple_obs else v)
-                    for k, v in samples.items()
-                    if k in ["theta", "beta", "rot", "trans"]
-                }
-                verts_pred, joints_pred = self._affine_mano(*input_params.values())
-                anchors_pred = self._affine_mano.get_anchors(verts_pred)
-            # For MANO fitting:
-            else:
-                with torch.set_grad_enabled(True):
-                    (
-                        _,
-                        _,
-                        _,
-                        _,
-                        anchors_pred,
-                        verts_pred,
-                        joints_pred,
-                    ) = optimize_pose_pca_from_choir(
-                        samples["choir"].squeeze(),
-                        bps=self._bps,
-                        anchor_indices=self._anchor_indices,
-                        scalar=input_scalar,
-                        max_iterations=4000,
-                        loss_thresh=1e-10,
-                        lr=1e-2,
-                        is_rhand=samples["is_rhand"],
-                        use_smplx=False,
-                        dataset=self._data_loader.dataset.name,
-                        remap_bps_distances=self._remap_bps_distances,
-                        exponential_map_w=self._exponential_map_w,
-                        initial_params=None,  # We want to see how well we can fit a randomly initialize MANO of course!
-                        beta_w=1e-4,
-                        theta_w=1e-7,
-                        choir_w=1000,
-                    )
-        else:
-            use_smplx = False  # TODO: I don't use it for now
-            with torch.set_grad_enabled(True):
-                if self._is_baseline:
-                    joints_pred, anchors_pred = (
-                        y_hat["hand_keypoints"][:, :21],
-                        y_hat["hand_keypoints"][:, 21:],
-                    )
-                    verts_pred = optimize_mesh_from_joints_and_anchors(
-                        y_hat["hand_keypoints"],
-                        scalar=torch.mean(input_scalar)
-                        .unsqueeze(0)
-                        .to(input_scalar.device),  # TODO: What should I do here?
-                        is_rhand=samples["is_rhand"][0],
-                        max_iterations=400,
-                        loss_thresh=1e-7,
-                        lr=8e-2,
-                        dataset=self._data_loader.dataset.name,
-                        use_smplx=use_smplx,
-                        initial_params={
-                            k: (
-                                v[:, -1] if multiple_obs else v
-                            )  # Initial pose is the last observation
-                            for k, v in samples.items()
-                            if k
-                            in [
-                                "theta",
-                                ("vtemp" if use_smplx else "beta"),
-                                "rot",
-                                "trans",
-                            ]
-                        },
-                        beta_w=1e-4,
-                        theta_w=1e-8,
-                    )
-                else:
-                    (
-                        _,
-                        _,
-                        _,
-                        _,
-                        anchors_pred,
-                        verts_pred,
-                        joints_pred,
-                    ) = optimize_pose_pca_from_choir(
-                        y_hat["choir"],
-                        bps=self._bps,
-                        anchor_indices=self._anchor_indices,
-                        scalar=input_scalar,
-                        max_iterations=2000,
-                        loss_thresh=1e-6,
-                        lr=8e-2,
-                        is_rhand=samples["is_rhand"],
-                        use_smplx=use_smplx,
-                        dataset=self._data_loader.dataset.name,
-                        remap_bps_distances=self._remap_bps_distances,
-                        exponential_map_w=self._exponential_map_w,
-                        initial_params={
-                            k: (
-                                v[:, -1] if multiple_obs else v
-                            )  # Initial pose is the last observation
-                            for k, v in samples.items()
-                            if k
-                            in [
-                                "theta",
-                                ("vtemp" if use_smplx else "beta"),
-                                "rot",
-                                "trans",
-                            ]
-                        },
-                        beta_w=1e-4,
-                        theta_w=1e-7,
-                        choir_w=1000,
-                    )
+        anchors_pred: torch.tensor,
+        verts_pred: torch.Tensor,
+        joints_pred: torch.Tensor,
+        gt_anchors: torch.Tensor,
+        gt_verts: torch.Tensor,
+        gt_joints: torch.Tensor,
+        batch_obj_data: Dict,
+    ):
         with torch.no_grad():
             # === Anchor error ===
             anchor_error = (
@@ -319,75 +207,430 @@ class MultiViewTester(MultiViewTrainer):
             # ====== Intersection volume ======
             # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
             # both meshes:
-            mano_faces = self._affine_mano.faces.cpu().numpy()
-            pitch_mm = 2
-            pitch = pitch_mm / self._data_loader.dataset.base_unit  # mm -> m
-            # TODO: The radius only needs to be slightly larger than the object bounding box.
             # TODO: WARNING!! For GRAB and approaching hands I can end up with empty hand voxels
             # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
             # the thing to do is to skip empty voxels. I'll try to implement it.
-            radius = int(0.2 / pitch)  # 20cm in each direction for the voxel grid
-            object_meshes = None
-            intersection_volume = torch.zeros(1)
-            # intersection_volume, object_meshes = compute_solid_intersection_volume(
-            # pitch,
-            # radius,
-            # mesh_pths,
-            # verts_pred,
-            # mano_faces,
-            # self._data_loader.dataset.center_on_object_com,
-            # return_meshes=True,
-            # )
+            batch_intersection_volume = torch.inf
+            if self._compute_iv:
+                batch_intersection_volume = mp_compute_solid_intersection_volume(
+                    batch_obj_data["voxel"],
+                    hand_verts=verts_pred,
+                    # Careful to use the closed faces as they should count for the hand volume!
+                    mesh_faces=self._affine_mano.closed_faces.cpu().numpy(),
+                    pitch=self._pitch,
+                    radius=self._radius,
+                )
             # ======= Contact Coverage =======
-            if object_meshes is None:
-                object_meshes = {}
-                for path in mesh_pths:
-                    obj_mesh = o3dio.read_triangle_mesh(path)
-                    if self._data_loader.dataset.center_on_object_com:
-                        obj_mesh.translate(-obj_mesh.get_center())
-                    object_meshes[path] = obj_mesh
             # Percentage of hand points within 2mm of the object surface.
-            contact_coverage = []
-            N = 5000
-            for i, path in enumerate(mesh_pths):
-                pred_hand_mesh = trimesh.Trimesh(
-                    vertices=verts_pred[i].detach().cpu().numpy(),
-                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+            batch_contact_coverage = compute_contact_coverage(
+                gt_verts,
+                # Careful not to use the closed faces as they shouldn't count for the hand surface points!
+                self._affine_mano.faces,
+                batch_obj_data["points"],
+                thresh_mm=2,
+                base_unit=self._data_loader.dataset.base_unit,
+                n_samples=self._n_pts_on_mesh,
+            )
+            # ============ Contact fidelity ============
+            batch_contact_fidelity = -torch.inf
+            if self._compute_contact_fidelity:
+                compute_bin_contacts = partial(
+                    compute_binary_contacts,
+                    faces=self._affine_mano.faces,
+                    obj_points=batch_obj_data["points"],
+                    thresh_mm=2,
+                    base_unit=self._data_loader.dataset.base_unit,
+                    n_mesh_upsamples=1,
+                    return_upsampled_verts=False,
                 )
-                # gt_hand_mesh = trimesh.Trimesh(
-                # vertices=gt_verts[i].detach().cpu().numpy(),
-                # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
-                # faces=self._affine_mano.faces.detach().cpu().numpy(),
-                # )
-                obj_points = to_cuda_(
-                    torch.from_numpy(
-                        np.asarray(
-                            object_meshes[path].sample_points_uniformly(N).points
-                        )
-                    ).float()
+                """
+                n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
+                they aren't evenly distributed so it's not ideal, but as opposed to random sampling
+                on the mesh, we can exactly recover contact points even on different poses.
+                """
+                pred_binary_contacts, _ = compute_bin_contacts(hand_verts=verts_pred)
+                gt_binary_contacts, upsampled_verts = compute_bin_contacts(
+                    hand_verts=gt_verts, return_upsampled_verts=True
                 )
-                hand_points = to_cuda_(
-                    torch.from_numpy(
-                        trimesh.sample.sample_surface(pred_hand_mesh, N)[0]
-                    ).float()
+                batch_contact_fidelity = compute_contact_fidelity(
+                    upsampled_verts, pred_binary_contacts, gt_binary_contacts
                 )
-                dists = torch.cdist(hand_points, obj_points)  # (N, N)
-                dists = dists.min(
-                    dim=1
-                ).values  # (N): distance of each hand point to the closest object point
-                contact_coverage.append(
-                    (dists <= (2 / self._data_loader.dataset.base_unit)).sum() / N * 100
-                )
-            contact_coverage = torch.stack(contact_coverage).mean().item()
 
-        return (
-            anchor_error,
-            mpjpe,
-            root_aligned_mpjpe,
-            mpvpe,
-            intersection_volume.detach(),
-            contact_coverage,
+        return {
+            "Anchor error [mm] (↓)": anchor_error,
+            "MPJPE [mm] (↓)": mpjpe,
+            "Root-aligned MPJPE [mm] (↓)": root_aligned_mpjpe,
+            "MPVPE [mm] (↓)": mpvpe,
+            "Intersection volume [cm3] (↓)": batch_intersection_volume,
+            "Contact coverage [%] (↑)": batch_contact_coverage,
+            "Contact fidelity score (↑)": batch_contact_fidelity,
+        }
+
+    def _test_batch(
+        self,
+        samples: Dict,
+        labels: Dict,
+        mesh_pths: List[str],
+        n_observations: int,
+        batch_idx: int,
+        use_prior: bool = True,
+        use_input: bool = False,
+    ) -> Tuple:
+        input_scalar = samples["scalar"]
+        if len(input_scalar.shape) == 2:
+            input_scalar = input_scalar.mean(dim=1)
+        cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+        if os.path.exists(cached_pred_path):
+            with open(cached_pred_path, "rb") as f:
+                y_hat = pickle.load(f)
+                y_hat = to_cuda_(y_hat)
+        else:
+            y_hat = self._inference(samples, labels, use_prior=use_prior)
+            with open(cached_pred_path, "wb") as f:
+                y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                pickle.dump(y_hat, f)
+        mano_params_gt = {
+            "pose": labels["theta"],
+            "beta": labels["beta"],
+            "rot_6d": labels["rot"],
+            "trans": labels["trans"],
+        }
+        # Only use the last view for each batch element (they're all the same anyway for static
+        # grasps, but for dynamic grasps we want to predict the LAST frame!).
+        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+        gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+        gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        gt_anchors = self._affine_mano.get_anchors(gt_verts)
+        if not self._data_loader.dataset.is_right_hand_only:
+            raise NotImplementedError("Right hand only is implemented for testing.")
+        multiple_obs = len(samples["theta"].shape) > 2
+        gt_contact_gaussian_params = (
+            labels["contact_gaussians"] if self._enable_contacts_tto else None
         )
+
+        # ============== Object processing ==============
+        # For mesh_pths we have a tuple of N lists of B entries. N is the number of
+        # observations and B is the batch size. We'll take the last observation for each batch
+        # element.
+        mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
+        print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
+
+        mp_process_obj_meshes(
+            mesh_pths,
+            self._object_cache,
+            self._data_loader.dataset.center_on_object_com,
+            self._enable_contacts_tto,
+            self._compute_iv,
+            self._pitch,
+            self._radius,
+            self._n_pts_on_mesh,
+            self._n_normals_on_mesh,
+        )
+        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+        # ==============================================
+        eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
+        if use_input:
+            # For ground-truth:
+            if not self._data_loader.dataset.eval_anchor_assignment:
+                input_params = {
+                    k: (v[:, -1] if multiple_obs else v)
+                    for k, v in samples.items()
+                    if k in ["theta", "beta", "rot", "trans"]
+                }
+                verts_pred, joints_pred = self._affine_mano(*input_params.values())
+                anchors_pred = self._affine_mano.get_anchors(verts_pred)
+                eval_metrics["input_udf"] = self._compute_eval_metrics(
+                    anchors_pred,
+                    verts_pred,
+                    joints_pred,
+                    gt_anchors,
+                    gt_verts,
+                    gt_joints,
+                    batch_obj_data,
+                )
+            # For MANO fitting:
+            else:
+                with torch.set_grad_enabled(True):
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(
+                        samples["choir"].squeeze(),
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=4000,
+                        loss_thresh=1e-10,
+                        lr=1e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=False,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params=None,  # We want to see how well we can fit a randomly initialize MANO of course!
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
+                    eval_metrics["input_udf"] = self._compute_eval_metrics(
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                        gt_anchors,
+                        gt_verts,
+                        gt_joints,
+                        batch_obj_data,
+                    )
+        else:
+            use_smplx = False  # TODO: I don't use it for now
+            with torch.set_grad_enabled(True):
+                if self._is_baseline:
+                    joints_pred, anchors_pred = (
+                        y_hat["hand_keypoints"][:, :21],
+                        y_hat["hand_keypoints"][:, 21:],
+                    )
+                    verts_pred = optimize_mesh_from_joints_and_anchors(
+                        y_hat["hand_keypoints"],
+                        scalar=torch.mean(input_scalar)
+                        .unsqueeze(0)
+                        .to(input_scalar.device),  # TODO: What should I do here?
+                        is_rhand=samples["is_rhand"][0],
+                        max_iterations=400,
+                        loss_thresh=1e-7,
+                        lr=8e-2,
+                        dataset=self._data_loader.dataset.name,
+                        use_smplx=use_smplx,
+                        initial_params={
+                            k: (
+                                v[:, -1] if multiple_obs else v
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-8,
+                    )
+
+                    eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                        gt_anchors,
+                        gt_verts,
+                        gt_joints,
+                        batch_obj_data,
+                    )
+                else:
+                    sample_to_viz = 2
+                    contacts_pred, obj_points, obj_normals = (
+                        None,
+                        None,
+                        None,
+                    )
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(
+                        y_hat["choir"],
+                        contact_gaussians=contacts_pred
+                        if self._enable_contacts_tto
+                        else None,
+                        obj_pts=obj_points,
+                        obj_normals=obj_normals,
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=1000,
+                        loss_thresh=1e-7,
+                        lr=8e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=use_smplx,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params={
+                            k: (
+                                v[:, -1] if multiple_obs else v
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
+                    pred_hand_mesh = trimesh.Trimesh(
+                        vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    gt_hand_mesh = trimesh.Trimesh(
+                        vertices=gt_verts[sample_to_viz].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    visualize_MANO(
+                        pred_hand_mesh,
+                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
+                        gt_hand=gt_hand_mesh,
+                    )
+                    visualize_MANO(
+                        pred_hand_mesh,
+                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
+                        opacity=1.0,
+                    )
+                    # eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
+                    # anchors_pred,
+                    # verts_pred,
+                    # joints_pred,
+                    # gt_anchors,
+                    # gt_verts,
+                    # gt_joints,
+                    # batch_obj_data,
+                    # )
+                    if self._enable_contacts_tto:
+                        # del anchors_pred, verts_pred, joints_pred
+                        contacts_pred, obj_points, obj_normals = (
+                            y_hat.get("contacts", None),
+                            batch_obj_data["points"],
+                            batch_obj_data["normals"],
+                        )
+                        # Visualize the Gaussian parameters
+                        print(
+                            "====== Reconstructing contacts from GT 3D Gaussians ======"
+                        )
+                        print(
+                            f"GT gaussian params shape: {gt_contact_gaussian_params[sample_to_viz, -1].shape}"
+                        )
+                        visualize_3D_gaussians_on_hand_mesh(
+                            gt_hand_mesh,
+                            batch_obj_data["mesh"][sample_to_viz],
+                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                            base_unit=self._data_loader.dataset.base_unit,
+                            anchors=gt_anchors[sample_to_viz].cpu(),
+                        )
+                        visualize_hand_contacts_from_3D_gaussians(
+                            gt_hand_mesh,
+                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                            gt_anchors[sample_to_viz].cpu(),
+                        )
+
+                        print("====== Reconstructing contacts from 3D Gaussians ======")
+                        pred_contact_gaussian_params = torch.cat(
+                            (
+                                contacts_pred[sample_to_viz, ..., :3],
+                                lower_tril_cholesky_to_covmat(contacts_pred[..., 3:])[
+                                    sample_to_viz
+                                ].view(-1, 9),
+                            ),
+                            dim=-1,
+                        )
+                        visualize_3D_gaussians_on_hand_mesh(
+                            pred_hand_mesh,
+                            batch_obj_data["mesh"][sample_to_viz],
+                            pred_contact_gaussian_params.cpu(),
+                            base_unit=self._data_loader.dataset.base_unit,
+                            anchors=anchors_pred[sample_to_viz].cpu(),
+                        )
+                        visualize_hand_contacts_from_3D_gaussians(
+                            pred_hand_mesh,
+                            pred_contact_gaussian_params.cpu(),
+                            anchors_pred[sample_to_viz].cpu(),
+                        )
+
+                        (
+                            _,
+                            _,
+                            _,
+                            _,
+                            anchors_pred,
+                            verts_pred,
+                            joints_pred,
+                        ) = optimize_pose_pca_from_choir(
+                            y_hat["choir"],
+                            contact_gaussians=contacts_pred
+                            if self._enable_contacts_tto
+                            else None,
+                            obj_pts=obj_points,
+                            obj_normals=obj_normals,
+                            bps=self._bps,
+                            anchor_indices=self._anchor_indices,
+                            scalar=input_scalar,
+                            max_iterations=1000,
+                            loss_thresh=1e-7,
+                            lr=8e-2,
+                            is_rhand=samples["is_rhand"],
+                            use_smplx=use_smplx,
+                            dataset=self._data_loader.dataset.name,
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
+                            initial_params={
+                                k: (
+                                    v[:, -1] if multiple_obs else v
+                                )  # Initial pose is the last observation
+                                for k, v in samples.items()
+                                if k
+                                in [
+                                    "theta",
+                                    ("vtemp" if use_smplx else "beta"),
+                                    "rot",
+                                    "trans",
+                                ]
+                            },
+                            beta_w=1e-4,
+                            theta_w=1e-7,
+                            choir_w=1000,
+                        )
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[-1].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[-1].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][0],
+                            gt_hand=gt_hand_mesh,
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][0],
+                            opacity=1.0,
+                        )
+                        eval_metrics[
+                            "With contact fitting"
+                        ] = self._compute_eval_metrics(
+                            anchors_pred,
+                            verts_pred,
+                            joints_pred,
+                            gt_anchors,
+                            gt_verts,
+                            gt_joints,
+                            batch_obj_data,
+                        )
+        return eval_metrics
 
     @to_cuda
     def _test_iteration(
@@ -404,22 +647,7 @@ class MultiViewTester(MultiViewTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, mesh_pths = batch  # type: ignore
-        # (
-        # anchor_error_x,
-        # mpjpe_x,
-        # root_aligned_mpjpe_x,
-        # mpvpe_x,
-        # intesection_volume_x,
-        # contact_coverage_x,
-        # ) = self._test_batch(samples, labels, mesh_pths, n_observations, batch_idx, use_input=True)
-        (
-            anchor_error_p,
-            mpjpe_p,
-            root_aligned_mpjpe_p,
-            mpvpe_p,
-            intersection_volume_p,
-            contact_coverage_p,
-        ) = self._test_batch(
+        eval_metrics = self._test_batch(
             samples,
             labels,
             mesh_pths,
@@ -427,36 +655,15 @@ class MultiViewTester(MultiViewTrainer):
             batch_idx,
             use_prior=True,
         )
-        # (
-        # anchor_error,
-        # mpjpe,
-        # root_aligned_mpjpe,
-        # mpvpe,
-        # intersection_volume,
-        # contact_coverage,
-        # ) = self._test_batch(
-        # samples, labels, mesh_pths, n_observations, batch_idx, use_prior=False
-        # )
-        return {
-            "[PRIOR] Anchor error (mm)": anchor_error_p,
-            "[PRIOR] MPJPE (mm)": mpjpe_p,
-            "[PRIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe_p,
-            "[PRIOR] MPVPE (mm)": mpvpe_p,
-            "[PRIOR] Intersection volume (cm3)": intersection_volume_p,
-            "[PRIOR] Contact coverage (%)": contact_coverage_p,
-            # "[POSTERIOR] Anchor error (mm)": anchor_error,
-            # "[POSTERIOR] MPJPE (mm)": mpjpe,
-            # "[POSTERIOR] Root-aligned MPJPE (mm)": root_aligned_mpjpe,
-            # "[POSTERIOR] MPVPE (mm)": mpvpe,
-            # "[POSTERIOR] Intersection volume (cm3)": intersection_volume,
-            # "[POSTERIOR] Contact coverage (%)": contact_coverage,
-            # "[NOISY INPUT] Anchor error (mm)": anchor_error_x,
-            # "[NOISY INPUT] MPJPE (mm)": mpjpe_x,
-            # "[NOISY INPUT] Root-aligned MPJPE (mm)": root_aligned_mpjpe_x,
-            # "[NOISY INPUT] MPVPE (mm)": mpvpe_x,
-            # "[NOISY INPUT] Intersection volume (cm3)": intesection_volume_x,
-            # "[NOISY INPUT] Contact coverage (%)": contact_coverage_x,
-        }
+        # TODO: Refactor this mess! I can just return the right dict in _test_batch and get rid of
+        # _test_iteration which is completely useless :/. There was a lot of bad code written in a
+        # hurry before this, and little by little we ended up here. Research code amirite?!
+        batch_metrics = {}
+        for k, v in eval_metrics.items():
+            if v is not None:
+                for metric_name, metric_val in v.items():
+                    batch_metrics[f"[{k}] {metric_name}"] = metric_val
+        return batch_metrics
 
     @to_cuda
     def _save_batch_predictions_as_sequence(
@@ -616,6 +823,7 @@ class MultiViewTester(MultiViewTrainer):
     ):
         plots = {}
         gt_is_plotted = False
+        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
             print(samples["choir"].shape, samples["choir"][:, :n].shape)
@@ -657,7 +865,16 @@ class MultiViewTester(MultiViewTrainer):
             # element.
             mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
             use_smplx = False  # TODO: I don't use it for now
-
+            contacts_pred, obj_points, obj_normals = (
+                y_hat.get("contacts", None),
+                None,
+                None,
+            )
+            if self._enable_contacts_tto and contacts_pred is not None:
+                obj_points, obj_normals = (
+                    batch_obj_data["points"],
+                    batch_obj_data["normals"],
+                )
             with torch.set_grad_enabled(True):
                 (
                     _,
@@ -669,6 +886,9 @@ class MultiViewTester(MultiViewTrainer):
                     joints_pred,
                 ) = optimize_pose_pca_from_choir(
                     y_hat["choir"],
+                    contact_gaussians=y_hat.get("contacts", None),
+                    obj_pts=obj_points,
+                    obj_normals=obj_normals,
                     bps=self._bps,
                     anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
@@ -699,21 +919,24 @@ class MultiViewTester(MultiViewTrainer):
                 if not os.path.exists(image_dir):
                     os.makedirs(image_dir)
                 viewed_meshes = []
-                obj_meshes = {}
+                pyvista_obj_meshes, hands_trimesh = {}, {}
                 for i, mesh_pth in enumerate(mesh_pths_iter):
-                    mesh_name = os.path.basename(mesh_pth)
-                    pred_hand_mesh = trimesh.Trimesh(
-                        vertices=verts_pred[i].detach().cpu().numpy(),
-                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                    )
-                    if mesh_name not in obj_meshes:
-                        obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                        if self._data_loader.dataset.center_on_object_com:
-                            obj_mesh.translate(-obj_mesh.get_center())
-                        obj_mesh_pv = pv.wrap(
-                            Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                    if mesh_pth in hands_trimesh:
+                        pred_hand_mesh = hands_trimesh[mesh_pth]
+                    else:
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[i].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                         )
-                        obj_meshes[mesh_name] = obj_mesh_pv
+                        hands_trimesh[mesh_pth] = pred_hand_mesh
+                    if mesh_pth in pyvista_obj_meshes:
+                        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
+                    else:
+                        obj_mesh = self._object_cache[os.path.basename(mesh_pth)][
+                            "mesh"
+                        ]
+                        obj_mesh_pv = pv.wrap(obj_mesh)
+                        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
 
                     grasp_key = (mesh_name, i)
                     if grasp_key not in plots:
@@ -939,6 +1162,8 @@ class MultiViewTester(MultiViewTrainer):
         with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
             compressed_pkl = blosc.compress(pickle.dumps(test_errors))
             f.write(compressed_pkl)
+
+        return
 
         # Plot a curve of the test errors and compute Area Under Curve (AUC). Add marker for the
         # reported ContactPose results of (25.05mm and replicate the results of the paper to have a

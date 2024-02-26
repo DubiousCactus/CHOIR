@@ -55,7 +55,7 @@ class MultiHeadAttention(torch.nn.Module):
         n_heads: int = 8,
         dim_head: int = 64,
         use_bias: bool = False,
-        p_dropout: float = 0.0,
+        p_dropout: float = 0.1,
     ):
         super().__init__()
         inner_dim = dim_head * n_heads
@@ -131,7 +131,7 @@ class MultiHeadSpatialAttention(torch.nn.Module):
         n_heads: int = 8,
         dim_head: int = 64,
         use_bias: bool = False,
-        p_dropout: float = 0.0,
+        p_dropout: float = 0.1,
     ):
         super().__init__()
         inner_dim = dim_head * n_heads

@@ -20,25 +20,45 @@ class MultiViewDDPMTester(MultiViewTester):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
         self._data_loader.dataset.set_observations_number(1)
+        self._full_choir = kwargs.get("full_choir", False)
         self._use_deltas = self._data_loader.dataset.use_deltas
+        self._model_contacts = kwargs.get("model_contacts", False)
+        self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
+        self._use_ema = kwargs.get("use_ema", False)
+        if self._model_contacts:
+            self._model.backbone.set_anchor_indices(
+                self._data_loader.dataset.anchor_indices
+            )
+            self._model.set_dataset_stats(self._data_loader.dataset)
+            self._ema.ema_model.backbone.set_anchor_indices(
+                self._data_loader.dataset.anchor_indices
+            )
+            self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
+        if kwargs.get("compile_test_model", False):
+            print("[*] Compiling the model...")
+            self._model = torch.compile(self._model)
+            self._ema.ema_model = torch.compile(self._ema.ema_model)
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
-            if not self._use_deltas:
-                self._model(
-                    labels["choir"][:, -1]
-                    if self._model.embed_full_choir
-                    else labels["choir"][:, -1][..., -1].unsqueeze(-1),
-                    samples["choir"] if self.conditional else None,
-                )  # Only the hand distances!
-            else:
-                raise NotImplementedError
-                self._model(
-                    labels["choir"][..., 3:],
-                    samples["choir"] if self.conditional else None,
-                )  # Only the hand deltas!
+            x = (
+                labels["choir"][:, -1]
+                if self._full_choir
+                else (
+                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                    if not self._model_contacts
+                    else (
+                        labels["choir"][:, -1]
+                        if self._model.object_in_encoder
+                        else labels["choir"][:, -1][..., 1:]
+                    )
+                )
+            )
+            y = samples["choir"] if self.conditional else None
+            self._model(x, y, y_modality="noisy_pair")
+            self._ema.ema_model(x, y, y_modality="noisy_pair")
         print("[+] Done!")
 
     @to_cuda
@@ -65,7 +85,7 @@ class MultiViewDDPMTester(MultiViewTester):
             theta_dim=self._data_loader.dataset.theta_dim,
             use_deltas=self._use_deltas,
             conditional=self.conditional,
-            method="ddpm",
+            method="coddpm",
         )  # User implementation goes here (utils/training.py)
 
     # @to_cuda
@@ -84,10 +104,11 @@ class MultiViewDDPMTester(MultiViewTester):
             torch.Tensor: The loss for the batch.
         """
         max_observations = max_observations or samples["choir"].shape[1]
-        choir_pred = self._model.generate(
+        model = self._ema.ema_model if self._use_ema else self._model
+        udf, contacts = model.generate(
             1,
             y=samples["choir"][:, :max_observations] if self.conditional else None,
-        ).squeeze(
-            1
-        )  # Only use 1 sample for now. TODO: use more samples and average?
-        return {"choir": choir_pred}
+        )
+        # Only use 1 sample for now. TODO: use more samples and average?
+        udf, contacts = udf.squeeze(1), contacts.squeeze(1)
+        return {"choir": udf, "contacts": contacts}

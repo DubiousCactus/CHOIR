@@ -25,6 +25,7 @@ class TemporalResidualBlock(torch.nn.Module):
         n_norm_groups: int = 32,
         temporal_dim: Optional[int] = None,
         y_dim: Optional[int] = None,
+        condition_by_addition: bool = True,
     ):
         super().__init__()
         self.lin1 = torch.nn.Linear(
@@ -80,42 +81,43 @@ class TemporalResidualBlock(torch.nn.Module):
                 print(str)
 
         _x = x
-        print_debug(f"Starting with x.shape = {x.shape}")
+        # print_debug(f"Starting with x.shape = {x.shape}")
         if t_emb is not None:
             scale, shift = self.temporal_projection(t_emb).chunk(2, dim=1)
-            print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
+            # print_debug(f"scale and shift shapes: {scale.shape}, {shift.shape}")
         x = self.lin1(x)
-        print_debug(f"After lin1, x.shape = {x.shape}")
+        # print_debug(f"After lin1, x.shape = {x.shape}")
         x = self.norm1(x)
         if t_emb is not None:
             x = (
                 x * (scale + 1) + shift
             )  # Normalize before scale/shift as in OpenAI's code
         x = self.nonlin(x)
-        if t_emb is not None:
-            print_debug(f"Temb is {t_emb.shape}")
-            print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
+        # if t_emb is not None:
+        # print_debug(f"Temb is {t_emb.shape}")
+        # print_debug(f"Temb projected is {self.temporal_projection(t_emb).shape}")
         x = self.lin2(x)
-        print_debug(f"After lin2, x.shape = {x.shape}")
+        # print_debug(f"After lin2, x.shape = {x.shape}")
         if y_emb is not None:
             assert t_emb is not None
-            print_debug(f"Adding _x of shape {_x.shape} to x of shape {x.shape}")
+            # print_debug(f"Adding _x of shape {_x.shape} to x of shape {x.shape}")
             x = self.out_activation(self.norm2(x + self.residual_scaling(_x)))
-            print_debug(
-                f"y_emb is {y_emb.shape}. Adding result of cross-attention to x."
-            )
+            # print_debug(
+            # f"y_emb is {y_emb.shape}. Adding result of cross-attention to x."
+            # )
             if len(y_emb.shape) == 2:
                 y_emb = y_emb[:, None]
             cross_attn = self.cross_attention(q=x[:, None], k=y_emb, v=y_emb).squeeze(
                 dim=1
             )
-            print_debug(f"Cross-attention result is {cross_attn.shape}")
+            # print_debug(f"Cross-attention result is {cross_attn.shape}")
             x = x + cross_attn
             return x
         else:
-            print_debug(
-                f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
-            )
+            pass
+            # print_debug(
+            # f"Adding _x of shape {_x.shape} (rescaled to {self.residual_scaling(_x).shape}) to x of shape {x.shape}"
+            # )
             return self.out_activation(self.norm2(x + self.residual_scaling(_x)))
 
 

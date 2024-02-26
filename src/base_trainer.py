@@ -63,6 +63,7 @@ class BaseTrainer:
         self._model_saver = BestNModelSaver(
             project_conf.BEST_N_MODELS_TO_KEEP, self._save_checkpoint
         )
+        self.minimize_metric = "val_loss"
         self._pbar = tqdm(total=len(self._train_loader), desc="Training")
         self._training_loss = training_loss
         self._bps_dim = train_loader.dataset.bps_dim
@@ -102,6 +103,7 @@ class BaseTrainer:
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
         validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
@@ -219,7 +221,7 @@ class BaseTrainer:
                 # Blink the progress bar to indicate that the validation loop is running
                 blink_pbar(i, self._pbar, 4)
                 loss, loss_components = self._train_val_iteration(
-                    batch, validation=True
+                    batch, epoch, validation=True
                 )  # User implementation goes here (train.py)
                 val_loss.update(loss.clone())
                 for k, v in loss_components.items():
@@ -258,7 +260,7 @@ class BaseTrainer:
                 epoch,
                 val_loss,
                 val_loss_components,
-                minimize_metric="distances_from_prior",
+                minimize_metric=self.minimize_metric,
             )
             return val_loss
 

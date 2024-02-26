@@ -14,7 +14,7 @@ pyvista
 trimesh
 smplx[all]
 open3d
-blosc
+blosc2
 rtree
 trame
 trame-vtk

@@ -1,38 +1,40 @@
+#! /usr/bin/env python3
 # vim:fenc=utf-8
 #
-# Copyright © 2022 Théo Morales <theo.morales.fr@gmail.com>
+# Copyright © 2023 Théo Morales <theo.morales.fr@gmail.com>
 #
 # Distributed under terms of the MIT license.
 
 """
-ContactPose dataset.
+OakInk shape dataset. Each sample is a tuple of (D_train, D_test) sampled from an UDF generated
+from the corresponding OakInk shape. D_train is a sparse (un)signed distance field sampled in a uniform
+ball. D_test is a dense (un)signed distance field sampled in a uniform ball.
 """
 
 import os
 import os.path as osp
 import pickle
 import random
-import sys
-from contextlib import redirect_stdout
 from typing import List, Tuple
 
 import blosc2
 import numpy as np
+import open3d
+import open3d.geometry as o3dg
+import open3d.utility as o3du
 import torch
-from hydra.utils import get_original_cwd
-from open3d import geometry as o3dg
-from open3d import io as o3dio
-from open3d import utility as o3du
-from open3d import visualization as o3dv
-from pytorch3d.transforms import matrix_to_rotation_6d
+from pytorch3d.transforms.rotation_conversions import (
+    axis_angle_to_matrix,
+    matrix_to_axis_angle,
+)
 from torchmetrics import MeanMetric
 from tqdm import tqdm
+from trimesh import Trimesh
 
-from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from globals import FLAT_LOWER_INDICES
 from model.affine_mano import AffineMANO
-from utils import colorize
+from utils import debug_methods
 from utils.dataset import (
     augment_hand_object_pose,
     compute_anchor_gaussians,
@@ -44,71 +46,66 @@ from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
     visualize_CHOIR_prediction,
     visualize_hand_contacts_from_3D_gaussians,
+    visualize_MANO,
 )
 
 
-class ContactPoseDataset(BaseDataset):
-    """ "
-    A task is defined as a set of random views of the same grasp of the same object. In ContactPose
-    terms, this translates to a set of random views of person X grasping object Y with hand H and
-    intent Z.
-    """
-
+@debug_methods
+class OakInkDataset(BaseDataset):
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
 
     # ====== UDFs ======
-    gt_udf_mean = torch.tensor([0.4796, 0.3610])  # object distances, hand distances
-    gt_udf_std = torch.tensor([0.1489, 0.1299])  # object distances, hand distances
-    noisy_udf_mean = torch.tensor([0.4796, 0.3424])  # object distances, hand distances
-    noisy_udf_std = torch.tensor([0.1489, 0.1392])  # object distances, hand distances
+    gt_udf_mean = torch.tensor([0.5061, 0.3595])  # object distances, hand distances
+    gt_udf_std = torch.tensor([0.1584, 0.1309])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.5061, 0.3387])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1584, 0.1407])  # object distances, hand distances
 
     # ====== Keypoints ======
     gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
-        [-2.2395e-04, -8.6842e-04, 7.1034e-05]
-    ), torch.tensor([3.4145e-04, -4.4793e-04, 4.5160e-05])
+        [8.6208e-05, -1.5328e-04, -1.1284e-0]
+    ), torch.tensor([-0.0005, -0.0014, -0.0169])
     gt_kp_obj_std, gt_kp_hand_std = torch.tensor(
-        [0.0383, 0.0369, 0.0368]
-    ), torch.tensor([0.0485, 0.0456, 0.0448])
+        [0.0318, 0.0310, 0.0690]
+    ), torch.tensor([0.0441, 0.0448, 0.0549])
     noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor(
-        [-2.2395e-04, -8.6842e-04, 7.1034e-05]
-    ), torch.tensor([0.0003, -0.0003, 0.0007])
+        [8.6208e-05, -1.5328e-04, -1.1284e-02]
+    ), torch.tensor([-0.0008, -0.0017, -0.0176])
     noisy_kp_obj_std, noisy_kp_hand_std = torch.tensor(
-        [0.0383, 0.0369, 0.0368]
-    ), torch.tensor([0.0712, 0.0696, 0.0691])
+        [0.0318, 0.0310, 0.0690]
+    ), torch.tensor([0.0706, 0.0706, 0.0783])
 
     # ====== Contacts ======
     contacts_mean = torch.tensor(
         [
-            -8.7072e-08,  # mean x
-            1.5663e-06,  # mean y
-            9.8294e-06,  # mean z
-            1.0260e-03,  # cholesky-decomped cov 00
-            -1.7068e-06,  # cholesky-decomped cov 03
-            8.0481e-04,  # cholesky-decomped cov 04
-            -2.1206e-07,  # cholesky-decomped cov 06
-            2.2454e-06,  # cholesky-decomped cov 07
-            5.6147e-04,  # cholesky-decomped cov 08
+            -1.7441e-06,  # mean x
+            6.4501e-06,  # mean y
+            1.6437e-04,  # mean z
+            6.0590e-04,  # cholesky-decomped cov 00
+            1.5361e-05,  # cholesky-decomped cov 03
+            4.2540e-04,  # cholesky-decomped cov 04
+            7.2579e-08,  # cholesky-decomped cov 06
+            1.2935e-06,  # cholesky-decomped cov 07
+            4.4217e-04,  # cholesky-decomped cov 08
         ]
     )
     contacts_std = torch.tensor(
         [
-            0.0017,  # mean x
-            0.0017,  # mean y
-            0.0017,  # mean z
-            0.0017,  # cholesky-decomped cov 00
+            0.0013,  # mean x
+            0.0013,  # mean y
+            0.0012,  # mean z
+            0.0014,  # cholesky-decomped cov 00
             0.0011,  # cholesky-decomped cov 03
-            0.0014,  # cholesky-decomped cov 04
-            0.0011,  # cholesky-decomped cov 06
-            0.0011,  # cholesky-decomped cov 07
-            0.0011,  # cholesky-decomped cov 08
+            0.0010,  # cholesky-decomped cov 04
+            0.0008,  # cholesky-decomped cov 06
+            0.0008,  # cholesky-decomped cov 07
+            0.0010,  # cholesky-decomped cov 08
         ]
     )
 
     def __init__(
         self,
+        dataset_root: str,
         split: str,
-        use_contactopt_splits: bool = False,
-        use_improved_contactopt_splits: bool = False,
         validation_objects: int = 3,
         test_objects: int = 2,
         perturbation_level: int = 0,
@@ -138,32 +135,19 @@ class ContactPoseDataset(BaseDataset):
         assert max_views_per_grasp > 0
         assert noisy_samples_per_grasp > 0, "noisy_samples_per_grasp must be > 0"
         self._perturbations = [
-            {"trans": 0.0, "rot": 0.0, "pca": 0.0},  # Level 0
-            {"trans": 0.02, "rot": 0.05, "pca": 0.3},  # Level 1
+            {"trans": 0.0, "rot": 0.0, "axisangle": 0.0},  # Level 0
+            {"trans": 0.02, "rot": 0.05, "axisangle": 0.3},  # Level 1
             {
                 "trans": 0.05,
                 "rot": 0.15,
-                "pca": 0.5,
-            },  # Level 2 (0.05m, 0.15rad, 0.5 PCA units)
+                "axisangle": 0.5,
+            },  # Level 2 (0.05m, 0.15rad, 0.5 axis-angle degrees)
             {
                 "trans": 0.005,
                 "rot": 0.05,
-                "pca": 0.5,
-            },  # Level 3 (0.005m, 0.15rad, 0.5 PCA units), for tests with TTO
+                "axisangle": 0.5,
+            },  # Level 3 (0.005m, 0.15rad, 0.5 axis-angle degrees), for tests with TTO
         ]
-        self._use_contactopt_splits = use_contactopt_splits
-        self._use_improved_contactopt_splits = use_improved_contactopt_splits
-        # Using ContactOpt's parameters
-        if self._use_contactopt_splits or self._use_improved_contactopt_splits:
-            if split == "train":
-                noisy_samples_per_grasp = 16
-            else:
-                noisy_samples_per_grasp = 2
-
-        self._eval_observation_plateau = eval_observations_plateau
-        if eval_observations_plateau:
-            if split == "test":
-                noisy_samples_per_grasp = 15
 
         if eval_anchor_assignment:
             noisy_samples_per_grasp = 1
@@ -171,9 +155,10 @@ class ContactPoseDataset(BaseDataset):
 
         self._eval_anchor_assignment = eval_anchor_assignment
         self._model_contacts = model_contacts
+        self._dataset_root = dataset_root
 
         super().__init__(
-            dataset_name="ContactPose",
+            dataset_name="OakInk",
             bps_dim=bps_dim,
             validation_objects=validation_objects,
             test_objects=test_objects,
@@ -199,217 +184,126 @@ class ContactPoseDataset(BaseDataset):
         )
 
     @property
-    def eval_anchor_assignment(self):
-        return self._eval_anchor_assignment
-
-    @property
-    def eval_observation_plateau(self):
-        return self._eval_observation_plateau
-
-    @property
     def theta_dim(self):
-        return 18
+        return 48
 
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[dict, list, list, str]:
-        if not osp.isdir(osp.join(get_original_cwd(), "vendor", "ContactPose")):
-            raise RuntimeError(
-                "Please clone the ContactPose dataset in the vendor/ directory as 'ContactPose'"
-            )
-        sys.path.append(osp.join(get_original_cwd(), "vendor", "ContactPose"))
-        sys.path.append(
-            osp.join(get_original_cwd(), "vendor", "ContactPose", "thirdparty", "mano")
-        )
-        sys.path.append(
-            osp.join(
-                get_original_cwd(),
-                "vendor",
-                "ContactPose",
-                "thirdparty",
-                "mano",
-                "webuser",
-            )
-        )
-        np.int = int  # If using python 3.11
-        from vendor.ContactPose.utilities.dataset import ContactPose, get_object_names
-
-        # First, build a dictionary of object names to the participant, intent, and hand used. The
-        # reason we don't do it all in one pass is that some participants may not manipulate some
-        # objects.
-        participant_splits = (
-            self._use_contactopt_splits
-            or self._use_improved_contactopt_splits
-            or self._eval_anchor_assignment
-        )
-        cp_dataset = {} if not participant_splits else []
-        n_participants = 2 if tiny else 51
-        for p_num in range(1, n_participants):
-            for intent in ["use", "handoff"]:
-                for obj_name in get_object_names(
-                    p_num, intent
-                ):  # TODO Fix this non-deterministic pieace of shit function!!!!!
-                    if participant_splits:
-                        cp_dataset.append((p_num, intent, obj_name))
-                    else:
-                        if obj_name not in cp_dataset:
-                            cp_dataset[obj_name] = []
-                        cp_dataset[obj_name].append((p_num, intent, "right"))
-                        if not self._right_hand_only:
-                            cp_dataset[obj_name].append((p_num, intent, "left"))
-        hand_indices = {"right": 1, "left": 0}
-
-        if participant_splits:
-            assert not (
-                self._use_contactopt_splits and self._use_improved_contactopt_splits
-            ), "You can't use both ContactOpt's splits and the improved splits."
-            # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
-            low_p, high_p = 0, 0
-            if self._use_contactopt_splits:
-                if split == "train":
-                    low_p, high_p = 0, 0.8
-                else:
-                    low_p, high_p = 0.8, 1.0
-            elif self._use_improved_contactopt_splits:
-                # I'm improving it so that we have a validation split here.
-                if split == "train":
-                    low_p, high_p = 0, 0.7
-                elif split == "val":
-                    low_p, high_p = 0.7, 0.8
-                elif split == "test":
-                    low_p, high_p = 0.8, 1.0
-            elif self._eval_anchor_assignment:
-                if split != "test":
-                    low_p, high_p = 0.0, 0.1
-                else:
-                    low_p, high_p = 0.0, 1.0  # Use all the dataset to test this!
-
-            low_split = int(len(cp_dataset) * low_p)
-            high_split = int(len(cp_dataset) * high_p)
-            cp_dataset = cp_dataset[
-                low_split:high_split
-            ]  # [0.0, 0.8] for train, [0.8, 1.0] for test
-            # Now, reformat the dataset to be a dictionary of object names to a list of grasps so
-            # that the rest of the code works as is (I wrote this code before I knew about the
-            # splits in ContactOpt).
-            by_object = {}
-            for p_num, intent, obj_name in cp_dataset:
-                if obj_name not in by_object:
-                    by_object[obj_name] = []
-                by_object[obj_name].append((p_num, intent, "right"))
-                if not self._right_hand_only:
-                    by_object[obj_name].append((p_num, intent, "left"))
-            cp_dataset = by_object
-            object_names = sorted(list(cp_dataset.keys()))
+        idx = 0
+        if tiny:
+            n_samples = 1000 if split == "train" else 100
         else:
-            # Split by objects
-            # Keep only the first n_objects - validation_objects if we're in training mode, and the last
-            # validation_objects if we're in eval mode:
-            object_names = sorted(list(cp_dataset.keys()))
-            random.Random(seed).shuffle(object_names)
-            assert (self._validation_objects + self._test_objects) < len(
-                object_names
-            ), (
-                f"validation_objects + test_objects ({self._validation_objects} + {self._test_objects})"
-                + f" must be less than n_objects ({len(object_names)})"
+            from oikit.oi_shape import OakInkShape
+
+            dataset = OakInkShape(
+                data_split=split, mano_assets_root="vendor/manotorch/assets/mano"
             )
-            assert (
-                self._validation_objects >= 1
-            ), f"validation_objects ({self._validation_objects}) must be greater or equal to 1"
-            assert (
-                self._test_objects >= 1
-            ), f"test_objects ({self._test_objects}) must be greater or equal to 1"
-            if split == "train":
-                object_names = object_names[
-                    : -(self._validation_objects + self._test_objects)
-                ]
-            elif split == "val":
-                object_names = object_names[
-                    -(
-                        self._validation_objects + self._test_objects
-                    ) : -self._test_objects
-                ]
-            elif split == "test":
-                object_names = object_names[-self._test_objects :]
-
-        # Now, build the dataset.
-        # objects: unique object paths
-        # objects_w_contacts: object with contacts paths
-        # grasps: MANO parameters w/ global pose pickle paths
-        objects_w_contacts, grasps = [], []
-        print(f"[*] Loading ContactPose{' (tiny)' if tiny else ''}...")
-
+            n_samples = (
+                len(dataset) if not tiny else (1000 if split == "train" else 100)
+            )
         dataset_path = osp.join(
             self._cache_dir,
-            f"dataset_{split}_{n_participants}-participants"
-            + (
-                f"_{self._validation_objects}-val-held-out"
-                + f"_{self._test_objects}-test-held-out"
-                if not participant_splits
-                else f"_from-{low_p}_to-{high_p}_split"
-            )
-            + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
+            f"{split}_{n_samples}-samples" + f"{'_tiny' if tiny else ''}.pkl",
         )
+        obj_and_grasps_path = osp.join(
+            self._cache_dir,
+            f"{split}_{n_samples}-samples" + f"{'_tiny' if tiny else ''}",
+        )
+        os.makedirs(obj_and_grasps_path, exist_ok=True)
+        objects, grasps = [], []
+        print(f"[*] Loading OakInk{' (tiny)' if tiny else ''}...")
         if osp.isfile(dataset_path):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
-                objects_w_contacts, grasps, n_left, n_right = pickle.loads(
-                    blosc2.decompress(compressed_pkl)
-                )
+                objects, grasps = pickle.loads(blosc2.decompress(compressed_pkl))
         else:
-            n_left, n_right = 0, 0
-            for obj_name in tqdm(object_names):
-                for p_num, intent, hand in cp_dataset[obj_name]:
-                    with redirect_stdout(None):
-                        cp = ContactPose(p_num, intent, obj_name)
-                    random_grasp_frame = (
-                        cp.mano_params[hand_indices[hand]],
-                        cp.mano_meshes()[hand_indices[hand]],
-                    )  # {'pose': _, 'betas': _, 'hTm': _} for mano, {'vertices': _, 'faces': _, 'joints': _} for mesh
-                    if cp._valid_hands != [1] and hand_indices[hand] == 1:
-                        # We want the right hand, but this is anything else than just the right hand
-                        continue
-                    obj_mesh_w_contacts_path, grasp = (
-                        cp.contactmap_filename,
-                        random_grasp_frame,
-                    )
-                    objects_w_contacts.append(obj_mesh_w_contacts_path)
-                    grasps.append(
-                        {
-                            "grasp": grasp,
-                            "p_num": p_num,
-                            "intent": intent,
-                            "obj_name": obj_name,
-                            "hand_idx": hand,
-                        }
-                    )
-                    n_left += 1 if hand == "left" else 0
-                    n_right += 1 if hand == "right" else 0
+            os.environ["OAKINK_DIR"] = self._dataset_root
+            from oikit.oi_shape import OakInkShape
+
+            pbar = tqdm(total=n_samples)
+            for shape in OakInkShape(
+                data_split=split, mano_assets_root="vendor/manotorch/assets/mano"
+            ):
+                if tiny and idx == n_samples:
+                    break
+                """
+                Annotations: "Object's .obj models in its canonical system; MANO's pose & shape parameters
+                and vertex 3D locations in object's canonical system."
+
+                shape has the following structure:
+                {
+                    seq_id: str
+                    obj_id: str
+                    joints: 21x3
+                    verts: 778x3
+                    hand_pose: axis-angle pose for MANO, in obj-canonical space
+                    hand_shape: beta for MANO, (10,)
+                    hand_tsl: translation in obj-canonical space for MANO, (3,). This is actually
+                                the translation for CENTER JOINT, not necessarily the wrist. It's
+                                actually joint 9.
+                    is_virtual: bool
+                    raw_obj_id: str
+                    action_id: one of 0001, 0002, 0003, 0004 (use, hold, lift-up, handover).
+                    subject_id: int
+                    subject_alt_id: int
+                    seq_ts: str (Date and time)
+                    source: pickle file path for the source data.
+                    pass_stage: str, one of ['pass1', ...?]
+                    alt_grasp_item: {'alt_joints': ..., 'alt_verts': ..., 'alt_hand_pose': ..., 'alt_hand_shape': ..., 'alt_hand_tsl': ...}
+                    obj_verts: (N, 3)
+                    obj_faces: (M, 3)
+
+                 ----- And optionally, for hand-over: -----
+                    alt_joints: (21, 3)
+                    alt_verts: (778, 3)
+                    alt_hand_pose: (48,)
+                    alt_hand_shape: (10,)
+                    alt_hand_tsl: (3,)
+                }
+                """
+                obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.pkl")
+                grasp_path = osp.join(
+                    obj_and_grasps_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
+                )
+
+                if not osp.isfile(obj_path) and not osp.isfile(grasp_path):
+                    with open(obj_path, "wb") as f:
+                        pickle.dump(
+                            {
+                                "verts": shape["obj_verts"],
+                                "faces": shape["obj_faces"],
+                            },
+                            f,
+                        )
+
+                    with open(grasp_path, "wb") as f:
+                        pickle.dump(
+                            {
+                                "seq_id": shape["seq_id"],
+                                "obj_id": shape["obj_id"],
+                                "action_id": shape["action_id"],
+                                "joints": shape["joints"],
+                                "verts": shape["verts"],
+                                "hand_pose": shape["hand_pose"],
+                                "hand_shape": shape["hand_shape"],
+                                "hand_tsl": shape["hand_tsl"],
+                            },
+                            f,
+                        )
+
+                objects.append(obj_path)
+                grasps.append(grasp_path)
+                idx += 1
+                pbar.update()
             with open(dataset_path, "wb") as f:
-                pkl = pickle.dumps((objects_w_contacts, grasps, n_left, n_right))
+                pkl = pickle.dumps((objects, grasps))
                 compressed_pkl = blosc2.compress(pkl)
                 f.write(compressed_pkl)
-
-        print(
-            f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
-        )
-        split_name = (
-            "train"
-            if split == "train"
-            else ("validation" if split == "val" else "Test")
-        )
-        print(
-            colorize(
-                f"[*] {split_name} objects: {', '.join(object_names)}",
-                ANSI_COLORS[
-                    Theme.TRAINING.value if split == "train" else Theme.VALIDATION.value
-                ],
-            )
-        )
-        assert len(objects_w_contacts) == len(grasps)
+        print(f"[*] Loaded {len(objects)} objects and {len(grasps)} grasps.")
+        assert len(objects) == len(grasps)
         return (
-            objects_w_contacts,
+            objects,
             grasps,
             osp.basename(dataset_path.split(".")[0]),
         )
@@ -417,21 +311,15 @@ class ContactPoseDataset(BaseDataset):
     def _load(
         self,
         split: str,
-        objects_w_contacts: List[str],
+        objects: List[str],
         grasps: List,
         dataset_name: str,
     ) -> List[str]:
-        grasp_paths = []
-        # TODO: We should just hash all the class properties and use that as the cache key. This is
-        # a bit hacky and not scalable. But for readability and debugging it's better to
-        # automatically generate the cache key from the class properties in human-readable form.
         samples_labels_pickle_pth = osp.join(
             self._cache_dir,
             "samples_and_labels",
-            # f"dataset_{hashlib.shake_256(dataset_name.encode()).hexdigest(8)}_"
             f"perturbed-{self._perturbation_level}_"
             + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"_{'right-hand' if self._right_hand_only else 'both-hands'}"
             + f"_{self._bps_dim}-bps"
             + (f"-grid" if self._use_bps_grid else "")
             + f"{'_object-centered' if self._center_on_object_com else ''}"
@@ -445,38 +333,35 @@ class ContactPoseDataset(BaseDataset):
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
-        affine_mano: AffineMANO = AffineMANO(for_contactpose=True)  # type: ignore
+        affine_mano: AffineMANO = AffineMANO(for_oakink=True)  # type: ignore
 
         n_augs = self._n_augs if self._augment else 0
 
         # For each object-grasp pair, compute the CHOIR field.
         print("[*] Computing CHOIR fields...")
-        pbar = tqdm(total=len(objects_w_contacts) * (n_augs + 1))
+        grasp_paths = []
+        pbar = tqdm(total=len(objects) * (n_augs + 1))
         dataset_mpjpe = MeanMetric()
         dataset_root_aligned_mpjpe = MeanMetric()
         computed = False
-        for mesh_pth, grasp_data in zip(objects_w_contacts, grasps):
-            """
-            grasp_data = {
-                'grasp': (
-                    {'pose': _, 'betas': _, 'hTm': _},
-                    {'vertices': _, 'faces': _, 'joints': _}
-                ),
-                'p_num': _, 'intent': _, 'obj_name': _, 'hand_idx': _
-            }
-            """
-            obj_name, p_num, intent, hand_idx = (
-                grasp_data["obj_name"],
-                grasp_data["p_num"],
-                grasp_data["intent"],
-                grasp_data["hand_idx"],
+        hand_idx = 0
+        for obj_pth, grasp_pth in zip(objects, grasps):
+            # print(obj_pth, grasp_pth)
+            # obj_pth = obj_pth.replace("/media/data3/moralest/", "/Users/cactus/Code/")
+            # grasp_pth = grasp_pth.replace(
+            # "/media/data3/moralest/", "/Users/cactus/Code/"
+            # )
+            with open(grasp_pth, "rb") as f:
+                grasp = pickle.load(f)
+            with open(obj_pth, "rb") as f:
+                obj = pickle.load(f)
+            obj_id, seq_id, action_id = (
+                grasp["obj_id"],
+                grasp["seq_id"],
+                grasp["action_id"],
             )
-            # TODO: Compute Procrustes Aligned grasp, then procrustes distances for the whole
-            # dataset. Each augmented grasp is still the same shape. And we'll maintain that for
-            # perturbed grasps as well so that the model learns the underlying shape similarities
-            # even with noise.
             for k in range(n_augs + 1):
-                grasp_name = f"{obj_name}_{p_num}_{intent}_{hand_idx}_aug-{k}"
+                grasp_name = f"{obj_id}_{seq_id}_{action_id}_aug-{k}"
                 if not osp.isdir(osp.join(samples_labels_pickle_pth, grasp_name)):
                     os.makedirs(osp.join(samples_labels_pickle_pth, grasp_name))
                 if (
@@ -498,21 +383,57 @@ class ContactPoseDataset(BaseDataset):
                     has_visualized = False
                     computed = True
                     # ================== Original Hand-Object Pair ==================
-                    mano_params = grasp_data["grasp"][0].copy()
-                    gt_hTm = torch.from_numpy(mano_params["hTm"]).float().unsqueeze(0)
-                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                    obj_mesh = o3dg.TriangleMesh()
+                    obj_mesh.vertices = o3du.Vector3dVector(obj["verts"])
+                    obj_mesh.triangles = o3du.Vector3iVector(obj["faces"])
+                    gt_verts, gt_joints = (
+                        torch.from_numpy(grasp["verts"])[None, ...],
+                        torch.from_numpy(grasp["joints"])[None, ...],
+                    )
+                    gt_pose, gt_shape, gt_trans = (
+                        torch.from_numpy(grasp["hand_pose"].copy())[None, ...],
+                        torch.from_numpy(grasp["hand_shape"].copy())[None, ...],
+                        torch.from_numpy(grasp["hand_tsl"].copy())[None, ...],
+                    )
+                    # print("ORIGINAL")
+                    # print(gt_verts.shape, gt_joints.shape)
+                    # hand_tmesh = Trimesh(
+                    # vertices=gt_verts, faces=affine_mano.faces.cpu().numpy()
+                    # )
+                    # # Plot the axes gizmo:
+                    # pyvista.plot([obj_mesh, hand_tmesh])
                     # =================== Apply augmentation =========================
                     if self._augment and k > 0:
-                        obj_mesh, gt_hTm = augment_hand_object_pose(
-                            obj_mesh, gt_hTm, around_z=False
+                        # Let's build a 4x4 homogeneous matrix from the MANO root rotation
+                        # (axis-angle quaternion) and translation (3D vector):
+                        hTm = torch.eye(4)[None, ...]
+                        root_rot_quat = gt_pose[:, :3]
+                        hTm[:, :3, :3] = axis_angle_to_matrix(root_rot_quat)
+                        hTm[:, :3, 3] = gt_trans
+                        obj_mesh, hTm = augment_hand_object_pose(
+                            obj_mesh, hTm, around_z=True
                         )
+                        gt_pose[:, :3] = matrix_to_axis_angle(hTm[:, :3, :3])
+                        gt_trans = hTm[:, :3, 3]
+                        gt_verts, gt_joints = affine_mano(gt_pose, gt_shape, gt_trans)
+                        # print("AUGMENTED")
+                        # hand_tmesh = Trimesh(
+                        # vertices=gt_verts[0].cpu().numpy(),
+                        # faces=affine_mano.faces.cpu().numpy(),
+                        # )
+                        # pyvista.plot([obj_mesh, hand_tmesh])
                     # =================================================================
-                    gt_rot_6d = matrix_to_rotation_6d(gt_hTm[:, :3, :3])
-                    gt_trans = gt_hTm[:, :3, 3]
-                    gt_theta, gt_beta = (
-                        torch.tensor(mano_params["pose"]).unsqueeze(0),
-                        torch.tensor(mano_params["betas"]).unsqueeze(0),
-                    )
+                    # gt_verts, gt_joints = affine_mano(
+                    # torch.from_numpy(gt_pose).float().unsqueeze(0),
+                    # torch.from_numpy(gt_shape).float().unsqueeze(0),
+                    # torch.from_numpy(gt_trans).float().unsqueeze(0),
+                    # )
+                    # print("RECOVERED FROM MANO")
+                    # hand_tmesh = Trimesh(
+                    # vertices=gt_verts[0].cpu().numpy(),
+                    # faces=affine_mano.faces.cpu().numpy(),
+                    # )
+                    # pyvista.plot([obj_mesh, hand_tmesh])
                     obj_ptcld = torch.from_numpy(
                         np.asarray(
                             obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
@@ -528,10 +449,7 @@ class ContactPoseDataset(BaseDataset):
                             obj_ptcld.device, dtype=torch.float32
                         )
                         gt_trans -= obj_center.to(gt_trans.device, dtype=torch.float32)
-                    # ================ Compute GT anchors and verts ==================
-                    gt_verts, gt_joints = affine_mano(
-                        gt_theta, gt_beta, gt_trans, rot_6d=gt_rot_6d
-                    )
+                    # ================ Compute GT anchors ==================
                     gt_anchors = affine_mano.get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
                     gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
@@ -574,7 +492,7 @@ class ContactPoseDataset(BaseDataset):
                             gt_anchors[0],
                             gt_vertex_contacts,
                             base_unit=self.base_unit,
-                            anchor_mean_threshold_mm=20,
+                            anchor_mean_threshold_mm=10,
                             min_contact_points_for_neighbourhood=4,
                         )
                         # TODO: Refactor so that compute_choir is called "compute_bps_rep" or something
@@ -661,10 +579,9 @@ class ContactPoseDataset(BaseDataset):
                             sample_paths.append(sample_pth)
                             continue
 
-                        theta, beta, rot_6d, trans = (
-                            gt_theta.clone(),
-                            gt_beta.clone(),
-                            gt_rot_6d.clone(),
+                        theta, beta, trans = (
+                            gt_pose.clone(),
+                            gt_shape.clone(),
                             gt_trans.clone(),
                         )
                         trans_noise = (
@@ -675,14 +592,16 @@ class ContactPoseDataset(BaseDataset):
                             [
                                 torch.randn(3, device=theta.device)
                                 * self._perturbations[self._perturbation_level]["rot"],
-                                torch.randn(15, device=theta.device)
-                                * self._perturbations[self._perturbation_level]["pca"],
+                                torch.randn(45, device=theta.device)
+                                * self._perturbations[self._perturbation_level][
+                                    "axisangle"
+                                ],
                             ]
                         )
                         theta += pose_noise
                         trans += trans_noise
 
-                        verts, joints = affine_mano(theta, beta, trans, rot_6d=rot_6d)
+                        verts, joints = affine_mano(theta, beta, trans)
 
                         mpjpe = torch.linalg.vector_norm(
                             joints.squeeze(0) - gt_joints.squeeze(0), dim=1, ord=2
@@ -717,7 +636,7 @@ class ContactPoseDataset(BaseDataset):
                             np.ones((1)) if hand_idx == "right" else np.zeros((1)),
                             theta.squeeze().cpu().numpy(),
                             beta.squeeze().cpu().numpy(),
-                            rot_6d.squeeze().cpu().numpy(),
+                            torch.zeros(6).cpu().numpy(),
                             trans.squeeze().cpu().numpy(),
                             joints.squeeze().cpu().numpy(),
                             anchors.squeeze().cpu().numpy(),
@@ -729,9 +648,9 @@ class ContactPoseDataset(BaseDataset):
                             gt_scalar.cpu().numpy(),
                             gt_joints.squeeze().cpu().numpy(),
                             gt_anchors.squeeze().cpu().numpy(),
-                            gt_theta.squeeze().cpu().numpy(),
-                            gt_beta.squeeze().cpu().numpy(),
-                            gt_rot_6d.squeeze().cpu().numpy(),
+                            gt_pose.squeeze().cpu().numpy(),
+                            gt_shape.squeeze().cpu().numpy(),
+                            torch.zeros(6).cpu().numpy(),
                             gt_trans.squeeze().cpu().numpy(),
                             gt_contact_gaussian_params.squeeze().cpu().numpy()
                             if self._model_contacts
@@ -740,7 +659,7 @@ class ContactPoseDataset(BaseDataset):
                         # =================================================================
 
                         with open(sample_pth, "wb") as f:
-                            pkl = pickle.dumps((sample, label, mesh_pth))
+                            pkl = pickle.dumps((sample, label, obj_pth))
                             compressed_pkl = blosc2.compress(pkl)
                             f.write(compressed_pkl)
                         sample_paths.append(sample_pth)
@@ -763,16 +682,16 @@ class ContactPoseDataset(BaseDataset):
                             # affine_mano,
                             # use_deltas=self._use_deltas,
                             # )
-                            # faces = affine_mano.faces
-                            # gt_MANO_mesh = Trimesh(
-                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # pred_MANO_mesh = Trimesh(
-                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # visualize_MANO(
-                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            # )
+                            faces = affine_mano.faces
+                            gt_MANO_mesh = Trimesh(
+                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            pred_MANO_mesh = Trimesh(
+                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            visualize_MANO(
+                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
+                            )
                             # visualize_CHOIR_prediction(
                             # gt_choir,
                             # gt_choir,
@@ -806,7 +725,9 @@ class ContactPoseDataset(BaseDataset):
                             colours[:, 1] = 0.58 - colours[:, 0]
                             colours[:, 2] = 0.66 - colours[:, 0]
                             gt_hand_mesh.vertex_colors = o3du.Vector3dVector(colours)
-                            o3dv.draw_geometries([gt_hand_mesh, obj_mesh])
+                            open3d.visualization.draw_geometries(
+                                [gt_hand_mesh, obj_mesh]
+                            )
                             # o3dv.draw_geometries([hand_mesh])
                             for i in range(32):
                                 break
@@ -914,7 +835,7 @@ class ContactPoseDataset(BaseDataset):
                             # plot_choir=False,
                             # )
                             # # Now augment the noisy CHOIR with the Gaussian parameters
-                            # obj_mesh.compute_vertex_normals()
+                            obj_mesh.compute_vertex_normals()
                             obj_vert_normals = torch.cat(
                                 (
                                     torch.from_numpy(
