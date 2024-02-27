@@ -265,10 +265,10 @@ class OakInkDataset(BaseDataset):
                 """
                 obj_path = osp.join(obj_and_grasps_path, f"{shape['obj_id']}.pkl")
                 grasp_path = osp.join(
-                    obj_and_grasps_path, f"{shape['obj_id']}_grasp_{idx}.pkl"
+                    obj_and_grasps_path, f"grasp_{idx}_{shape['seq_id']}.pkl"
                 )
 
-                if not osp.isfile(obj_path) and not osp.isfile(grasp_path):
+                if not osp.isfile(obj_path):
                     with open(obj_path, "wb") as f:
                         pickle.dump(
                             {
@@ -277,7 +277,7 @@ class OakInkDataset(BaseDataset):
                             },
                             f,
                         )
-
+                if not osp.isfile(grasp_path):
                     with open(grasp_path, "wb") as f:
                         pickle.dump(
                             {
