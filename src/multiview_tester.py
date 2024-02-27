@@ -14,7 +14,7 @@ from collections import defaultdict
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
-import blosc
+import blosc2
 import matplotlib.pyplot as plt
 import open3d.io as o3dio
 import pyvista as pv
@@ -1160,7 +1160,7 @@ class MultiViewTester(MultiViewTrainer):
                 )
 
         with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
-            compressed_pkl = blosc.compress(pickle.dumps(test_errors))
+            compressed_pkl = blosc2.compress(pickle.dumps(test_errors))
             f.write(compressed_pkl)
 
         return

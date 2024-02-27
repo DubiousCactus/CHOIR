@@ -31,10 +31,10 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )
-        cip_value = 10.0
+        cilp_value = 1.0
         for p in self._model.parameters():
             if p.requires_grad:
-                p.register_hook(lambda grad: torch.clamp(grad, -cip_value, cip_value))
+                p.register_hook(lambda grad: torch.clamp(grad, -cilp_value, cilp_value))
         # self._accelerator.register_for_checkpointing(self._ema)
         # self.minimize_metric = "udf_mse" ?
 
