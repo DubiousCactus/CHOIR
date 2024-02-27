@@ -25,3 +25,5 @@ metabatch
 scenepic
 opencv-python
 ema-pytorch
+ipython
+git+https://github.com/facebookresearch/pytorch3d.git@stable

@@ -48,6 +48,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         contacts_skip_connections: bool = False,
         y_embed_dim: Optional[int] = None,
         context_channels: Optional[int] = None,
+        conv_transpose: bool = False,
     ):
         super().__init__()
         assert input_normalization in ["standard", "scale"], "Unknown normalization"
@@ -69,6 +70,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     contacts_skip_connections=contacts_skip_connections,
                     contacts_dim=9,
                     use_self_attention=use_backbone_self_attn,
+                    interpolate=not conv_transpose,
                 ),
                 partial(
                     ResnetEncoderModel,

@@ -248,6 +248,7 @@ model_store(
         contacts_hidden_dim=2048,
         contacts_skip_connections=False,
         input_normalization="standard",
+        conv_transpose=True,
     ),
     name="contact_bps_ddpm",
 )

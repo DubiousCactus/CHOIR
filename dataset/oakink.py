@@ -347,7 +347,6 @@ class OakInkDataset(BaseDataset):
         computed = False
         hand_idx = 0
         for obj_pth, grasp_pth in zip(objects, grasps):
-            # print(obj_pth, grasp_pth)
             # obj_pth = obj_pth.replace("/media/data3/moralest/", "/Users/cactus/Code/")
             # grasp_pth = grasp_pth.replace(
             # "/media/data3/moralest/", "/Users/cactus/Code/"

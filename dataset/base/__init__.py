@@ -100,6 +100,7 @@ class BaseDataset(TaskSet, abc.ABC):
         self._cache_dir = osp.join(
             get_original_cwd(), "data", f"{dataset_name}_preprocessed"
         )
+        self._eval_mode = False
         if not osp.isdir(self._cache_dir):
             os.makedirs(self._cache_dir)
         grid_len = None
@@ -291,6 +292,9 @@ class BaseDataset(TaskSet, abc.ABC):
                 return sum([len(seq) for seq in self._sample_paths])
         else:
             return len(self._sample_paths)
+    
+    def set_eval_mode(self, eval: bool) -> None:
+        self._eval_mode = eval
 
     def disable_augs(self) -> None:
         self._augment = False
@@ -416,58 +420,66 @@ class BaseDataset(TaskSet, abc.ABC):
                     blosc2.decompress(compressed_pkl)
                 )
             choir.append(sample[0])
-            rescaled_ref_pts.append(sample[1])
-            scalar.append(sample[2])
-            hand_idx.append(sample[3])
-            theta.append(sample[4])
-            beta.append(sample[5])
-            rot_6d.append(sample[6])
-            trans.append(sample[7])
-            if len(sample) > 8:
-                # To avoid recomputing the dataset for experiments that don't need sample
-                # joints/anchors
-                joints.append(sample[8])
-                anchors.append(sample[9])
             gt_choir.append(label[0])
-            gt_rescaled_ref_pts.append(label[1])
-            gt_scalar.append(label[2])
-            gt_joints.append(label[3])
-            gt_anchors.append(label[4])
-            gt_theta.append(label[5])
-            gt_beta.append(label[6])
-            gt_rot_6d.append(label[7])
-            gt_trans.append(label[8])
-            gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
-            mesh_pths.append(mesh_pth)
-        # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
-        sample = {
-            "choir": torch.from_numpy(np.array([a for a in choir])),
-            "rescaled_ref_pts": torch.from_numpy(
-                np.array([a for a in rescaled_ref_pts])
-            ),
-            "scalar": torch.from_numpy(np.array([a.squeeze() for a in scalar])),
-            "is_rhand": torch.from_numpy(np.array([a for a in hand_idx])),
-            "theta": torch.from_numpy(np.array([a for a in theta])),
-            "beta": torch.from_numpy(np.array([a for a in beta])),
-            "rot": torch.from_numpy(np.array([a for a in rot_6d])),
-            "trans": torch.from_numpy(np.array([a for a in trans])),
-            "joints": torch.from_numpy(np.array([a for a in joints])),
-            "anchors": torch.from_numpy(np.array([a for a in anchors])),
-        }
-        label = {
-            "choir": torch.from_numpy(np.array([a for a in gt_choir])),
-            "rescaled_ref_pts": torch.from_numpy(
-                np.array([a for a in gt_rescaled_ref_pts])
-            ),
-            "scalar": torch.from_numpy(np.array([a.squeeze() for a in gt_scalar])),
-            "joints": torch.from_numpy(np.array([a for a in gt_joints])),
-            "anchors": torch.from_numpy(np.array([a for a in gt_anchors])),
-            "theta": torch.from_numpy(np.array([a for a in gt_theta])),
-            "beta": torch.from_numpy(np.array([a for a in gt_beta])),
-            "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
-            "trans": torch.from_numpy(np.array([a for a in gt_trans])),
-            "contact_gaussians": torch.from_numpy(
-                np.array([a for a in gt_contact_gaussians])
-            ),
-        }
+            if self._eval_mode:
+                rescaled_ref_pts.append(sample[1])
+                scalar.append(sample[2])
+                hand_idx.append(sample[3])
+                theta.append(sample[4])
+                beta.append(sample[5])
+                rot_6d.append(sample[6])
+                trans.append(sample[7])
+                if len(sample) > 8:
+                    # To avoid recomputing the dataset for experiments that don't need sample
+                    # joints/anchors
+                    joints.append(sample[8])
+                    anchors.append(sample[9])
+                gt_rescaled_ref_pts.append(label[1])
+                gt_scalar.append(label[2])
+                gt_joints.append(label[3])
+                gt_anchors.append(label[4])
+                gt_theta.append(label[5])
+                gt_beta.append(label[6])
+                gt_rot_6d.append(label[7])
+                gt_trans.append(label[8])
+                gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
+                mesh_pths.append(mesh_pth)
+
+        if self._eval_mode:
+            # Some people claim that torch.from_numpy is faster than torch.stack in most cases...
+            sample = {
+                "choir": torch.from_numpy(np.array([a for a in choir])),
+                "rescaled_ref_pts": torch.from_numpy(
+                    np.array([a for a in rescaled_ref_pts])
+                ),
+                "scalar": torch.from_numpy(np.array([a.squeeze() for a in scalar])),
+                "is_rhand": torch.from_numpy(np.array([a for a in hand_idx])),
+                "theta": torch.from_numpy(np.array([a for a in theta])),
+                "beta": torch.from_numpy(np.array([a for a in beta])),
+                "rot": torch.from_numpy(np.array([a for a in rot_6d])),
+                "trans": torch.from_numpy(np.array([a for a in trans])),
+                "joints": torch.from_numpy(np.array([a for a in joints])),
+                "anchors": torch.from_numpy(np.array([a for a in anchors])),
+            }
+            label = {
+                "choir": torch.from_numpy(np.array([a for a in gt_choir])),
+                "rescaled_ref_pts": torch.from_numpy(
+                    np.array([a for a in gt_rescaled_ref_pts])
+                ),
+                "scalar": torch.from_numpy(np.array([a.squeeze() for a in gt_scalar])),
+                "joints": torch.from_numpy(np.array([a for a in gt_joints])),
+                "anchors": torch.from_numpy(np.array([a for a in gt_anchors])),
+                "theta": torch.from_numpy(np.array([a for a in gt_theta])),
+                "beta": torch.from_numpy(np.array([a for a in gt_beta])),
+                "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
+                "trans": torch.from_numpy(np.array([a for a in gt_trans])),
+                "contact_gaussians": torch.from_numpy(
+                    np.array([a for a in gt_contact_gaussians])
+                ),
+            }
+        else:
+            # This will hopefully save a lot of memory and allow to bump up the batch size during
+            # training :) :)
+            sample = {"choir": torch.from_numpy(np.array([a for a in choir]))}
+            label = {"choir": torch.from_numpy(np.array([a for a in gt_choir]))}
         return sample, label, mesh_pths

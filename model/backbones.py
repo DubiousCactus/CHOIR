@@ -619,6 +619,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         output_paddings: Tuple[int] = (1, 1, 1, 1),
         context_channels: Optional[int | Tuple[int]] = None,
         use_self_attention: bool = False,
+        interpolate: bool = False,
     ):
         super().__init__()
         self.grid_len = bps_grid_len
@@ -671,7 +672,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
             temporal_channels=temporal_dim,
             normalization=normalization,
             norm_groups=norm_groups,
-            interpolate=True,
+            interpolate=interpolate,
         )
         identity_conv_block = partial(
             TemporalConvIdentityBlock,
