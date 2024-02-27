@@ -194,6 +194,7 @@ class OakInkDataset(BaseDataset):
         if tiny:
             n_samples = 1000 if split == "train" else 100
         else:
+            os.environ["OAKINK_DIR"] = self._dataset_root
             from oikit.oi_shape import OakInkShape
 
             dataset = OakInkShape(
