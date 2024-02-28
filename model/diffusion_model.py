@@ -128,7 +128,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         assert not (self.alpha < 0).any(), "Alphas contain neg"
         self._input_udf_shape, self._input_contacts_shape = None, None
         self.x_udf_mean, self.x_udf_std = None, None
-        self.x_contacts_mean, self.x_contacts_std = None, None
+        (
+            self.x_contacts_mean,
+            self.x_contacts_std,
+            self.x_contacts_min,
+            self.x_contacts_max,
+        ) = (None, None, None, None)
         self.y_udf_mean, self.y_udf_std = None, None
 
     def set_dataset_stats(
@@ -136,9 +141,16 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         dataset: torch.utils.data.Dataset,
     ) -> None:
         self.x_udf_mean, self.x_udf_std = dataset.gt_udf_mean, dataset.gt_udf_std
-        self.x_contacts_mean, self.x_contacts_std = (
+        (
+            self.x_contacts_mean,
+            self.x_contacts_std,
+            self.x_contacts_min,
+            self.x_contacts_max,
+        ) = (
             dataset.contacts_mean,
             dataset.contacts_std,
+            dataset.contacts_min,
+            dataset.contacts_max,
         )
         self.y_udf_mean, self.y_udf_std = dataset.noisy_udf_mean, dataset.noisy_udf_std
 
@@ -147,26 +159,36 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         x: torch.Tensor,
         mean: torch.Tensor,
         std: torch.Tensor,
-        input_norm: Optional[str] = None,
+        min: Optional[torch.Tensor] = None,
+        max: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        _input_norm = input_norm or self.input_normalization
-        if _input_norm == "standard":
-            return (x - mean.to(x.device)) / std.to(x.device)
-        elif _input_norm == "scale":
-            return 2 * x - 1
+        device = x.device
+        if self.input_normalization == "standard":
+            return (x - mean.to(device)) / std.to(device)
+        elif self.input_normalization == "scale":
+            if min is not None and max is not None:
+                return 2 * (x - min.to(device)) / (max.to(device) - min.to(device)) - 1
+            else:
+                return 2 * x - 1
 
     def _destandardize(
         self,
         x: torch.Tensor,
         mean: torch.Tensor,
         std: torch.Tensor,
-        input_norm: Optional[str] = None,
+        min: Optional[torch.Tensor] = None,
+        max: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        _input_norm = input_norm or self.input_normalization
-        if _input_norm == "standard":
-            return x * std.to(x.device) + mean.to(x.device)
-        elif _input_norm == "scale":
-            return (x + 1) / 2
+        device = x.device
+        if self.input_normalization == "standard":
+            return x * std.to(device) + mean.to(device)
+        elif self.input_normalization == "scale":
+            if min is not None and max is not None:
+                return 0.5 * (x + 1) * (max.to(device) - min.to(device)) + min.to(
+                    device
+                )
+            else:
+                return (x + 1) * 0.5
 
     def forward(
         self,
@@ -181,13 +203,21 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         assert self.x_udf_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
             x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
+            print(
+                self.x_contacts_mean,
+                self.x_contacts_std,
+                self.x_contacts_min,
+                self.x_contacts_max,
+            )
             x[..., 2:] = self._standardize(
                 x[..., 2:],
                 self.x_contacts_mean,
                 self.x_contacts_std,
-                input_norm="standard",
+                min=self.x_contacts_min,
+                max=self.x_contacts_max,
             )
         else:
+            raise Exception
             x[..., 0] = self._standardize(
                 x[..., 0], self.x_udf_mean[1], self.x_udf_std[1]
             )
@@ -195,13 +225,32 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 x[..., 1:],
                 self.x_contacts_mean,
                 self.x_contacts_std,
-                input_norm="standard",
+                min=self.x_contacts_min,
+                max=self.x_contacts_max,
             )
         if y is not None:
             if y_modality == "noisy_pair":
                 y = self._standardize(y, self.y_udf_mean, self.y_udf_std)
             elif y_modality == "object":
                 y = self._standardize(y, self.y_udf_mean[0], self.y_udf_std[0])
+        # ======== Making sure ==========
+        if self.object_in_encoder:
+            print(
+                f"CHOIR range: min={x[..., :2].view(-1, 2).min(dim=0).values}, max={x[..., :2].view(-1, 2).max(dim=0).values}"
+            )
+            print(
+                f"Contacts range: min={x[..., 2:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 2:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
+            )
+        else:
+            print(
+                f"CHOIR range: min={x[..., 0].view(-1, 1).min(dim=0).values}, max={x[..., 0].view(-1, 1).max(dim=0).values}"
+            )
+            print(
+                f"Contacts range: min={x[..., 1:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 1:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
+            )
+        print(
+            f"Y range: min={y.view(-1, 2).min(dim=0).values}, max={y.view(-1, 2).max(dim=0).values}"
+        )
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
@@ -382,7 +431,8 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 x_hat_contacts,
                 self.x_contacts_mean,
                 self.x_contacts_std,
-                input_norm="standard",
+                min=self.x_contacts_min,
+                max=self.x_contacts_max,
             )
             x_hat_udf = torch.clamp(x_hat_udf, 1e-5, 1 - 1e-5)
             # Clamp the Gaussian means to have a maximum norm of 20mm:

@@ -59,15 +59,15 @@ class ContactPoseDataset(BaseDataset):
     # ====== UDFs ======
     gt_udf_mean = torch.tensor([0.4796, 0.3610])  # object distances, hand distances
     gt_udf_std = torch.tensor([0.1489, 0.1299])  # object distances, hand distances
-    noisy_udf_mean = torch.tensor([0.4796, 0.3424])  # object distances, hand distances
-    noisy_udf_std = torch.tensor([0.1489, 0.1392])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.4796, 0.3421])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1490, 0.1393])  # object distances, hand distances
 
     # ====== Keypoints ======
     gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
-        [-2.2395e-04, -8.6842e-04, 7.1034e-05]
+        [1.3319e-04, 3.8958e-05, 2.8398e-05]
     ), torch.tensor([3.4145e-04, -4.4793e-04, 4.5160e-05])
     gt_kp_obj_std, gt_kp_hand_std = torch.tensor(
-        [0.0383, 0.0369, 0.0368]
+        [0.0404, 0.0390, 0.0389]
     ), torch.tensor([0.0485, 0.0456, 0.0448])
     noisy_kp_obj_mean, noisy_kp_hand_mean = torch.tensor(
         [-2.2395e-04, -8.6842e-04, 7.1034e-05]
@@ -79,15 +79,15 @@ class ContactPoseDataset(BaseDataset):
     # ====== Contacts ======
     contacts_mean = torch.tensor(
         [
-            -8.7072e-08,  # mean x
-            1.5663e-06,  # mean y
-            9.8294e-06,  # mean z
-            1.0260e-03,  # cholesky-decomped cov 00
-            -1.7068e-06,  # cholesky-decomped cov 03
-            8.0481e-04,  # cholesky-decomped cov 04
-            -2.1206e-07,  # cholesky-decomped cov 06
-            2.2454e-06,  # cholesky-decomped cov 07
-            5.6147e-04,  # cholesky-decomped cov 08
+            -4.8649e-07,  # mean x
+            1.0232e-06,  # mean y
+            7.0423e-06,  # mean z
+            1.0232e-03,  # cholesky-decomped cov 00
+            -1.1730e-06,  # cholesky-decomped cov 03
+            8.0673e-04,  # cholesky-decomped cov 04
+            -3.6392e-07,  # cholesky-decomped cov 06
+            1.6037e-06,  # cholesky-decomped cov 07
+            5.6080e-04,  # cholesky-decomped cov 08
         ]
     )
     contacts_std = torch.tensor(
@@ -95,13 +95,20 @@ class ContactPoseDataset(BaseDataset):
             0.0017,  # mean x
             0.0017,  # mean y
             0.0017,  # mean z
-            0.0017,  # cholesky-decomped cov 00
+            0.0017,  # cholesky-decomped cov 00 *
             0.0011,  # cholesky-decomped cov 03
-            0.0014,  # cholesky-decomped cov 04
+            0.0014,  # cholesky-decomped cov 04 *
             0.0011,  # cholesky-decomped cov 06
             0.0011,  # cholesky-decomped cov 07
-            0.0011,  # cholesky-decomped cov 08
+            0.0011,  # cholesky-decomped cov 08 *
         ]
+    )
+
+    contacts_min = torch.tensor(
+        [-0.0196, -0.0189, -0.0192, 0.0000, -0.0106, 0.0000, -0.0110, -0.0108, 0.0000]
+    )
+    contacts_max = torch.tensor(
+        [0.0196, 0.0193, 0.0200, 0.0133, 0.0113, 0.0118, 0.0105, 0.0110, 0.0110]
     )
 
     def __init__(
