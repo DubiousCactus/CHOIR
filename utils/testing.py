@@ -14,9 +14,12 @@ import os
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
+import pickle
 import numpy as np
 import open3d as o3d
 import open3d.io as o3dio
+import open3d.geometry as o3dg
+import open3d.utility as o3du
 import torch
 import trimesh
 import trimesh.voxel.creation as voxel_create
@@ -195,10 +198,18 @@ def process_object(
     compute_iv: bool,
     pitch: float,
     radius: float,
+    dataset: str,
     n_samples: int = 5000,
     n_normals: int = 5000,
 ) -> Dict[str, Dict]:
-    obj_mesh = o3dio.read_triangle_mesh(path)
+    if dataset == "oakink":
+        with open(path, "rb") as f:
+            obj_dict = pickle.load(f)
+        obj_mesh = o3dg.TriangleMesh()
+        obj_mesh.vertices = o3du.Vector3dVector(obj_dict["verts"])
+        obj_mesh.triangles = o3du.Vector3iVector(obj_dict["faces"])
+    else:
+        obj_mesh = o3dio.read_triangle_mesh(path)
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
     obj_points = torch.from_numpy(
@@ -249,6 +260,7 @@ def mp_process_obj_meshes(
     n_samples: int,
     n_normals: int,
     keep_mesh_contact_indentity: bool = False,
+    dataset: str = "contactpose",
 ):
     """
     Process a list of object meshes in parallel.
@@ -288,6 +300,7 @@ def mp_process_obj_meshes(
                     radius=radius,
                     n_samples=n_samples,
                     n_normals=n_normals,
+                    dataset=dataset,
                 ),
                 unique_mesh_pths,
             ),
