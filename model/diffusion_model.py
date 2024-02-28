@@ -87,7 +87,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.input_normalization = input_normalization
         self.object_in_encoder = object_in_encoder
-        self.use_contacts = "contact" in backbone
         self.backbone = backbones[backbone][0](
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             # TODO: Refactor the entire handling of choir_dim for x and for y.... This is a complete mess
@@ -182,24 +181,22 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         assert self.x_udf_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
             x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
-            if self.use_contacts:
-                x[..., 2:] = self._standardize(
-                    x[..., 2:],
-                    self.x_contacts_mean,
-                    self.x_contacts_std,
-                    input_norm="standard",
-                )
+            x[..., 2:] = self._standardize(
+                x[..., 2:],
+                self.x_contacts_mean,
+                self.x_contacts_std,
+                input_norm="standard",
+            )
         else:
             x[..., 0] = self._standardize(
                 x[..., 0], self.x_udf_mean[1], self.x_udf_std[1]
             )
-            if self.use_contacts:
-                x[..., 1:] = self._standardize(
-                    x[..., 1:],
-                    self.x_contacts_mean,
-                    self.x_contacts_std,
-                    input_norm="standard",
-                )
+            x[..., 1:] = self._standardize(
+                x[..., 1:],
+                self.x_contacts_mean,
+                self.x_contacts_std,
+                input_norm="standard",
+            )
         if y is not None:
             if y_modality == "noisy_pair":
                 y = self._standardize(y, self.y_udf_mean, self.y_udf_std)
@@ -391,10 +388,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             # Clamp the Gaussian means to have a maximum norm of 20mm:
             # TODO: I don't know how to do that yet
             # x_hat_contacts[..., :3] = ?
-            # Threshold the Gaussian covariances to be *activated* above 1e-5
-            # (or something else? Try and see!):
-            # TODO: Remove this? It's better to do it in the contacts fitting loss with a
-            # hyperparameter!
             # x_hat_contacts[..., 3:][x_hat_contacts[..., 3:] < 1e-5] = 0.0
             # ============================
             return x_hat_udf, x_hat_contacts
