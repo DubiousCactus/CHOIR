@@ -203,12 +203,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         assert self.x_udf_mean is not None, "Must call set_dataset_stats first"
         if self.object_in_encoder:
             x[..., :2] = self._standardize(x[..., :2], self.x_udf_mean, self.x_udf_std)
-            print(
-                self.x_contacts_mean,
-                self.x_contacts_std,
-                self.x_contacts_min,
-                self.x_contacts_max,
-            )
             x[..., 2:] = self._standardize(
                 x[..., 2:],
                 self.x_contacts_mean,
