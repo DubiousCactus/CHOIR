@@ -234,23 +234,23 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             elif y_modality == "object":
                 y = self._standardize(y, self.y_udf_mean[0], self.y_udf_std[0])
         # ======== Making sure ==========
-        if self.object_in_encoder:
-            print(
-                f"CHOIR range: min={x[..., :2].view(-1, 2).min(dim=0).values}, max={x[..., :2].view(-1, 2).max(dim=0).values}"
-            )
-            print(
-                f"Contacts range: min={x[..., 2:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 2:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
-            )
-        else:
-            print(
-                f"CHOIR range: min={x[..., 0].view(-1, 1).min(dim=0).values}, max={x[..., 0].view(-1, 1).max(dim=0).values}"
-            )
-            print(
-                f"Contacts range: min={x[..., 1:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 1:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
-            )
-        print(
-            f"Y range: min={y.view(-1, 2).min(dim=0).values}, max={y.view(-1, 2).max(dim=0).values}"
-        )
+        # if self.object_in_encoder:
+        # print(
+        # f"CHOIR range: min={x[..., :2].view(-1, 2).min(dim=0).values}, max={x[..., :2].view(-1, 2).max(dim=0).values}"
+        # )
+        # print(
+        # f"Contacts range: min={x[..., 2:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 2:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
+        # )
+        # else:
+        # print(
+        # f"CHOIR range: min={x[..., 0].view(-1, 1).min(dim=0).values}, max={x[..., 0].view(-1, 1).max(dim=0).values}"
+        # )
+        # print(
+        # f"Contacts range: min={x[..., 1:].view(-1, 32, 9).view(-1, 9).min(dim=0).values}, max={x[..., 1:].view(-1, 32, 9).view(-1, 9).max(dim=0).values}"
+        # )
+        # print(
+        # f"Y range: min={y.view(-1, 2).min(dim=0).values}, max={y.view(-1, 2).max(dim=0).values}"
+        # )
         # ===== Training =========
         # 1. Sample timestep t with shape (B, 1)
         t = (
