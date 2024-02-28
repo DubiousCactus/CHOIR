@@ -38,6 +38,9 @@ def launch_stats_computation(
     )
 
     test_dataset.set_observations_number(1)
+    train_dataset.set_eval_mode(True)
+    val_dataset.set_eval_mode(True)
+    test_dataset.set_eval_mode(True)
 
     train_loader_inst, val_loader_inst, test_loader_inst = None, None, None
     train_loader_inst = data_loader(
@@ -175,7 +178,7 @@ def launch_stats_computation(
     input_kp_hand_std = input_kp_hand_vals.std(dim=0)
     print(f"[*] Ground-truth UDF: mean={gt_udf_mean}, std={gt_udf_std}")
     print(
-        f"[*] Ground-truth Gaussians : mean={gt_gaussian_mean}, std={gt_gaussian_std}"
+        f"[*] Ground-truth Gaussians : mean={gt_gaussian_mean}, std={gt_gaussian_std}, min={gt_gaussian_vals.min(dim=0).values}, max={gt_gaussian_vals.max(dim=0).values}"
     )
     print(f"[*] Input UDF: mean={input_udf_mean}, std={input_udf_std}")
     print(f"[*] Input obj keypoints: mean={input_kp_obj_mean}, std={input_kp_obj_std}")
