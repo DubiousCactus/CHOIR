@@ -31,7 +31,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         self._ema = EMA(
             self._model, beta=0.9999, update_after_step=100, update_every=10
         )
-        cilp_value = 1.0
+        cilp_value = 5.0
         for p in self._model.parameters():
             if p.requires_grad:
                 p.register_hook(lambda grad: torch.clamp(grad, -cilp_value, cilp_value))
@@ -77,7 +77,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
     def _sample_modality(
         self,
         epoch: int,
-        max_epoch_to_equilibrium: int = 300,
+        max_epoch_to_equilibrium: int = 150,
         initial_p0: float = 0.01,
         target_p0: float = 0.5,
     ) -> str:

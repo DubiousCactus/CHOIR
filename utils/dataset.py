@@ -251,6 +251,7 @@ def get_contact_counts_by_neighbourhoods(
     # Iterate over each MANO vertex
     # print(f"MANO vertices shape: {mano_vertices.shape}")
     # print(f"Object points shape: {object_points.shape}")
+    # TODO: Vectorize! Or just use Numba?
     for i, vertex in enumerate(mano_vertices):
         # Get the normal vector for the current MANO vertex
         normal = mano_normals[i]
