@@ -292,7 +292,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 return sum([len(seq) for seq in self._sample_paths])
         else:
             return len(self._sample_paths)
-    
+
     def set_eval_mode(self, eval: bool) -> None:
         self._eval_mode = eval
 

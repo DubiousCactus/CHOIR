@@ -102,6 +102,14 @@ class OakInkDataset(BaseDataset):
         ]
     )
 
+    # TODO: Those are from ContactOpt
+    contacts_min = torch.tensor(
+        [-0.0196, -0.0189, -0.0192, 0.0000, -0.0106, 0.0000, -0.0110, -0.0108, 0.0000]
+    )
+    contacts_max = torch.tensor(
+        [0.0196, 0.0193, 0.0200, 0.0133, 0.0113, 0.0118, 0.0105, 0.0110, 0.0110]
+    )
+
     def __init__(
         self,
         dataset_root: str,
@@ -192,7 +200,7 @@ class OakInkDataset(BaseDataset):
     ) -> Tuple[dict, list, list, str]:
         idx = 0
         if tiny:
-            n_samples = 1000 if split == "train" else 100
+            n_samples = 10000 if split == "train" else 2000
         else:
             os.environ["OAKINK_DIR"] = self._dataset_root
             from oikit.oi_shape import OakInkShape
@@ -201,7 +209,7 @@ class OakInkDataset(BaseDataset):
                 data_split=split, mano_assets_root="vendor/manotorch/assets/mano"
             )
             n_samples = (
-                len(dataset) if not tiny else (1000 if split == "train" else 100)
+                len(dataset) if not tiny else (10000 if split == "train" else 2000)
             )
         dataset_path = osp.join(
             self._cache_dir,
@@ -218,6 +226,18 @@ class OakInkDataset(BaseDataset):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
                 objects, grasps = pickle.loads(blosc2.decompress(compressed_pkl))
+            # new_objects, new_grasps = [], []
+            # for obj_path, grasp_path in zip(objects, grasps):
+            # obj_path = obj_path.replace("/media/data2/moralest/", "/Users/cactus/Code/")
+            # grasp_path = grasp_path.replace(
+            # "/media/data2/moralest/", "/Users/cactus/Code/"
+            # )
+            # new_objects.append(obj_path)
+            # new_grasps.append(grasp_path)
+            # with open(dataset_path, "wb") as f:
+            # pkl = pickle.dumps((new_objects, new_grasps))
+            # compressed_pkl = blosc2.compress(pkl)
+            # f.write(compressed_pkl)
         else:
             os.environ["OAKINK_DIR"] = self._dataset_root
             from oikit.oi_shape import OakInkShape

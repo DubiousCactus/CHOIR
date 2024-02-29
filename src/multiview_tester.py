@@ -333,7 +333,6 @@ class MultiViewTester(MultiViewTrainer):
         cached_obj_path = "batch_obj_data.pkl"
         if os.path.exists(cached_obj_path):
             with open(cached_obj_path, "rb") as f:
-                # batch_obj_data = pickle.load(f, map_location="cpu")
                 batch_obj_data = to_cuda_(
                     torch.load(f, map_location=torch.device("cpu"))
                 )
@@ -456,7 +455,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                     )
                 else:
-                    sample_to_viz = 2
+                    sample_to_viz = 47
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         None,
@@ -546,6 +545,17 @@ class MultiViewTester(MultiViewTrainer):
                         print(
                             f"GT gaussian params shape: {gt_contact_gaussian_params[sample_to_viz, -1].shape}"
                         )
+                        print("-------- Gaussian variances --------")
+                        for i in range(32):
+                            cov = (
+                                gt_contact_gaussian_params[sample_to_viz, -1][i, 3:]
+                                .cpu()
+                                .view(-1, 3, 3)[0]
+                            )
+                            var = torch.take(cov, torch.tensor([0, 4, 8]))
+                            print(
+                                f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov)}, var_norm={torch.norm(var)}"
+                            )
                         visualize_3D_gaussians_on_hand_mesh(
                             gt_hand_mesh,
                             batch_obj_data["mesh"][sample_to_viz],
@@ -558,7 +568,7 @@ class MultiViewTester(MultiViewTrainer):
                             gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
                             gt_anchors[sample_to_viz].cpu(),
                         )
-
+                        print("--------------------")
                         print("====== Reconstructing contacts from 3D Gaussians ======")
                         pred_contact_gaussian_params = torch.cat(
                             (
@@ -569,6 +579,22 @@ class MultiViewTester(MultiViewTrainer):
                             ),
                             dim=-1,
                         )
+                        print("-------- Gaussian variances --------")
+                        for i in range(32):
+                            cov = (
+                                pred_contact_gaussian_params[i, 3:]
+                                .cpu()
+                                .view(-1, 3, 3)[0]
+                            )
+                            var = torch.take(cov, torch.tensor([0, 4, 8]))
+                            print(
+                                f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov)}, var_norm={torch.norm(var)}"
+                            )
+                            if torch.norm(cov) < 1e-6:
+                                pred_contact_gaussian_params[i] = torch.zeros_like(
+                                    pred_contact_gaussian_params[i]
+                                ).to(pred_contact_gaussian_params.device)
+                        print("--------------------")
                         visualize_3D_gaussians_on_hand_mesh(
                             pred_hand_mesh,
                             batch_obj_data["mesh"][sample_to_viz],

@@ -753,6 +753,13 @@ def lower_tril_cholesky_to_covmat(
     bs, n = tuple(lower_tril.shape[:2])
     cov_mat = torch.zeros((bs, n, 3, 3)).view(bs, n, 9).to(lower_tril.device)
     cov_mat[..., FLAT_LOWER_INDICES] = lower_tril
+    # # Ensure positive diagonal entries in the L matrix
+    cov_mat[..., 0] = torch.relu(cov_mat[..., 0]) + 1e-12
+    cov_mat[..., 4] = torch.relu(cov_mat[..., 4]) + 1e-12
+    cov_mat[..., 8] = torch.relu(cov_mat[..., 8]) + 1e-12
+    # diagonal_entry_idx = torch.tensor([0, 4, 8])[None, None, ...].to(lower_tril.device)
+    # torch.nn.functional.relu(torch.take_along_dim(cov_mat, diagonal_entry_idx, dim=-1), inplace=True) #+ 1e-12 * torch.eye(3).to(
+    # lower_tril.device
     if return_lower_tril:
         return cov_mat
     # A = L * L^T where L is the lower triangular matrix obtained from the Cholesky decomposition.

@@ -1179,15 +1179,21 @@ def visualize_hand_contacts_from_3D_gaussians(
         anchor_distances, 1, dim=-1, largest=False, sorted=False
     )
     for i in range(gaussian_params.shape[0]):
-        if torch.all(gaussian_params[i] == 0):
+        if torch.allclose(
+            gaussian_params[i], torch.zeros_like(gaussian_params[i]), atol=1e-6
+        ):
             continue
         mean = gaussian_params[i, :3] + anchors[i]
-        covariance = gaussian_params[i, 3:].reshape(3, 3)
+        covariance = (
+            gaussian_params[i, 3:].reshape(3, 3) + 1e-9 * torch.eye(3)[None, ...]
+        )
         gaussian = torch.distributions.MultivariateNormal(mean, covariance)
         this_anchor_indices = (anchor_indices == i).squeeze(-1)
         anchor_verts = hand_verts[this_anchor_indices]
         # vertex_contacts[this_anchor_indices] = torch.clamp_max(torch.exp(gaussian.log_prob(anchor_verts)), 1.0)
         contact_vals = torch.exp(gaussian.log_prob(anchor_verts))
+        if contact_vals.max() == 0:
+            continue
         print(f"Max contact values for Gaussian {i}/32: {contact_vals.max()}")
         vertex_contacts[this_anchor_indices] = contact_vals / contact_vals.max()
 

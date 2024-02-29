@@ -211,7 +211,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 max=self.x_contacts_max,
             )
         else:
-            raise Exception
             x[..., 0] = self._standardize(
                 x[..., 0], self.x_udf_mean[1], self.x_udf_std[1]
             )

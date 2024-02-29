@@ -431,6 +431,9 @@ class ContactsFittingLoss(torch.nn.Module):
                 cov = cov.view(-1, 3, 3)
             elif cov.shape[-1] == 6:
                 # Cholesky-decomposed
+                # TODO: ReLU goes BEFORE to covmat! Put it in this function.
+                # TODO: Apply a min threshold of 1e-6 for the norm of the covmat after cholesky
+                # recomposition.
                 scale_tril = (
                     lower_tril_cholesky_to_covmat(
                         cov[:, None, :], return_lower_tril=True

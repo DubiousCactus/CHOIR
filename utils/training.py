@@ -104,9 +104,10 @@ def optimize_pose_pca_from_choir(
                 rot = rot.mean(dim=1)
             if len(trans.shape) > 2:
                 trans = trans.mean(dim=1)
-        assert (
-            theta.shape[0] == B
-        ), "compute_pca_from_choir(): batch size mismatch between initial parameters and CHOIR field."
+        assert theta.shape[0] == B, (
+            "compute_pca_from_choir(): batch size mismatch between initial parameters and CHOIR field."
+            + f" theta.shape: {theta.shape}, B: {B}"
+        )
     rot, trans, theta, beta = to_cuda_((rot, trans, theta, beta))
     for p in (rot, trans, theta, beta):
         p.requires_grad = True
