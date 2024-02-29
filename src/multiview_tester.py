@@ -323,11 +323,11 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
-        for i in range(len(mesh_pths)):
-            mesh_pths[i] = mesh_pths[i].replace(
-                "/media/data3/moralest/", "/Users/cactus/Code/"
-            )
-            mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
+        # for i in range(len(mesh_pths)):
+        # mesh_pths[i] = mesh_pths[i].replace(
+        # "/media/data3/moralest/", "/Users/cactus/Code/"
+        # )
+        # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
         print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
         cached_obj_path = "batch_obj_data.pkl"
