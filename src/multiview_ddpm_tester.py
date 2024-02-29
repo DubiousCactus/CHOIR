@@ -93,6 +93,7 @@ class MultiViewDDPMTester(MultiViewTester):
         self,
         samples,
         labels,
+        modality: str = "noisy_pair",
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
@@ -108,6 +109,7 @@ class MultiViewDDPMTester(MultiViewTester):
         udf, contacts = model.generate(
             1,
             y=samples["choir"][:, :max_observations] if self.conditional else None,
+            y_modality=modality,
         )
         # Only use 1 sample for now. TODO: use more samples and average?
         udf, contacts = udf.squeeze(1), contacts.squeeze(1)

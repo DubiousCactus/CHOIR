@@ -99,6 +99,7 @@ class MultiViewTester(MultiViewTrainer):
                 ncomps=self._data_loader.dataset.theta_dim - 3,
                 flat_hand_mean=(self._data_loader.dataset.name == "grab"),
                 for_contactpose=(self._data_loader.dataset.name == "contactpose"),
+                for_oakink=(self._data_loader.dataset.name == "oakink"),
             )
         )
         self._bps_dim = data_loader.dataset.bps_dim
@@ -118,6 +119,7 @@ class MultiViewTester(MultiViewTrainer):
         )  # 20cm in each direction for the voxel grid
         self._n_pts_on_mesh = 5000
         self._n_normals_on_mesh = 5000
+        self._data_loader.dataset.set_eval_mode(True)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -145,7 +147,12 @@ class MultiViewTester(MultiViewTrainer):
         )  # User implementation goes here (utils/visualization.py)
 
     def _inference(
-        self, samples, labels, max_observations: Optional[int] = None, **kwargs
+        self,
+        samples,
+        labels,
+        modality: str = "noisy_pair",
+        max_observations: Optional[int] = None,
+        **kwargs,
     ) -> Dict[str, torch.Tensor]:
         """
         Returns: {"choir": torch.Tensor, ?}
@@ -289,6 +296,7 @@ class MultiViewTester(MultiViewTrainer):
             with open(cached_pred_path, "wb") as f:
                 y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
                 pickle.dump(y_hat, f)
+
         mano_params_gt = {
             "pose": labels["theta"],
             "beta": labels["beta"],
@@ -299,7 +307,9 @@ class MultiViewTester(MultiViewTrainer):
         # grasps, but for dynamic grasps we want to predict the LAST frame!).
         mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-        gt_verts, gt_joints = self._affine_mano(gt_pose, gt_shape, gt_rot_6d, gt_trans)
+        gt_verts, gt_joints = self._affine_mano(
+            gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
+        )
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
@@ -312,21 +322,35 @@ class MultiViewTester(MultiViewTrainer):
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
-        mesh_pths = mesh_pths[-1]  # Now we have a list of B entries.
+        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        for i in range(len(mesh_pths)):
+            mesh_pths[i] = mesh_pths[i].replace(
+                "/media/data3/moralest/", "/Users/cactus/Code/"
+            )
+            mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
         print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
-        mp_process_obj_meshes(
-            mesh_pths,
-            self._object_cache,
-            self._data_loader.dataset.center_on_object_com,
-            self._enable_contacts_tto,
-            self._compute_iv,
-            self._pitch,
-            self._radius,
-            self._n_pts_on_mesh,
-            self._n_normals_on_mesh,
-        )
-        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+        cached_obj_path = "batch_obj_data.pkl"
+        if os.path.exists(cached_obj_path):
+            with open(cached_obj_path, "rb") as f:
+                # batch_obj_data = pickle.load(f, map_location="cpu")
+                batch_obj_data = to_cuda_(
+                    torch.load(f, map_location=torch.device("cpu"))
+                )
+        else:
+            mp_process_obj_meshes(
+                mesh_pths,
+                self._object_cache,
+                self._data_loader.dataset.center_on_object_com,
+                self._enable_contacts_tto,
+                self._compute_iv,
+                self._pitch,
+                self._radius,
+                self._n_pts_on_mesh,
+                self._n_normals_on_mesh,
+                dataset=self._data_loader.dataset.name,
+            )
+            batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
         # ==============================================
         eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
         if use_input:

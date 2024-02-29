@@ -75,6 +75,8 @@ def optimize_pose_pca_from_choir(
             AffineMANO(24, flat_hand_mean=True, for_contactpose=False)
         )
         ncomps = 24
+    elif dataset.lower() == "oakink":
+        affine_mano = to_cuda_(AffineMANO(45, for_oakink=True))
     else:
         raise ValueError(f"Unknown dataset '{dataset}'.")
     if initial_params is None:
@@ -152,7 +154,7 @@ def optimize_pose_pca_from_choir(
             )
             verts, joints = output.vertices, output.joints
         else:
-            verts, joints = affine_mano(theta, beta, rot, trans)
+            verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
@@ -222,7 +224,7 @@ def optimize_pose_pca_from_choir(
             )
             verts, joints = output.vertices, output.joints
         else:
-            verts, joints = affine_mano(theta, beta, rot, trans)
+            verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
         anchors = affine_mano.get_anchors(verts)
         contact_loss, penetration_loss = contacts_loss(
             verts,
@@ -384,7 +386,7 @@ def optimize_mesh_from_joints_and_anchors(
             )
             verts, joints = output.vertices, output.joints
         else:
-            verts, joints = affine_mano(theta, beta, rot, trans)
+            verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
