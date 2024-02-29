@@ -853,7 +853,7 @@ experiment_store(
             use_bps_grid=True,
             bps_dim=16**3,  # 4096 points
             augment=True,
-            n_augs=20,
+            n_augs=5,
             model_contacts=True,
         ),
         data_loader=dict(batch_size=64),
