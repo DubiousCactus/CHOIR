@@ -150,7 +150,6 @@ class MultiViewTester(MultiViewTrainer):
         self,
         samples,
         labels,
-        modality: str = "noisy_pair",
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
@@ -455,7 +454,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                     )
                 else:
-                    sample_to_viz = 47
+                    sample_to_viz = 112
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         None,

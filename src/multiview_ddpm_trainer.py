@@ -35,6 +35,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         for p in self._model.parameters():
             if p.requires_grad:
                 p.register_hook(lambda grad: torch.clamp(grad, -cilp_value, cilp_value))
+        self._single_modality = self._model.single_modality
         # self._accelerator.register_for_checkpointing(self._ema)
         # self.minimize_metric = "udf_mse" ?
 
@@ -90,6 +91,8 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         Returns:
             str: The sampled modality.
         """
+        if self._single_modality is not None:
+            return self._single_modality
         # Linear interpolation function:  y = y1 + (x - x1) * (y2 - y1) / (x2 - x1)
         if epoch >= max_epoch_to_equilibrium:
             p_0 = target_p0

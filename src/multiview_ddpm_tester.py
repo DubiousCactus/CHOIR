@@ -6,6 +6,7 @@
 # Distributed under terms of the MIT license.
 
 
+import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -34,6 +35,7 @@ class MultiViewDDPMTester(MultiViewTester):
                 self._data_loader.dataset.anchor_indices
             )
             self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
+        self._single_modality = self._model.single_modality
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         if kwargs.get("compile_test_model", False):
@@ -56,9 +58,19 @@ class MultiViewDDPMTester(MultiViewTester):
                     )
                 )
             )
+            if self._single_modality is not None:
+                modality = self._single_modality
+            else:
+                modality = random.choice(["noisy_pair", "object"])
+
             y = samples["choir"] if self.conditional else None
-            self._model(x, y, y_modality="noisy_pair")
-            self._ema.ema_model(x, y, y_modality="noisy_pair")
+
+            if modality == "object":
+                y = y[..., 0].unsqueeze(-1)
+            elif modality == "noisy_pair":
+                pass  # Already comes in noisy_pair modality
+            self._model(x, y, y_modality=modality)
+            self._ema.ema_model(x, y, y_modality=modality)
         print("[+] Done!")
 
     @to_cuda
@@ -93,7 +105,6 @@ class MultiViewDDPMTester(MultiViewTester):
         self,
         samples,
         labels,
-        modality: str = "noisy_pair",
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
@@ -106,9 +117,19 @@ class MultiViewDDPMTester(MultiViewTester):
         """
         max_observations = max_observations or samples["choir"].shape[1]
         model = self._ema.ema_model if self._use_ema else self._model
+        if self._single_modality is not None:
+            modality = self._single_modality
+        else:
+            modality = random.choice(["noisy_pair", "object"])
+        y = samples["choir"][:, :max_observations] if self.conditional else None
+        print(f"[*] Using modality: {modality}")
+        if modality == "object":
+            y = y[..., 0].unsqueeze(-1)
+        elif modality == "noisy_pair":
+            pass  # Already comes in noisy_pair modality
         udf, contacts = model.generate(
             1,
-            y=samples["choir"][:, :max_observations] if self.conditional else None,
+            y=y,
             y_modality=modality,
         )
         # Only use 1 sample for now. TODO: use more samples and average?

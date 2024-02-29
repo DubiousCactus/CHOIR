@@ -49,6 +49,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         y_embed_dim: Optional[int] = None,
         context_channels: Optional[int] = None,
         conv_transpose: bool = False,
+        single_modality: Optional[str] = None,
     ):
         super().__init__()
         assert input_normalization in ["standard", "scale"], "Unknown normalization"
@@ -94,24 +95,40 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         )
         if y_dim is not None or y_embed_dim is not None:
             assert y_dim is not None and y_embed_dim is not None
-        self.noisy_y_embedder = (
-            backbones[backbone][1](
-                bps_grid_len=bps_grid_len,
-                choir_dim=2,
-                embed_channels=y_embed_dim,
+        self._single_modality = single_modality
+        if single_modality is not None:
+            assert single_modality in [
+                "noisy_pair",
+                "object",
+            ], "Unknown single_modality"
+            self.y_embedder = (
+                backbones[backbone][1](
+                    bps_grid_len=bps_grid_len,
+                    embed_channels=y_embed_dim,
+                    choir_dim=2 if single_modality == "noisy_pair" else 1,
+                )
+                if y_embed_dim is not None
+                else None
             )
-            if y_embed_dim is not None
-            else None
-        )
-        self.object_y_embedder = (
-            backbones[backbone][1](
-                bps_grid_len=bps_grid_len,
-                choir_dim=1,
-                embed_channels=y_embed_dim,
+        else:
+            self.noisy_y_embedder = (
+                backbones[backbone][1](
+                    bps_grid_len=bps_grid_len,
+                    choir_dim=2,
+                    embed_channels=y_embed_dim,
+                )
+                if y_embed_dim is not None
+                else None
             )
-            if y_embed_dim is not None
-            else None
-        )
+            self.object_y_embedder = (
+                backbones[backbone][1](
+                    bps_grid_len=bps_grid_len,
+                    choir_dim=1,
+                    embed_channels=y_embed_dim,
+                )
+                if y_embed_dim is not None
+                else None
+            )
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
             torch.linspace(beta_1, beta_T, time_steps), requires_grad=False
@@ -135,6 +152,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             self.x_contacts_max,
         ) = (None, None, None, None)
         self.y_udf_mean, self.y_udf_std = None, None
+
+    @property
+    def single_modality(self) -> Optional[str]:
+        return self._single_modality
 
     def set_dataset_stats(
         self,
@@ -284,9 +305,15 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         )
         # 4. Predict the noise sample
         if y_modality == "noisy_pair":
-            y_embed = self.noisy_y_embedder(y) if y is not None else None
+            if self._single_modality is not None:
+                y_embed = self.y_embedder(y) if y is not None else None
+            else:
+                y_embed = self.noisy_y_embedder(y) if y is not None else None
         elif y_modality == "object":
-            y_embed = self.object_y_embedder(y) if y is not None else None
+            if self._single_modality is not None:
+                y_embed = self.y_embedder(y) if y is not None else None
+            else:
+                y_embed = self.object_y_embedder(y) if y is not None else None
         eps_hat_udf, eps_hat_contacts = self.backbone(
             torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
             if self.object_in_encoder
@@ -342,9 +369,15 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             device = next(self.parameters()).device
             # 4. Predict the noise sample
             if y_modality == "noisy_pair":
-                y_embed = self.noisy_y_embedder(y) if y is not None else None
+                if self._single_modality is not None:
+                    y_embed = self.y_embedder(y) if y is not None else None
+                else:
+                    y_embed = self.noisy_y_embedder(y) if y is not None else None
             elif y_modality == "object":
-                y_embed = self.object_y_embedder(y) if y is not None else None
+                if self._single_modality is not None:
+                    y_embed = self.y_embedder(y) if y is not None else None
+                else:
+                    y_embed = self.object_y_embedder(y) if y is not None else None
             z_udf_current, z_contacts_current = (
                 torch.randn(n, *self._input_udf_shape).to(device),
                 torch.randn(n, *self._input_contacts_shape).to(device),
