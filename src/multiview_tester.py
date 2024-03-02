@@ -120,6 +120,7 @@ class MultiViewTester(MultiViewTrainer):
         self._n_pts_on_mesh = 5000
         self._n_normals_on_mesh = 5000
         self._data_loader.dataset.set_eval_mode(True)
+        self._debug_tto = kwargs.get("debug_tto", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -285,16 +286,19 @@ class MultiViewTester(MultiViewTrainer):
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(dim=1)
-        cached_pred_path = f"cache_pred_{batch_idx}.pkl"
-        if os.path.exists(cached_pred_path):
-            with open(cached_pred_path, "rb") as f:
-                y_hat = pickle.load(f)
-                y_hat = to_cuda_(y_hat)
+        if self._debug_tto:
+            cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+            if os.path.exists(cached_pred_path):
+                with open(cached_pred_path, "rb") as f:
+                    y_hat = pickle.load(f)
+                    y_hat = to_cuda_(y_hat)
+            else:
+                y_hat = self._inference(samples, labels, use_prior=use_prior)
+                with open(cached_pred_path, "wb") as f:
+                    y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                    pickle.dump(y_hat, f)
         else:
             y_hat = self._inference(samples, labels, use_prior=use_prior)
-            with open(cached_pred_path, "wb") as f:
-                y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
-                pickle.dump(y_hat, f)
 
         mano_params_gt = {
             "pose": labels["theta"],
@@ -322,19 +326,20 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
-        # for i in range(len(mesh_pths)):
-        # mesh_pths[i] = mesh_pths[i].replace(
-        # "/media/data3/moralest/", "/Users/cactus/Code/"
-        # )
-        # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
-        print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
+        if self._debug_tto:
+            # for i in range(len(mesh_pths)):
+            # mesh_pths[i] = mesh_pths[i].replace(
+            # "/media/data3/moralest/", "/Users/cactus/Code/"
+            # )
+            # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
+            print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
-        cached_obj_path = "batch_obj_data.pkl"
-        if os.path.exists(cached_obj_path):
-            with open(cached_obj_path, "rb") as f:
-                batch_obj_data = to_cuda_(
-                    torch.load(f, map_location=torch.device("cpu"))
-                )
+            cached_obj_path = "batch_obj_data.pkl"
+            if os.path.exists(cached_obj_path):
+                with open(cached_obj_path, "rb") as f:
+                    batch_obj_data = to_cuda_(
+                        torch.load(f, map_location=torch.device("cpu"))
+                    )
         else:
             mp_process_obj_meshes(
                 mesh_pths,
@@ -349,6 +354,9 @@ class MultiViewTester(MultiViewTrainer):
                 dataset=self._data_loader.dataset.name,
             )
             batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+            if self._debug_tto:
+                with open(cached_obj_path, "wb") as f:
+                    torch.save(batch_obj_data, f)
         # ==============================================
         eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
         if use_input:
@@ -454,7 +462,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                     )
                 else:
-                    sample_to_viz = 112
+                    sample_to_viz = 3
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         None,
@@ -503,33 +511,34 @@ class MultiViewTester(MultiViewTrainer):
                         theta_w=1e-7,
                         choir_w=1000,
                     )
-                    pred_hand_mesh = trimesh.Trimesh(
-                        vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
-                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    if self._debug_tto:
+                        pred_hand_mesh = trimesh.Trimesh(
+                            vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[sample_to_viz].detach().cpu().numpy(),
+                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][sample_to_viz],
+                            gt_hand=gt_hand_mesh,
+                        )
+                        visualize_MANO(
+                            pred_hand_mesh,
+                            obj_mesh=batch_obj_data["mesh"][sample_to_viz],
+                            opacity=1.0,
+                        )
+                    eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                        gt_anchors,
+                        gt_verts,
+                        gt_joints,
+                        batch_obj_data,
                     )
-                    gt_hand_mesh = trimesh.Trimesh(
-                        vertices=gt_verts[sample_to_viz].detach().cpu().numpy(),
-                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                    )
-                    visualize_MANO(
-                        pred_hand_mesh,
-                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
-                        gt_hand=gt_hand_mesh,
-                    )
-                    visualize_MANO(
-                        pred_hand_mesh,
-                        obj_mesh=batch_obj_data["mesh"][sample_to_viz],
-                        opacity=1.0,
-                    )
-                    # eval_metrics["Distance fitting only"] = self._compute_eval_metrics(
-                    # anchors_pred,
-                    # verts_pred,
-                    # joints_pred,
-                    # gt_anchors,
-                    # gt_verts,
-                    # gt_joints,
-                    # batch_obj_data,
-                    # )
                     if self._enable_contacts_tto:
                         # del anchors_pred, verts_pred, joints_pred
                         contacts_pred, obj_points, obj_normals = (
@@ -537,75 +546,81 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data["points"],
                             batch_obj_data["normals"],
                         )
-                        # Visualize the Gaussian parameters
-                        print(
-                            "====== Reconstructing contacts from GT 3D Gaussians ======"
-                        )
-                        print(
-                            f"GT gaussian params shape: {gt_contact_gaussian_params[sample_to_viz, -1].shape}"
-                        )
-                        print("-------- Gaussian variances --------")
-                        for i in range(32):
-                            cov = (
-                                gt_contact_gaussian_params[sample_to_viz, -1][i, 3:]
-                                .cpu()
-                                .view(-1, 3, 3)[0]
-                            )
-                            var = torch.take(cov, torch.tensor([0, 4, 8]))
+                        if self._debug_tto:
+                            # Visualize the Gaussian parameters
                             print(
-                                f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov)}, var_norm={torch.norm(var)}"
+                                "====== Reconstructing contacts from GT 3D Gaussians ======"
                             )
-                        visualize_3D_gaussians_on_hand_mesh(
-                            gt_hand_mesh,
-                            batch_obj_data["mesh"][sample_to_viz],
-                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
-                            base_unit=self._data_loader.dataset.base_unit,
-                            anchors=gt_anchors[sample_to_viz].cpu(),
-                        )
-                        visualize_hand_contacts_from_3D_gaussians(
-                            gt_hand_mesh,
-                            gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
-                            gt_anchors[sample_to_viz].cpu(),
-                        )
-                        print("--------------------")
-                        print("====== Reconstructing contacts from 3D Gaussians ======")
-                        pred_contact_gaussian_params = torch.cat(
-                            (
-                                contacts_pred[sample_to_viz, ..., :3],
-                                lower_tril_cholesky_to_covmat(contacts_pred[..., 3:])[
-                                    sample_to_viz
-                                ].view(-1, 9),
-                            ),
-                            dim=-1,
-                        )
-                        print("-------- Gaussian variances --------")
-                        for i in range(32):
-                            cov = (
-                                pred_contact_gaussian_params[i, 3:]
-                                .cpu()
-                                .view(-1, 3, 3)[0]
-                            )
-                            var = torch.take(cov, torch.tensor([0, 4, 8]))
                             print(
-                                f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov)}, var_norm={torch.norm(var)}"
+                                f"GT gaussian params shape: {gt_contact_gaussian_params[sample_to_viz, -1].shape}"
                             )
-                            if torch.norm(cov) < 1e-6:
-                                pred_contact_gaussian_params[i] = torch.zeros_like(
-                                    pred_contact_gaussian_params[i]
-                                ).to(pred_contact_gaussian_params.device)
-                        print("--------------------")
-                        visualize_3D_gaussians_on_hand_mesh(
-                            pred_hand_mesh,
-                            batch_obj_data["mesh"][sample_to_viz],
-                            pred_contact_gaussian_params.cpu(),
-                            base_unit=self._data_loader.dataset.base_unit,
-                            anchors=anchors_pred[sample_to_viz].cpu(),
-                        )
-                        visualize_hand_contacts_from_3D_gaussians(
-                            pred_hand_mesh,
-                            pred_contact_gaussian_params.cpu(),
-                            anchors_pred[sample_to_viz].cpu(),
-                        )
+                            print("-------- Gaussian variances --------")
+                            for i in range(32):
+                                cov = (
+                                    gt_contact_gaussian_params[sample_to_viz, -1][i, 3:]
+                                    .cpu()
+                                    .view(-1, 3, 3)[0]
+                                )
+                                var = torch.take(cov, torch.tensor([0, 4, 8]))
+                                print(
+                                    f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov)}, var_norm={torch.norm(var)}"
+                                )
+                            visualize_3D_gaussians_on_hand_mesh(
+                                gt_hand_mesh,
+                                batch_obj_data["mesh"][sample_to_viz],
+                                gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                                base_unit=self._data_loader.dataset.base_unit,
+                                anchors=gt_anchors[sample_to_viz].cpu(),
+                            )
+                            visualize_hand_contacts_from_3D_gaussians(
+                                gt_hand_mesh,
+                                gt_contact_gaussian_params[sample_to_viz, -1].cpu(),
+                                gt_anchors[sample_to_viz].cpu(),
+                            )
+                            print("--------------------")
+                            print(
+                                "====== Reconstructing contacts from 3D Gaussians ======"
+                            )
+                            pred_contact_gaussian_params = torch.cat(
+                                (
+                                    contacts_pred[sample_to_viz, ..., :3],
+                                    lower_tril_cholesky_to_covmat(
+                                        contacts_pred[..., 3:]
+                                    )[sample_to_viz].view(-1, 9),
+                                ),
+                                dim=-1,
+                            )
+                            pred_contact_chol_params = lower_tril_cholesky_to_covmat(
+                                contacts_pred[..., 3:], return_lower_tril=True
+                            )[sample_to_viz].view(-1, 3, 3)
+                            print("-------- Gaussian variances --------")
+                            for i in range(32):
+                                cov = (
+                                    pred_contact_gaussian_params[i, 3:]
+                                    .cpu()
+                                    .view(-1, 3, 3)[0]
+                                )
+                                var = torch.take(cov, torch.tensor([0, 4, 8]))
+                                print(
+                                    f"Anchor {i+1}/32: var={var}, cov_norm={torch.norm(cov):.4f}, var_norm={torch.norm(var):.4f}, var_chol={torch.norm(pred_contact_chol_params[i]):.4f}"
+                                )
+                                if torch.norm(cov) < 1e-6:
+                                    pred_contact_gaussian_params[i] = torch.zeros_like(
+                                        pred_contact_gaussian_params[i]
+                                    ).to(pred_contact_gaussian_params.device)
+                            print("--------------------")
+                            visualize_3D_gaussians_on_hand_mesh(
+                                pred_hand_mesh,
+                                batch_obj_data["mesh"][sample_to_viz],
+                                pred_contact_gaussian_params.cpu(),
+                                base_unit=self._data_loader.dataset.base_unit,
+                                anchors=anchors_pred[sample_to_viz].cpu(),
+                            )
+                            visualize_hand_contacts_from_3D_gaussians(
+                                pred_hand_mesh,
+                                pred_contact_gaussian_params.cpu(),
+                                anchors_pred[sample_to_viz].cpu(),
+                            )
 
                         (
                             _,
@@ -872,7 +887,17 @@ class MultiViewTester(MultiViewTrainer):
     ):
         plots = {}
         gt_is_plotted = False
-        batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+        if self._debug_tto:
+            batch_obj_path = "batch_obj_data.pkl"
+            if os.path.exists(batch_obj_path):
+                with open(batch_obj_path, "rb") as f:
+                    batch_obj_data = to_cuda_(
+                        torch.load(f, map_location=torch.device("cpu"))
+                    )
+            else:
+                batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+        else:
+            batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
             print(samples["choir"].shape, samples["choir"][:, :n].shape)
@@ -882,10 +907,23 @@ class MultiViewTester(MultiViewTrainer):
                     dim=1
                 )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
             # y_hat = self._model(samples["choir"][:, :n], use_mean=True)
-            y_hat = self._inference(
-                samples, labels, use_prior=True, max_observations=n_observations
-            )
-            print(y_hat["choir"].shape)
+            if self._debug_tto:
+                cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+                if os.path.exists(cached_pred_path):
+                    with open(cached_pred_path, "rb") as f:
+                        y_hat = pickle.load(f)
+                        y_hat = to_cuda_(y_hat)
+                else:
+                    y_hat = self._inference(
+                        samples, labels, use_prior=True, max_observations=n
+                    )
+                    with open(cached_pred_path, "wb") as f:
+                        y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                        pickle.dump(y_hat, f)
+            else:
+                y_hat = self._inference(
+                    samples, labels, use_prior=True, max_observations=n
+                )
             mano_params_gt = {
                 "pose": labels["theta"][:, :n],
                 "beta": labels["beta"][:, :n],
@@ -903,9 +941,14 @@ class MultiViewTester(MultiViewTrainer):
             mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
             gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
             gt_verts, gt_joints = self._affine_mano(
-                gt_pose, gt_shape, gt_rot_6d, gt_trans
+                gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
             )
-            sample_verts, sample_joints = self._affine_mano(*mano_params_input.values())
+            sample_verts, sample_joints = self._affine_mano(
+                mano_params_input["pose"],
+                mano_params_input["beta"],
+                mano_params_input["trans"],
+                rot_6d=mano_params_input["rot_6d"],
+            )
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
             multiple_obs = len(samples["theta"].shape) > 2
@@ -933,7 +976,7 @@ class MultiViewTester(MultiViewTrainer):
                     anchors_pred,
                     verts_pred,
                     joints_pred,
-                ) = optimize_pose_pca_from_choir(
+                ) = optimize_pose_pca_from_choir(  # TODO: make a partial
                     y_hat["choir"],
                     contact_gaussians=y_hat.get("contacts", None),
                     obj_pts=obj_points,
@@ -941,7 +984,7 @@ class MultiViewTester(MultiViewTrainer):
                     bps=self._bps,
                     anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
-                    max_iterations=2000,
+                    max_iterations=1000,
                     loss_thresh=1e-6,
                     lr=8e-2,
                     is_rhand=samples["is_rhand"],
@@ -1165,6 +1208,8 @@ class MultiViewTester(MultiViewTrainer):
             for k, v in batch_metrics.items():
                 metrics[k].update(v)
             del batch_metrics
+            if i == 0:
+                break
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)

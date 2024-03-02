@@ -215,7 +215,6 @@ def optimize_pose_pca_from_choir(
         median_filter_len=50,
         update_knn_each_step=True,
     ).to(contact_gaussians.device)
-    converged_pose = None  # Pre penetration loss
     for i in proc_bar:
         enable_contact_fitting = i > 100
         optimizer.zero_grad()
@@ -229,12 +228,14 @@ def optimize_pose_pca_from_choir(
         anchors = affine_mano.get_anchors(verts)
         contact_loss, penetration_loss = contacts_loss(
             verts,
-            anchors.detach(),
+            anchors,
             obj_pts,
             contact_gaussians,
             obj_normals=obj_normals,
+            K=15,
             weights_threshold=0.01,
-            gaussian_activation_threshold=1e-8,
+            scale_tril_norm_activation_threshold=1e-3,
+            only_penetration_loss=not enable_contact_fitting,
         )
         contact_loss = 10 * contact_loss
         penetration_loss = 1000 * penetration_loss

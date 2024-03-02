@@ -140,17 +140,17 @@ dataset_store(
 
 @dataclass
 class SamplerConf:
-    batch_size: int = 32
+    batch_size: int = 64
     drop_last: bool = True
     shuffle: bool = True
 
 
 @dataclass
 class DataloaderConf:
-    batch_size: int = 32
+    batch_size: int = 64
     drop_last: bool = True
     shuffle: bool = True
-    num_workers: int = 2
+    num_workers: int = 4
     pin_memory: bool = False
     n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
@@ -339,7 +339,7 @@ training_loss_store(
 
 @dataclass
 class Optimizer:
-    lr: float = 1e-3
+    lr: float = 3e-4
     weight_decay: float = 0.0
 
 
@@ -425,6 +425,7 @@ class RunConfig:
     compute_iv: bool = True
     compile_test_model: bool = False
     compute_contact_fidelity: bool = True
+    debug_tto: bool = False
     # RunConfig was never meant to be soiled like this :'(
 
 
