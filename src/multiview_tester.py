@@ -665,24 +665,29 @@ class MultiViewTester(MultiViewTrainer):
                             theta_w=1e-7,
                             choir_w=1000,
                         )
-                        pred_hand_mesh = trimesh.Trimesh(
-                            vertices=verts_pred[-1].detach().cpu().numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        gt_hand_mesh = trimesh.Trimesh(
-                            vertices=gt_verts[-1].detach().cpu().numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        visualize_MANO(
-                            pred_hand_mesh,
-                            obj_mesh=batch_obj_data["mesh"][0],
-                            gt_hand=gt_hand_mesh,
-                        )
-                        visualize_MANO(
-                            pred_hand_mesh,
-                            obj_mesh=batch_obj_data["mesh"][0],
-                            opacity=1.0,
-                        )
+                        if self._debug_tto:
+                            pred_hand_mesh = trimesh.Trimesh(
+                                vertices=verts_pred[-1].detach().cpu().numpy(),
+                                faces=self._affine_mano.closed_faces.detach()
+                                .cpu()
+                                .numpy(),
+                            )
+                            gt_hand_mesh = trimesh.Trimesh(
+                                vertices=gt_verts[-1].detach().cpu().numpy(),
+                                faces=self._affine_mano.closed_faces.detach()
+                                .cpu()
+                                .numpy(),
+                            )
+                            visualize_MANO(
+                                pred_hand_mesh,
+                                obj_mesh=batch_obj_data["mesh"][0],
+                                gt_hand=gt_hand_mesh,
+                            )
+                            visualize_MANO(
+                                pred_hand_mesh,
+                                obj_mesh=batch_obj_data["mesh"][0],
+                                opacity=1.0,
+                            )
                         eval_metrics[
                             "With contact fitting"
                         ] = self._compute_eval_metrics(
