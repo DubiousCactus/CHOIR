@@ -165,7 +165,7 @@ class ContactPoseDataset(BaseDataset):
             if split == "train":
                 noisy_samples_per_grasp = 16
             else:
-                noisy_samples_per_grasp = 2
+                noisy_samples_per_grasp = 4
 
         self._eval_observation_plateau = eval_observations_plateau
         if eval_observations_plateau:
