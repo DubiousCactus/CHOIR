@@ -1213,8 +1213,6 @@ class MultiViewTester(MultiViewTrainer):
             for k, v in batch_metrics.items():
                 metrics[k].update(v)
             del batch_metrics
-            if i == 0:
-                break
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)
