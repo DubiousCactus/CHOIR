@@ -148,6 +148,7 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         output_dim_hand: int,
         temporal_dim: int,
         contact_dim: int,
+        contact_hidden_dim: int = 1024,
         hidden_dim: int = 1024,
         context_dim: Optional[int] = None,
         skip_connections: bool = False,
@@ -163,10 +164,18 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         )
         self.input_layer = torch.nn.Sequential(
             torch.nn.Linear(
-                input_dim + contact_dim,
+                input_dim,
                 hidden_dim,
             ),
             torch.nn.GroupNorm(32, hidden_dim),
+            torch.nn.SiLU(),
+        )
+        self.contact_input_layer = torch.nn.Sequential(
+            torch.nn.Linear(
+                contact_dim + 128,
+                contact_hidden_dim,
+            ),
+            torch.nn.GroupNorm(32, contact_hidden_dim),
             torch.nn.SiLU(),
         )
         temporal_res_block = partial(
@@ -181,7 +190,24 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         self.block_2 = temporal_res_block()
         self.block_3 = temporal_res_block()
         self.block_4 = temporal_res_block()
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim_hand + contact_dim)
+        self.feat_prop = torch.nn.Sequential(
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(hidden_dim, 128),
+        )
+        self.contact_1 = temporal_res_block(
+            dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
+        )
+        self.contact_2 = temporal_res_block(
+            dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
+        )
+        self.contact_3 = temporal_res_block(
+            dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
+        )
+        self.contact_4 = temporal_res_block(
+            dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
+        )
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim_hand)
+        self.contact_output_layer = torch.nn.Linear(contact_hidden_dim, contact_dim)
         self.output_dim_hand = output_dim_hand
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
@@ -198,9 +224,8 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         input_shape_x, input_shape_contacts = x.shape, contacts.shape
         bs, ctx_len = x.shape[0], (x.shape[1] if len(x.shape) == 4 else 1)
         t = t.view(bs * ctx_len, -1)
-        x = torch.cat(
-            (x.view(bs * ctx_len, -1), contacts.view(bs * ctx_len, -1)), dim=1
-        )
+        x = x.view(bs * ctx_len, -1)
+        contacts = contacts.view(bs * ctx_len, -1)
         time_embed = self.time_mlp(self.time_encoder(t))
         x1 = self.input_layer(x)
         x2 = self.block_1(x1, t_emb=time_embed, y_emb=y, debug=debug)
@@ -209,11 +234,18 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         x5 = self.block_4(x4, t_emb=time_embed, y_emb=y, debug=debug)
         if self.skip_connections:
             x5 = x2 + x5
-        # x5 = x4
         x6 = self.output_layer(x5)
-        kp, contacts = x6[:, : self.output_dim_hand], x6[:, self.output_dim_hand :]
+
+        c1 = self.contact_input_layer(torch.cat((contacts, self.feat_prop(x3)), dim=-1))
+        c2 = self.contact_1(c1, t_emb=time_embed, y_emb=y, debug=debug)
+        c3 = self.contact_2(c2, t_emb=time_embed, y_emb=y, debug=debug)
+        c4 = self.contact_3(c3, t_emb=time_embed, y_emb=y, debug=debug)
+        c5 = self.contact_4(c4, t_emb=time_embed, y_emb=y, debug=debug)
+        if self.skip_connections:
+            c5 = c2 + c5
+        c6 = self.contact_output_layer(c5)
         kp_shape = (*input_shape_x[:-2], self.output_dim_hand // 3, 3)
-        return kp.view(kp_shape), contacts
+        return x6.view(kp_shape), c6.view(input_shape_contacts)
 
 
 class PointNet2EncoderModel(torch.nn.Module):

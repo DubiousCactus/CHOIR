@@ -1184,6 +1184,7 @@ class KPContactsDiffusionModel(torch.nn.Module):
             None,
         )
         self.x_contacts_mean, self.x_contacts_std = None, None
+        self.single_modality = "noisy_pair"
 
     def set_dataset_stats(
         self,
@@ -1315,47 +1316,74 @@ class KPContactsDiffusionModel(torch.nn.Module):
         with torch.no_grad():
             device = next(self.parameters()).device
             y_embed = self.embedder(y) if y is not None else None
-            z_current = torch.randn(n, *self._input_shape).to(device)
+            z_kp_current, z_contacts_current = torch.randn(n, *self._input_shape).to(
+                device
+            ), torch.randn(n, 32 * 9).to(device)
             if y_embed is not None:
-                z_current = z_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
-            _in_shape = z_current.shape
+                z_kp_current = z_kp_current[None, ...].repeat(y_embed.shape[0], 1, 1, 1)
+                z_contacts_current = z_contacts_current[None, ...].repeat(
+                    y_embed.shape[0], 1, 1
+                )
+            _in_shape, _in_contacts_shape = z_kp_current.shape, z_contacts_current.shape
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
-                eps_hat = self.backbone(
-                    torch.cat([obj_kpts, z_current], dim=-2)
+                eps_hat_kp, eps_hat_contacts = self.backbone(
+                    torch.cat([obj_kpts, z_kp_current], dim=-2)
                     if self.object_in_encoder
-                    else z_current,
+                    else z_kp_current,
+                    z_contacts_current,
                     make_t_batched(t, n, y_embed),
                     y_embed,
                 )
-                z_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_current - (
+                z_kp_prev_hat = (1 / (torch.sqrt(1 - self.beta[t]))) * z_kp_current - (
                     self.beta[t]
                     / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
-                ) * eps_hat
-                eps = torch.randn_like(z_current)
-                z_current = z_prev_hat + eps * self.sigma[t]
+                ) * eps_hat_kp
+                z_contacts_prev_hat = (
+                    1 / (torch.sqrt(1 - self.beta[t]))
+                ) * z_contacts_current - (
+                    self.beta[t]
+                    / (torch.sqrt(1 - self.alpha[t]) * torch.sqrt(1 - self.beta[t]))
+                ) * eps_hat_contacts
+                eps_kp, eps_contacts = torch.randn_like(z_kp_current), torch.randn_like(
+                    z_contacts_current
+                )
+                z_kp_current, z_contacts_current = (
+                    z_kp_prev_hat + eps_kp * self.sigma[t],
+                    z_contacts_prev_hat + eps_contacts * self.sigma[t],
+                )
                 pbar.update()
             # Now for z_0:
-            eps_hat = self.backbone(
-                torch.cat([obj_kpts, z_current], dim=-2)
+            eps_hat_kp, eps_hat_contacts = self.backbone(
+                torch.cat([obj_kpts, z_kp_current], dim=-2)
                 if self.object_in_encoder
-                else z_current,
+                else z_kp_current,
+                z_contacts_current,
                 make_t_batched(t, n, y_embed),
                 y_embed,
             )
-            x_hat = (1 / (torch.sqrt(1 - self.beta[0]))) * z_current - (
+            x_hat_kp = (1 / (torch.sqrt(1 - self.beta[0]))) * z_kp_current - (
                 self.beta[0]
                 / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
-            ) * eps_hat
+            ) * eps_hat_kp
+            x_hat_contacts = (
+                1 / (torch.sqrt(1 - self.beta[0]))
+            ) * z_contacts_current - (
+                self.beta[0]
+                / (torch.sqrt(1 - self.alpha[0]) * torch.sqrt(1 - self.beta[0]))
+            ) * eps_hat_contacts
             pbar.update()
             pbar.close()
             # ====== Postprocessing ======
-            output = x_hat.view(*_in_shape)
-            output = self._destandardize(output, self.x_hand_mean, self.x_hand_std)
-            raise NotImplementedError(
-                "KPContactsDiffusionModel: Contacts not implemented yet"
+            x_hat_kp = x_hat_kp.view(*_in_shape)
+            x_hat_contacts = x_hat_contacts.view(*_in_contacts_shape).view(
+                *_in_shape[:-2], 32, 9
             )
-            return output
+            x_hat_kp = self._destandardize(x_hat_kp, self.x_hand_mean, self.x_hand_std)
+            x_hat_contacts = self._destandardize(
+                x_hat_contacts, self.x_contacts_mean, self.x_contacts_std
+            )
+            return x_hat_kp, x_hat_contacts
 
 
 class LatentDiffusionModel(torch.nn.Module):

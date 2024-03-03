@@ -424,14 +424,23 @@ class MultiViewTester(MultiViewTrainer):
                         y_hat["hand_keypoints"][:, :21],
                         y_hat["hand_keypoints"][:, 21:],
                     )
-                    verts_pred = optimize_mesh_from_joints_and_anchors(
+                    contacts_pred, obj_points, obj_normals = (
+                        None,
+                        None,
+                        None,
+                    )
+                    (
+                        verts_pred,
+                        anchors_pred,
+                        joints_pred,
+                    ) = optimize_mesh_from_joints_and_anchors(
                         y_hat["hand_keypoints"],
                         scalar=torch.mean(input_scalar)
                         .unsqueeze(0)
                         .to(input_scalar.device),  # TODO: What should I do here?
                         is_rhand=samples["is_rhand"][0],
-                        max_iterations=400,
-                        loss_thresh=1e-7,
+                        max_iterations=1000,
+                        loss_thresh=1e-6,
                         lr=8e-2,
                         dataset=self._data_loader.dataset.name,
                         use_smplx=use_smplx,
@@ -461,6 +470,60 @@ class MultiViewTester(MultiViewTrainer):
                         gt_joints,
                         batch_obj_data,
                     )
+                    if self._enable_contacts_tto:
+                        # del anchors_pred, verts_pred, joints_pred
+                        contacts_pred, obj_points, obj_normals = (
+                            y_hat.get("contacts", None),
+                            batch_obj_data["points"],
+                            batch_obj_data["normals"],
+                        )
+                        (
+                            verts_pred,
+                            anchors_pred,
+                            joints_pred,
+                        ) = optimize_mesh_from_joints_and_anchors(
+                            y_hat["hand_keypoints"],
+                            contact_gaussians=contacts_pred,
+                            obj_pts=obj_points,
+                            obj_normals=obj_normals,
+                            scalar=torch.mean(input_scalar)
+                            .unsqueeze(0)
+                            .to(input_scalar.device),  # TODO: What should I do here?
+                            is_rhand=samples["is_rhand"][0],
+                            max_iterations=1000,
+                            loss_thresh=1e-6,
+                            lr=8e-2,
+                            dataset=self._data_loader.dataset.name,
+                            use_smplx=use_smplx,
+                            initial_params={
+                                k: (
+                                    v[:, -1] if multiple_obs else v
+                                )  # Initial pose is the last observation
+                                for k, v in samples.items()
+                                if k
+                                in [
+                                    "theta",
+                                    ("vtemp" if use_smplx else "beta"),
+                                    "rot",
+                                    "trans",
+                                ]
+                            },
+                            beta_w=1e-4,
+                            theta_w=1e-8,
+                        )
+
+                        eval_metrics[
+                            "With contact fitting"
+                        ] = self._compute_eval_metrics(
+                            anchors_pred,
+                            verts_pred,
+                            joints_pred,
+                            gt_anchors,
+                            gt_verts,
+                            gt_joints,
+                            batch_obj_data,
+                        )
+
                 else:
                     sample_to_viz = 3
                     contacts_pred, obj_points, obj_normals = (
@@ -487,7 +550,7 @@ class MultiViewTester(MultiViewTrainer):
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
                         max_iterations=2000,
-                        loss_thresh=1e-7,
+                        loss_thresh=1e-6,
                         lr=8e-2,
                         is_rhand=samples["is_rhand"],
                         use_smplx=use_smplx,
@@ -641,7 +704,7 @@ class MultiViewTester(MultiViewTrainer):
                             anchor_indices=self._anchor_indices,
                             scalar=input_scalar,
                             max_iterations=2000,
-                            loss_thresh=1e-7,
+                            loss_thresh=1e-6,
                             lr=8e-2,
                             is_rhand=samples["is_rhand"],
                             use_smplx=use_smplx,

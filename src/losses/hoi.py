@@ -399,7 +399,6 @@ class ContactsFittingLoss(torch.nn.Module):
 
         # 3. Compute the distance weights as the PDF values of the contact Gaussians (using the
         # nearest Gaussian to each vertex).
-        penetration_loss = torch.tensor(0.0)
         # =================================
         for i in range(32):
             # anchor_indices is a vector of shape (B, V, 1) where each element is the index of the

@@ -12,6 +12,7 @@ import torch
 
 from src.multiview_tester import MultiViewTester
 from utils import to_cuda, to_cuda_
+from utils.dataset import fetch_gaussian_params_from_CHOIR
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
@@ -23,14 +24,19 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
         self._use_deltas = self._data_loader.dataset.use_deltas
         self._full_choir = kwargs.get("full_choir", False)
         self._is_baseline = True
+        self._model_contacts = kwargs.get("model_contacts", False)
+        if self._model_contacts:
+            self._model.backbone.set_anchor_indices(
+                self._data_loader.dataset.anchor_indices
+            )
+
         self._model.set_dataset_stats(self._data_loader.dataset)
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
-            self._model(
-                # Take the last frame
+            x = (
                 torch.cat(
                     (
                         labels["rescaled_ref_pts"][:, -1],
@@ -42,7 +48,9 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
                 if self._full_choir  # full_hand_object_pair
                 else torch.cat(
                     (labels["joints"][:, -1], labels["anchors"][:, -1]), dim=-2
-                ),
+                )
+            )
+            y = (
                 torch.cat(
                     (
                         samples["rescaled_ref_pts"],
@@ -52,8 +60,19 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
                     dim=-2,
                 )
                 if self.conditional
-                else None,
+                else None
             )
+            kwargs = {"x": x, "y": y}
+            if self._model_contacts:
+                kwargs["contacts"] = fetch_gaussian_params_from_CHOIR(
+                    labels["choir"].squeeze(1),
+                    self._data_loader.dataset.anchor_indices,
+                    n_repeats=self._data_loader.dataset.bps_dim // 32,
+                    n_anchors=32,
+                    choir_includes_obj=True,
+                )[:, :, 0].squeeze(1)
+
+            self._model(**kwargs)
         print("[+] Done!")
 
     @to_cuda
@@ -99,7 +118,7 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
             torch.Tensor: The loss for the batch.
         """
         max_observations = max_observations or samples["choir"].shape[1]
-        pred = self._model.generate(
+        kp, contacts = self._model.generate(
             1,
             y=torch.cat(
                 (
@@ -111,7 +130,7 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
             )
             if self.conditional
             else None,
-        ).squeeze(
-            1
-        )  # Only use 1 sample for now. TODO: use more samples and average?
-        return {"hand_keypoints": pred}
+        )
+        # Only use 1 sample for now. TODO: use more samples and average?
+        kp, contacts = kp.squeeze(1), contacts.squeeze(1)
+        return {"hand_keypoints": kp, "contacts": contacts}

@@ -19,6 +19,8 @@ from utils.visualization import visualize_model_predictions_with_multiple_views
 class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._train_loader.dataset.set_eval_mode(True)
+        self._val_loader.dataset.set_eval_mode(True)
 
     @to_cuda
     def _visualize(
@@ -52,6 +54,7 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
     def _train_val_iteration(
         self,
         batch: Union[Tuple, List, torch.Tensor],
+        epoch: int,
         validation: bool = False,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Training or validation procedure for one batch. We want to keep the code DRY and avoid
