@@ -11,7 +11,6 @@ import os
 import pickle
 import signal
 from collections import defaultdict
-from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
 import blosc2
@@ -34,11 +33,10 @@ from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.dataset import lower_tril_cholesky_to_covmat
 from utils.testing import (
-    compute_binary_contacts,
     compute_contact_coverage,
-    compute_contact_fidelity,
     compute_mpjpe,
     make_batch_of_obj_data,
+    mp_compute_contacts_fscore,
     mp_compute_solid_intersection_volume,
     mp_process_obj_meshes,
 )
@@ -110,7 +108,7 @@ class MultiViewTester(MultiViewTrainer):
         self._n_ctrl_c = 0
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._compute_iv = kwargs.get("compute_iv", False)
-        self._compute_contact_fidelity = kwargs.get("compute_contact_fidelity", False)
+        self._compute_contact_scores = kwargs.get("compute_contact_scores", False)
         self._object_cache = {}
         self._pitch_mm = 2
         self._pitch = self._pitch_mm / self._data_loader.dataset.base_unit
@@ -227,40 +225,46 @@ class MultiViewTester(MultiViewTrainer):
                     pitch=self._pitch,
                     radius=self._radius,
                 )
-            # ======= Contact Coverage =======
-            # Percentage of hand points within 2mm of the object surface.
-            batch_contact_coverage = compute_contact_coverage(
-                gt_verts,
-                # Careful not to use the closed faces as they shouldn't count for the hand surface points!
-                self._affine_mano.faces,
-                batch_obj_data["points"],
-                thresh_mm=2,
-                base_unit=self._data_loader.dataset.base_unit,
-                n_samples=self._n_pts_on_mesh,
+
+            (
+                batch_contact_coverage,
+                batch_contact_f1,
+                batch_contact_precision,
+                batch_contact_recall,
+            ) = (
+                torch.tensor(0),
+                torch.tensor(0),
+                torch.tensor(0),
+                torch.tensor(0),
             )
-            # ============ Contact fidelity ============
-            batch_contact_fidelity = -torch.inf
-            if self._compute_contact_fidelity:
-                compute_bin_contacts = partial(
-                    compute_binary_contacts,
-                    faces=self._affine_mano.faces,
-                    obj_points=batch_obj_data["points"],
+            if self._compute_contact_scores:
+                # ======= Contact Coverage =======
+                # Percentage of hand points within 2mm of the object surface.
+                batch_contact_coverage = compute_contact_coverage(
+                    gt_verts,
+                    # Careful not to use the closed faces as they shouldn't count for the hand surface points!
+                    self._affine_mano.faces,
+                    batch_obj_data["points"],
                     thresh_mm=2,
                     base_unit=self._data_loader.dataset.base_unit,
-                    n_mesh_upsamples=1,
-                    return_upsampled_verts=False,
+                    n_samples=self._n_pts_on_mesh,
                 )
-                """
-                n_mesh_upsamples=2 gives 12337 hand vertices instead of the original 778. Note that
-                they aren't evenly distributed so it's not ideal, but as opposed to random sampling
-                on the mesh, we can exactly recover contact points even on different poses.
-                """
-                pred_binary_contacts, _ = compute_bin_contacts(hand_verts=verts_pred)
-                gt_binary_contacts, upsampled_verts = compute_bin_contacts(
-                    hand_verts=gt_verts, return_upsampled_verts=True
-                )
-                batch_contact_fidelity = compute_contact_fidelity(
-                    upsampled_verts, pred_binary_contacts, gt_binary_contacts
+                # ============ Contact F1/Precision/Recall against ContactPose's object contact maps ============
+                mano_faces = self._affine_mano.closed_faces.detach().cpu().numpy()
+                pred_hand_meshes = [
+                    Trimesh(verts_pred[i].detach().cpu().numpy(), mano_faces)
+                    for i in range(verts_pred.shape[0])
+                ]
+                (
+                    batch_contact_f1,
+                    batch_contact_precision,
+                    batch_contact_recall,
+                ) = mp_compute_contacts_fscore(
+                    pred_hand_meshes,
+                    batch_obj_data["mesh"],
+                    batch_obj_data["obj_contacts"],
+                    thresh_mm=2,
+                    base_unit_mm=self._data_loader.dataset.base_unit,
                 )
 
         return {
@@ -270,7 +274,9 @@ class MultiViewTester(MultiViewTrainer):
             "MPVPE [mm] (↓)": mpvpe,
             "Intersection volume [cm3] (↓)": batch_intersection_volume,
             "Contact coverage [%] (↑)": batch_contact_coverage,
-            "Contact fidelity score (↑)": batch_contact_fidelity,
+            "Contact F1 score [%] (↑)": batch_contact_f1,
+            "Contact precision score [%] (↑)": batch_contact_precision,
+            "Contact recall score [%] (↑)": batch_contact_recall,
         }
 
     def _test_batch(
@@ -340,6 +346,22 @@ class MultiViewTester(MultiViewTrainer):
                     batch_obj_data = to_cuda_(
                         torch.load(f, map_location=torch.device("cpu"))
                     )
+            else:
+                mp_process_obj_meshes(
+                    mesh_pths,
+                    self._object_cache,
+                    self._data_loader.dataset.center_on_object_com,
+                    self._enable_contacts_tto,
+                    self._compute_iv,
+                    self._pitch,
+                    self._radius,
+                    self._n_pts_on_mesh,
+                    self._n_normals_on_mesh,
+                    dataset=self._data_loader.dataset.name,
+                )
+                batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+                with open(cached_obj_path, "wb") as f:
+                    torch.save(batch_obj_data, f)
         else:
             mp_process_obj_meshes(
                 mesh_pths,
@@ -354,9 +376,6 @@ class MultiViewTester(MultiViewTrainer):
                 dataset=self._data_loader.dataset.name,
             )
             batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
-            if self._debug_tto:
-                with open(cached_obj_path, "wb") as f:
-                    torch.save(batch_obj_data, f)
         # ==============================================
         eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
         if use_input:
@@ -963,9 +982,13 @@ class MultiViewTester(MultiViewTrainer):
                         torch.load(f, map_location=torch.device("cpu"))
                     )
             else:
-                batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+                batch_obj_data = make_batch_of_obj_data(
+                    self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
+                )
         else:
-            batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+            batch_obj_data = make_batch_of_obj_data(
+                self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
+            )
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
             print(samples["choir"].shape, samples["choir"][:, :n].shape)
@@ -1280,6 +1303,7 @@ class MultiViewTester(MultiViewTrainer):
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)
             self._pbar.update()
+            break
         self._pbar.close()
         print("=" * 81)
         print(
@@ -1308,20 +1332,20 @@ class MultiViewTester(MultiViewTrainer):
                     if self._data_loader.dataset.name.lower() == "contactpose"
                     else 7
                 )
-            return
-        test_errors = []
-        with torch.no_grad():
-            for i in range(1, self._max_observations + 1):
-                test_errors.append(
-                    self.test_n_observations(
-                        i,
-                        visualize_every=visualize_every,
+        else:
+            test_errors = []
+            with torch.no_grad():
+                for i in range(1, self._max_observations + 1):
+                    test_errors.append(
+                        self.test_n_observations(
+                            i,
+                            visualize_every=visualize_every,
+                        )
                     )
-                )
 
-        with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
-            compressed_pkl = blosc2.compress(pickle.dumps(test_errors))
-            f.write(compressed_pkl)
+            with open(f"test_errors_{self._run_name}.pickle", "wb") as f:
+                compressed_pkl = blosc2.compress(pickle.dumps(test_errors))
+                f.write(compressed_pkl)
 
         return
 

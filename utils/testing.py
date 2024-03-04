@@ -11,14 +11,13 @@ Eval utils.
 
 import multiprocessing
 import os
+import pickle
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
-import pickle
 import numpy as np
-import open3d as o3d
-import open3d.io as o3dio
 import open3d.geometry as o3dg
+import open3d.io as o3dio
 import open3d.utility as o3du
 import torch
 import trimesh
@@ -27,52 +26,6 @@ from manotorch.upsamplelayer import UpSampleLayer
 from tqdm import tqdm
 
 from utils import to_cuda_
-
-""" Taken from https://github.com/shreyashampali/ho3d/blob/master/eval.py#L52 """
-
-
-def verts2pcd(verts, color=None):
-    pcd = o3d.PointCloud()
-    pcd.points = o3d.Vector3dVector(verts)
-    if color is not None:
-        if color == "r":
-            pcd.paint_uniform_color([1, 0.0, 0])
-        if color == "g":
-            pcd.paint_uniform_color([0, 1.0, 0])
-        if color == "b":
-            pcd.paint_uniform_color([0, 0, 1.0])
-    return pcd
-
-
-def calculate_fscore(gt, pr, th=0.01):
-    gt = verts2pcd(gt)
-    pr = verts2pcd(pr)
-    d1 = o3d.compute_point_cloud_to_point_cloud_distance(
-        gt, pr
-    )  # closest dist for each gt point
-    d2 = o3d.compute_point_cloud_to_point_cloud_distance(
-        pr, gt
-    )  # closest dist for each pred point
-    if len(d1) and len(d2):
-        recall = float(sum(d < th for d in d2)) / float(
-            len(d2)
-        )  # how many of our predicted points lie close to a gt point?
-        precision = float(sum(d < th for d in d1)) / float(
-            len(d1)
-        )  # how many of gt points are matched?
-
-        if recall + precision > 0:
-            fscore = 2 * recall * precision / (recall + precision)
-        else:
-            fscore = 0
-    else:
-        fscore = 0
-        precision = 0
-        recall = 0
-    return fscore, precision, recall
-
-
-""" ============================================================================= """
 
 
 def compute_mpjpe(
@@ -97,51 +50,6 @@ def compute_mpjpe(
         root_aligned_mpjpe, dim=0
     )  # Mean per-joint position error avgd across batch (1)
     return mpjpe, root_aligned_mpjpe
-
-
-def compute_solid_intersection_volume_other():
-    pass
-    # Compute the intersection volume between the predicted hand meshes and the object meshes.
-    # TODO: Implement it with another method cause it crashes (see
-    # https://github.com/isl-org/Open3D/issues/5911)
-    # intersection_volumes = []
-    # mano_faces = self._affine_mano.faces.cpu().numpy()
-    # for i, path in enumerate(mesh_pths):
-    # obj_mesh = o3dtg.TriangleMesh.from_legacy(o3dio.read_triangle_mesh(path))
-    # hand_mesh = o3dtg.TriangleMesh.from_legacy(
-    # o3dg.TriangleMesh(
-    # o3du.Vector3dVector(verts_pred[i].cpu().numpy()),
-    # o3du.Vector3iVector(mano_faces),
-    # )
-    # )
-    # intersection = obj_mesh.boolean_intersection(hand_mesh)
-    # intersection_volumes.append(intersection.to_legacy().get_volume())
-    # intersection_volume = torch.tensor(intersection_volumes).mean()
-    # intersection_volume *= (
-    # self._data_loader.dataset.base_unit / 10
-    # )  # m^3 -> mm^3 -> cm^3
-    # We'll do the same with trimesh.boolean.intersection():
-    # intersection_volumes = []
-    # mano_faces = self._affine_mano.closed_faces.cpu().numpy()
-    # print("[*] Computing intersection volumes...")
-    # for i, path in tqdm(enumerate(mesh_pths), total=len(mesh_pths)):
-    # obj_mesh = o3dio.read_triangle_mesh(path)
-    # if self._data_loader.dataset.center_on_object_com:
-    # obj_mesh.translate(-obj_mesh.get_center())
-    # obj_mesh = trimesh.Trimesh(
-    # vertices=obj_mesh.vertices, faces=obj_mesh.triangles
-    # )
-    # hand_mesh = trimesh.Trimesh(verts_pred[i].cpu().numpy(), mano_faces)
-    # # TODO: Recenter the obj_mesh and potentially rescale it. Visualize to check.
-    # # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
-    # intersection = obj_mesh.intersection(hand_mesh)
-    # if intersection.volume > 0:
-    # print(self._data_loader.dataset.base_unit)
-    # print(f"{intersection.volume * (self._data_loader.dataset.base_unit/10):.2f} cm^3")
-    # print(f"Is water tight? {intersection.is_watertight}")
-    # visualize_MANO(hand_mesh, obj_mesh=obj_mesh)
-    # visualize_MANO(hand_mesh, obj_mesh=intersection)
-    # intersection_volumes.append(intersection.volume)
 
 
 def compute_iv_sample(
@@ -231,6 +139,11 @@ def process_object(
         )
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
+    # From ContactOpt:
+    vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
+    gt_obj_contacts = torch.from_numpy(
+        np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
+    )  # Normalize with sigmoid, shape (V, 1)
     obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles)
     voxel = None
     if compute_iv:
@@ -242,6 +155,7 @@ def process_object(
         )
     obj_data = {
         "mesh": obj_mesh,
+        "obj_contacts": gt_obj_contacts,
         "points": obj_points,
         "normals": obj_normals,
         "voxel": voxel,
@@ -259,7 +173,7 @@ def mp_process_obj_meshes(
     radius: float,
     n_samples: int,
     n_normals: int,
-    keep_mesh_contact_indentity: bool = False,
+    keep_mesh_contact_indentity: bool = True,
     dataset: str = "contactpose",
 ):
     """
@@ -272,7 +186,9 @@ def mp_process_obj_meshes(
         compute_iv: Whether to compute the intersection volume between the object meshes and the hand meshes.
         pitch: Voxel pitch.
         radius: Voxel radius.
-        keep_mesh_contact_indentity: Whether to treat all meshes as unique (they have their own contact maps) or reduce all identitical meshes to a single one.
+        keep_mesh_contact_indentity: Whether to treat all meshes as unique (they have their own
+        contact maps) or reduce all identitical meshes to a single one. Must be True to compute the
+        precision/recall and F1 scores!
     """
     if keep_mesh_contact_indentity:
         unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
@@ -320,7 +236,7 @@ def mp_process_obj_meshes(
 def make_batch_of_obj_data(
     obj_data_cache: Dict[str, Any],
     mesh_pths: List[str],
-    keep_mesh_contact_indentity: bool = False,
+    keep_mesh_contact_indentity: bool = True,
 ) -> Dict[str, torch.Tensor]:
     batch_obj_data = {}
     if not keep_mesh_contact_indentity:
@@ -332,7 +248,9 @@ def make_batch_of_obj_data(
             batch_obj_data[k].append(v)
     for k, v in batch_obj_data.items():
         batch_obj_data[k] = (
-            to_cuda_(torch.stack(v, dim=0)) if type(v[0]) == torch.Tensor else v
+            to_cuda_(torch.stack(v, dim=0))
+            if type(v[0]) == torch.Tensor and v[0].shape == v[-1].shape
+            else v
         )
     return batch_obj_data
 
@@ -403,6 +321,11 @@ def compute_contact_fidelity(
     Compute the contact fidelity between the predicted and ground-truth binary contacts, as a
     modified Hamming distance with a normalized L2-norm-based penalty term for false positives and
     a binary term corresponding to "Hamming score" for false negatives.
+
+     _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    | This is very dumb... I was basically almost reinventing F1 score on binary contact maps!!!|
+     _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
     """
     # Compute the true positives as the binary AND between the predicted and ground-truth binary contacts:
     true_positive_scores = (pred_bin_contacts & gt_bin_contacts).sum(dim=-1).float()
@@ -431,3 +354,102 @@ def compute_contact_fidelity(
         .float()
     )
     return (true_positive_scores - false_positive_penalties).mean().cpu()
+
+
+# This function is taken from the ContactPose repo:
+def fit_sigmoid(colors, a=0.05):
+    """Fits a sigmoid to raw contact temperature readings from the ContactPose dataset. This function is copied from that repo"""
+    idx = colors > 0
+    ci = colors[idx]
+
+    x1 = min(ci)  # Find two points
+    y1 = a
+    x2 = max(ci)
+    y2 = 1 - a
+
+    lna = np.log((1 - y1) / y1)
+    lnb = np.log((1 - y2) / y2)
+    k = (lnb - lna) / (x1 - x2)
+    mu = (x2 * lna - x1 * lnb) / (lna - lnb)
+    ci = np.exp(k * (ci - mu)) / (1 + np.exp(k * (ci - mu)))  # Apply the sigmoid
+    colors[idx] = ci
+    return colors
+
+
+def compute_contacts_fscore(
+    pred_hand_mesh_w_obj_contacts_mesh: Tuple[
+        trimesh.Trimesh, trimesh.Trimesh, torch.Tensor
+    ],
+    thresh_mm=2,
+    base_unit_mm: int = 1000,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    pred_hand_mesh, obj_mesh, gt_obj_contacts = pred_hand_mesh_w_obj_contacts_mesh
+    pred_hand_pts = to_cuda_(
+        torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0]).float()
+    )
+    # 1. Compute a binary *object* contact map by computing a boolean mask where object points are
+    # within 2mm of hand points (sample points on meshes).
+    obj_verts = (
+        torch.from_numpy(np.asarray(obj_mesh.vertices)).float().to(pred_hand_pts.device)
+    )
+    pred_obj_contacts = torch.zeros(obj_verts.shape[0]).to(pred_hand_pts.device)
+    dists = torch.cdist(obj_verts, pred_hand_pts)
+    min_dists = torch.min(dists, dim=1)[0]
+    pred_obj_contacts[min_dists < (thresh_mm / base_unit_mm)] = 1
+    pred_obj_contacts = pred_obj_contacts.unsqueeze(-1)
+    # print(pred_contacts)
+    # 2. Take the GT thermal contact map, threshold it at 0.4 to make it binary.
+    gt_obj_contacts = (gt_obj_contacts > 0.4).int().to(pred_hand_pts.device)
+    """ End of code taken from ContactOpt """
+    assert gt_obj_contacts.sum() > 0, "The ground-truth contact map is empty!"
+    # 3. Call calculate_fscore on the two binary maps!
+    # Compute precision
+    true_positives = (pred_obj_contacts * gt_obj_contacts).sum().cpu().float()
+    predicted_positives = pred_obj_contacts.sum().cpu().float()
+    precision = true_positives / predicted_positives if predicted_positives > 0 else 0
+
+    # Compute recall
+    actual_positives = gt_obj_contacts.sum().cpu().float()
+    recall = true_positives / actual_positives if actual_positives > 0 else 0
+    # Compute F1 score
+    f1_score = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0
+    )
+
+    return f1_score, precision, recall
+
+
+def mp_compute_contacts_fscore(
+    pred_hand_meshes: List[trimesh.Trimesh],
+    obj_meshes: List[trimesh.Trimesh],
+    obj_contacts: List[torch.Tensor],
+    thresh_mm=2,
+    base_unit_mm: int = 1000,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    with multiprocessing.Pool(min(os.cpu_count() - 2, len(obj_meshes))) as pool:
+        results = tqdm(
+            pool.imap(
+                partial(
+                    compute_contacts_fscore,
+                    thresh_mm=thresh_mm,
+                    base_unit_mm=base_unit_mm,
+                ),
+                zip(
+                    pred_hand_meshes,
+                    obj_meshes,
+                    [obj_contacts[i].cpu() for i in range(len(obj_contacts))],
+                ),
+            ),
+            total=len(obj_meshes),
+            desc="Computing F1 scores for predicted object contacts",
+        )
+
+        # The result is a list of tuples, and we want the mean of each element of the tuples:
+        f1_scores, precisions, recalls = zip(*list(results))
+        return (
+            torch.tensor(f1_scores).mean(),
+            torch.tensor(precisions).mean(),
+            torch.tensor(recalls).mean(),
+        )
