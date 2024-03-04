@@ -29,7 +29,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             )
         self._model.set_dataset_stats(self._train_loader.dataset)
         self._ema = EMA(
-            self._model, beta=0.9999, update_after_step=100, update_every=10
+            self._model, beta=0.9999, update_after_step=10000, update_every=10
         )
         cilp_value = 1.0
         for p in self._model.parameters():
@@ -37,7 +37,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
                 p.register_hook(lambda grad: torch.clamp(grad, -cilp_value, cilp_value))
         self._single_modality = self._model.single_modality
         # self._accelerator.register_for_checkpointing(self._ema)
-        # self.minimize_metric = "udf_mse" ?
+        self.minimize_metric = "udf_mse"
 
     @to_cuda
     def _visualize(
