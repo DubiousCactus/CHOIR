@@ -414,11 +414,23 @@ class BaseDataset(TaskSet, abc.ABC):
         )
 
         for sample_path in samples_paths:
-            with open(sample_path, "rb") as f:
-                compressed_pkl = f.read()
-                sample, label, mesh_pth = pickle.loads(
-                    blosc2.decompress(compressed_pkl)
-                )
+            success = False
+            failures = 0
+            while not success:
+                try:
+                    with open(sample_path, "rb") as f:
+                        compressed_pkl = f.read()
+                        sample, label, mesh_pth = pickle.loads(
+                            blosc2.decompress(compressed_pkl)
+                        )
+                except RuntimeError as e:
+                    if failures == 5:
+                        os.remove(sample_path)
+                        raise e
+                    print(f"Couldn't decompress {sample_path}! Trying again ({i/5})")
+                    failures += 1
+                else:
+                    success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
             if self._eval_mode:

@@ -207,7 +207,7 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
             dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
         )
         self.output_layer = torch.nn.Linear(hidden_dim, output_dim_hand)
-        self.contact_output_layer = torch.nn.Linear(contact_hidden_dim, contact_dim)
+        self.contacts_output_layer = torch.nn.Linear(contact_hidden_dim, contact_dim)
         self.output_dim_hand = output_dim_hand
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
@@ -243,7 +243,7 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         c5 = self.contact_4(c4, t_emb=time_embed, y_emb=y, debug=debug)
         if self.skip_connections:
             c5 = c2 + c5
-        c6 = self.contact_output_layer(c5)
+        c6 = self.contacts_output_layer(c5)
         kp_shape = (*input_shape_x[:-2], self.output_dim_hand // 3, 3)
         return x6.view(kp_shape), c6.view(input_shape_contacts)
 
