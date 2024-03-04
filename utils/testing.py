@@ -384,8 +384,10 @@ def compute_contacts_fscore(
     base_unit_mm: int = 1000,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     pred_hand_mesh, obj_mesh, gt_obj_contacts = pred_hand_mesh_w_obj_contacts_mesh
-    pred_hand_pts = to_cuda_(
-        torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0]).float()
+    pred_hand_pts = (
+        torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0])
+        .float()
+        .cpu()
     )
     # 1. Compute a binary *object* contact map by computing a boolean mask where object points are
     # within 2mm of hand points (sample points on meshes).
