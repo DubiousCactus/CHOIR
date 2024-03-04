@@ -1303,7 +1303,6 @@ class MultiViewTester(MultiViewTrainer):
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)
             self._pbar.update()
-            break
         self._pbar.close()
         print("=" * 81)
         print(

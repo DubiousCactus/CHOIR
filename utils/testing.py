@@ -420,7 +420,7 @@ def compute_contacts_fscore(
         else 0
     )
 
-    return f1_score, precision, recall
+    return f1_score * 100, precision * 100, recall * 100
 
 
 def mp_compute_contacts_fscore(
