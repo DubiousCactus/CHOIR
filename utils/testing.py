@@ -116,8 +116,14 @@ def process_object(
         obj_mesh = o3dg.TriangleMesh()
         obj_mesh.vertices = o3du.Vector3dVector(obj_dict["verts"])
         obj_mesh.triangles = o3du.Vector3iVector(obj_dict["faces"])
+        gt_obj_contacts = None  # TODO
     else:
         obj_mesh = o3dio.read_triangle_mesh(path)
+        # From ContactOpt:
+        vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
+        gt_obj_contacts = torch.from_numpy(
+            np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
+        )  # Normalize with sigmoid, shape (V, 1)
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
     obj_points = torch.from_numpy(
@@ -139,12 +145,10 @@ def process_object(
         )
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
-    # From ContactOpt:
-    vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
-    gt_obj_contacts = torch.from_numpy(
-        np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
-    )  # Normalize with sigmoid, shape (V, 1)
     obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles)
+    assert (
+        obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
+    ), f"Object mesh has {obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
     voxel = None
     if compute_iv:
         # TODO: Use cuda_voxelizer + libmesh's SDF-based check_mesh_contains
