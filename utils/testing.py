@@ -249,7 +249,7 @@ def make_batch_of_obj_data(
     for k, v in batch_obj_data.items():
         batch_obj_data[k] = (
             to_cuda_(torch.stack(v, dim=0))
-            if type(v[0]) == torch.Tensor and v[0].shape == v[-1].shape
+            if type(v[0]) == torch.Tensor and k != "obj_contacts"
             else v
         )
     return batch_obj_data
@@ -391,6 +391,9 @@ def compute_contacts_fscore(
     )
     # 1. Compute a binary *object* contact map by computing a boolean mask where object points are
     # within 2mm of hand points (sample points on meshes).
+    assert (
+        obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
+    ), f"Object mesh has {obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
     obj_verts = (
         torch.from_numpy(np.asarray(obj_mesh.vertices)).float().to(pred_hand_pts.device)
     )
@@ -399,7 +402,9 @@ def compute_contacts_fscore(
     min_dists = torch.min(dists, dim=1)[0]
     pred_obj_contacts[min_dists < (thresh_mm / base_unit_mm)] = 1
     pred_obj_contacts = pred_obj_contacts.unsqueeze(-1)
-    # print(pred_contacts)
+    assert (
+        pred_obj_contacts.shape == gt_obj_contacts.shape
+    ), f"Predicted object contacts have shape {pred_obj_contacts.shape} and ground-truth object contacts have shape {gt_obj_contacts.shape}."
     # 2. Take the GT thermal contact map, threshold it at 0.4 to make it binary.
     gt_obj_contacts = (gt_obj_contacts > 0.4).int().to(pred_hand_pts.device)
     """ End of code taken from ContactOpt """
@@ -420,7 +425,7 @@ def compute_contacts_fscore(
         else 0
     )
 
-    return f1_score * 100, precision * 100, recall * 100
+    return f1_score * 100.0, precision * 100.0, recall * 100.0
 
 
 def mp_compute_contacts_fscore(

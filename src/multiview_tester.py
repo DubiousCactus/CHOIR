@@ -33,7 +33,6 @@ from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.dataset import lower_tril_cholesky_to_covmat
 from utils.testing import (
-    compute_contact_coverage,
     compute_mpjpe,
     make_batch_of_obj_data,
     mp_compute_contacts_fscore,
@@ -239,16 +238,18 @@ class MultiViewTester(MultiViewTrainer):
             )
             if self._compute_contact_scores:
                 # ======= Contact Coverage =======
+                # TODO: Actually I can compute contact coverage for free in
+                # mp_compute_contacts_fscore()! Just return it from there
                 # Percentage of hand points within 2mm of the object surface.
-                batch_contact_coverage = compute_contact_coverage(
-                    gt_verts,
-                    # Careful not to use the closed faces as they shouldn't count for the hand surface points!
-                    self._affine_mano.faces,
-                    batch_obj_data["points"],
-                    thresh_mm=2,
-                    base_unit=self._data_loader.dataset.base_unit,
-                    n_samples=self._n_pts_on_mesh,
-                )
+                # batch_contact_coverage = compute_contact_coverage(
+                # gt_verts,
+                # # Careful not to use the closed faces as they shouldn't count for the hand surface points!
+                # self._affine_mano.faces,
+                # batch_obj_data["points"],
+                # thresh_mm=2,
+                # base_unit=self._data_loader.dataset.base_unit,
+                # n_samples=self._n_pts_on_mesh,
+                # )
                 # ============ Contact F1/Precision/Recall against ContactPose's object contact maps ============
                 mano_faces = self._affine_mano.closed_faces.detach().cpu().numpy()
                 pred_hand_meshes = [
