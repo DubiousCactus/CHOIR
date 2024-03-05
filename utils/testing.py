@@ -126,9 +126,9 @@ def process_object(
         )  # Normalize with sigmoid, shape (V, 1)
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
-    #obj_points = torch.from_numpy(
-    #    np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
-    #).float()
+    obj_points = torch.from_numpy(
+        np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
+    ).float()
     obj_normals = None
     if enable_contacts_tto:
         obj_mesh.compute_vertex_normals()
@@ -162,7 +162,7 @@ def process_object(
     obj_data = {
         "mesh": t_obj_mesh,
         "obj_contacts": gt_obj_contacts,
-        #"points": obj_points,
+        "points": obj_points,
         "normals": obj_normals,
         "voxel": voxel,
     }

@@ -38,7 +38,7 @@ def optimize_pose_pca_from_choir(
     obj_normals: Optional[torch.Tensor] = None,
     exponential_map_w: Optional[float] = None,
     loss_thresh: float = 1e-7,
-    contact_loss_thresh: float = 1e-7,
+    contact_loss_thresh: float = 1e-8,
     lr: float = 5e-2,
     max_iterations=8000,
     initial_params=None,
@@ -197,7 +197,7 @@ def optimize_pose_pca_from_choir(
         )
 
     plateau_cnt = 0
-    proc_bar = tqdm.tqdm(range(max_iterations))
+    proc_bar = tqdm.tqdm(range(max_iterations*2))
     prev_loss = float("inf")
     optimizer.zero_grad()
     trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
@@ -234,7 +234,7 @@ def optimize_pose_pca_from_choir(
             contact_gaussians,
             obj_normals=obj_normals,
             K=15,
-            weights_threshold=0.01,
+            weights_threshold=0.05,
             scale_tril_norm_activation_threshold=1e-3,
             only_penetration_loss=not enable_contact_fitting,
         )
@@ -244,7 +244,7 @@ def optimize_pose_pca_from_choir(
             beta
         )  # Encourage the shape parameters to remain close to 0
         pose_regularizer = theta_w * torch.norm(theta)
-        abs_pose_regularizer = 0.1 * (
+        abs_pose_regularizer = 0.5 * (
             1e-1 * (torch.norm(trans - trans_base) ** 2)
             + 1e-2 * (torch.norm(rot - rot_base) ** 2)
         )
