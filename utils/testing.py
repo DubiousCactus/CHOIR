@@ -126,9 +126,9 @@ def process_object(
         )  # Normalize with sigmoid, shape (V, 1)
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
-    obj_points = torch.from_numpy(
-        np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
-    ).float()
+    #obj_points = torch.from_numpy(
+    #    np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
+    #).float()
     obj_normals = None
     if enable_contacts_tto:
         obj_mesh.compute_vertex_normals()
@@ -145,22 +145,24 @@ def process_object(
         )
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
-    obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles)
+    t_obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles, process=False, validate=False).copy() # Don't remove my precious vertices you filthy animal!!!
+    assert t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0], "Trimesh changed the vert count!"
     assert (
-        obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
-    ), f"Object mesh has {obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
+        t_obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
+    ), f"Object mesh has {t_obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
+    del obj_mesh
     voxel = None
     if compute_iv:
         # TODO: Use cuda_voxelizer + libmesh's SDF-based check_mesh_contains
         voxel = (
-            voxel_create.local_voxelize(obj_mesh, np.array([0, 0, 0]), pitch, radius)
+            voxel_create.local_voxelize(t_obj_mesh, np.array([0, 0, 0]), pitch, radius)
             .fill()
             .matrix
         )
     obj_data = {
-        "mesh": obj_mesh,
+        "mesh": t_obj_mesh,
         "obj_contacts": gt_obj_contacts,
-        "points": obj_points,
+        #"points": obj_points,
         "normals": obj_normals,
         "voxel": voxel,
     }
