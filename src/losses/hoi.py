@@ -391,8 +391,8 @@ class ContactsFittingLoss(torch.nn.Module):
                 knn = torch.gather(neighbours, -1, obj_pt_indices)
             if not self.update_knn_each_step:
                 self.knn = knn
-        else:
-            knn = self.knn
+        else: # Reuse
+            knn = self.knn.detach()
 
         # 2. Compute the squared distance between each MANO vertex and its K nearest neighbors
         distances = knn
@@ -490,7 +490,7 @@ class ContactsFittingLoss(torch.nn.Module):
         )
         # Shift the nearest normal roots 2mm inwards to avoid penalizing for the hand being
         # in direct contact with the object.
-        nearest_normal_roots = nearest_normal_roots - 0.003 * nearest_normals
+        nearest_normal_roots = nearest_normal_roots - 0.002 * nearest_normals
         dot_products = torch.einsum(
             "bvi,bvi->bv", (nearest_normals, verts - nearest_normal_roots)
         )

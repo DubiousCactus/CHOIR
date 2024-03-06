@@ -427,7 +427,7 @@ class BaseDataset(TaskSet, abc.ABC):
                     if failures == 5:
                         os.remove(sample_path)
                         raise e
-                    print(f"Couldn't decompress {sample_path}! Trying again ({i/5})")
+                    print(f"Couldn't decompress {sample_path}! Trying again ({failures}/5)")
                     failures += 1
                 else:
                     success = True
