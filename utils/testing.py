@@ -143,13 +143,22 @@ def process_object(
             ),
             dim=-1,
         )
+        if normals_w_roots.shape[0] < n_normals:
+            actual_n_normals = normals_w_roots.shape[0]
+            repeat_count = n_normals // actual_n_normals
+            rep_normal_w_roots = normals_w_roots.repeat(repeat_count, 1)
+            remainder = n_normals % actual_n_normals
+            if remainder > 0:
+                repeated_remainder = normals_w_roots[:remainder]
+                normals_w_roots = torch.cat((rep_normal_w_roots, repeated_remainder), dim=0)
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
     t_obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles, process=False, validate=False).copy() # Don't remove my precious vertices you filthy animal!!!
     assert t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0], "Trimesh changed the vert count!"
-    assert (
-        t_obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
-    ), f"Object mesh has {t_obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
+    if gt_obj_contacts is not None:
+        assert (
+            t_obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
+        ), f"Object mesh has {t_obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
     del obj_mesh
     voxel = None
     if compute_iv:
@@ -179,7 +188,7 @@ def mp_process_obj_meshes(
     radius: float,
     n_samples: int,
     n_normals: int,
-    keep_mesh_contact_indentity: bool = True,
+    keep_mesh_contact_identity: bool = True,
     dataset: str = "contactpose",
 ):
     """
@@ -192,11 +201,11 @@ def mp_process_obj_meshes(
         compute_iv: Whether to compute the intersection volume between the object meshes and the hand meshes.
         pitch: Voxel pitch.
         radius: Voxel radius.
-        keep_mesh_contact_indentity: Whether to treat all meshes as unique (they have their own
+        keep_mesh_contact_identity: Whether to treat all meshes as unique (they have their own
         contact maps) or reduce all identitical meshes to a single one. Must be True to compute the
         precision/recall and F1 scores!
     """
-    if keep_mesh_contact_indentity:
+    if keep_mesh_contact_identity:
         unique_mesh_pths = [path for path in set(mesh_pths) if path not in obj_cache]
     else:
         unique_mesh_pths, visited = [], []
@@ -231,7 +240,7 @@ def mp_process_obj_meshes(
         )
 
         # Collate the results as one dict:
-        if keep_mesh_contact_indentity:
+        if keep_mesh_contact_identity:
             obj_cache.update({k: v for d in list(results) for k, v in d.items()})
         else:
             obj_cache.update(
@@ -242,10 +251,10 @@ def mp_process_obj_meshes(
 def make_batch_of_obj_data(
     obj_data_cache: Dict[str, Any],
     mesh_pths: List[str],
-    keep_mesh_contact_indentity: bool = True,
+    keep_mesh_contact_identity: bool = True,
 ) -> Dict[str, torch.Tensor]:
     batch_obj_data = {}
-    if not keep_mesh_contact_indentity:
+    if not keep_mesh_contact_identity:
         mesh_pths = [os.path.basename(path) for path in mesh_pths]
     for path in mesh_pths:
         for k, v in obj_data_cache[path].items():

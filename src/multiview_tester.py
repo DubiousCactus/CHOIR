@@ -973,6 +973,7 @@ class MultiViewTester(MultiViewTrainer):
     ):
         plots = {}
         gt_is_plotted = False
+        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
             batch_obj_path = "batch_obj_data.pkl"
             if os.path.exists(batch_obj_path):
@@ -992,9 +993,10 @@ class MultiViewTester(MultiViewTrainer):
                     self._n_pts_on_mesh,
                     self._n_normals_on_mesh,
                     dataset=self._data_loader.dataset.name,
+                    keep_mesh_contact_identity=False,
                 )
                 batch_obj_data = make_batch_of_obj_data(
-                    self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
+                    self._object_cache, mesh_pths, keep_mesh_contact_identity=False
                 )
         else:
             mp_process_obj_meshes(
@@ -1008,9 +1010,10 @@ class MultiViewTester(MultiViewTrainer):
                 self._n_pts_on_mesh,
                 self._n_normals_on_mesh,
                 dataset=self._data_loader.dataset.name,
+                keep_mesh_contact_identity=False,
             )
             batch_obj_data = make_batch_of_obj_data(
-                self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
+                self._object_cache, mesh_pths, keep_mesh_contact_identity=False
             )
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
@@ -1066,10 +1069,6 @@ class MultiViewTester(MultiViewTrainer):
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
             multiple_obs = len(samples["theta"].shape) > 2
-            # For mesh_pths we have a tuple of N lists of B entries. N is the number of
-            # observations and B is the batch size. We'll take the last observation for each batch
-            # element.
-            mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
             use_smplx = False  # TODO: I don't use it for now
             contacts_pred, obj_points, obj_normals = (
                 y_hat.get("contacts", None),
@@ -1092,7 +1091,7 @@ class MultiViewTester(MultiViewTrainer):
                     joints_pred,
                 ) = optimize_pose_pca_from_choir(  # TODO: make a partial
                     y_hat["choir"],
-                    contact_gaussians=y_hat.get("contacts", None),
+                    contact_gaussians=contacts_pred,
                     obj_pts=obj_points,
                     obj_normals=obj_normals,
                     bps=self._bps,
@@ -1126,7 +1125,8 @@ class MultiViewTester(MultiViewTrainer):
                     os.makedirs(image_dir)
                 viewed_meshes = []
                 pyvista_obj_meshes, hands_trimesh = {}, {}
-                for i, mesh_pth in enumerate(mesh_pths_iter):
+                for i, mesh_pth in enumerate(mesh_pths):
+                    mesh_name = os.path.basename(mesh_pth)
                     if mesh_pth in hands_trimesh:
                         pred_hand_mesh = hands_trimesh[mesh_pth]
                     else:
@@ -1138,7 +1138,7 @@ class MultiViewTester(MultiViewTrainer):
                     if mesh_pth in pyvista_obj_meshes:
                         obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
                     else:
-                        obj_mesh = self._object_cache[os.path.basename(mesh_pth)][
+                        obj_mesh = self._object_cache[mesh_name][
                             "mesh"
                         ]
                         obj_mesh_pv = pv.wrap(obj_mesh)
