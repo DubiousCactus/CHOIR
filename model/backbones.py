@@ -145,9 +145,10 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         self,
         time_encoder: torch.nn.Module,
         input_dim: int,
-        output_dim_hand: int,
+        output_dim: int,
         temporal_dim: int,
         contact_dim: int,
+        output_is_3d: bool = True,
         contact_hidden_dim: int = 1024,
         hidden_dim: int = 1024,
         context_dim: Optional[int] = None,
@@ -206,12 +207,16 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         self.contact_4 = temporal_res_block(
             dim_in=contact_hidden_dim, dim_out=contact_hidden_dim
         )
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim_hand)
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
         self.contacts_output_layer = torch.nn.Linear(contact_hidden_dim, contact_dim)
-        self.output_dim_hand = output_dim_hand
+        self.output_is_3d = output_is_3d
+        self.output_dim_hand = output_dim
+        self.anchor_indices = None
+        self.n_gaussian_params, self.n_anchors = contact_dim, 32
+        self.n_repeats = output_dim // self.n_anchors
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
-        pass
+        self.anchor_indices = anchor_indices
 
     def forward(
         self,
@@ -244,8 +249,10 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         if self.skip_connections:
             c5 = c2 + c5
         c6 = self.contacts_output_layer(c5)
-        kp_shape = (*input_shape_x[:-2], self.output_dim_hand // 3, 3)
-        return x6.view(kp_shape), c6.view(input_shape_contacts)
+        if self.output_is_3d:
+            kp_shape = (*input_shape_x[:-2], self.output_dim_hand // 3, 3)
+            x6 = x6.view(kp_shape)
+        return x6, c6.view(input_shape_contacts)
 
 
 class PointNet2EncoderModel(torch.nn.Module):
@@ -361,8 +368,11 @@ class MLPResNetEncoderModel(torch.nn.Module):
         input_dim: int,
         hidden_dim: int = 512,
         embed_dim: int = 128,
+        choir_dim: Optional[int] = None,
     ):
         super().__init__()
+        if choir_dim is not None:
+            input_dim *= choir_dim
         self.input_dim = input_dim
         self.input_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, 8192),

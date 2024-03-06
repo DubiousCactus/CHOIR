@@ -75,17 +75,40 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 ),
                 partial(
                     ResnetEncoderModel,
+                    bps_grid_len=bps_grid_len,
                     normalization="group",
                     norm_groups=16,
                     pooling="avg",
                     pool_all_features="spatial",
                     use_self_attention=use_encoder_self_attn,
+                    embed_channels=y_embed_dim,
                 )
                 if y_embed_dim is not None
                 else None,
             ),
+            "mlp_resnet": (
+                partial(
+                    ContactMLPResNetBackboneModel,
+                    input_dim=bps_dim * (2 if object_in_encoder else 1),
+                    output_dim=bps_dim,
+                    output_is_3d=False,
+                    contact_dim=32 * 9,
+                    context_dim=y_embed_dim,
+                    skip_connections=True,
+                    hidden_dim=2048,
+                ),
+                partial(
+                    MLPResNetEncoderModel,
+                    input_dim=bps_dim,
+                    hidden_dim=2048,
+                    embed_dim=y_embed_dim,
+                )
+                if (y_embed_dim is not None)
+                else None,
+            ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
+        self._backbone_name = backbone
         self.input_normalization = input_normalization
         self.object_in_encoder = object_in_encoder
         self.backbone = backbones[backbone][0](
@@ -103,8 +126,6 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             ], "Unknown single_modality"
             self.y_embedder = (
                 backbones[backbone][1](
-                    bps_grid_len=bps_grid_len,
-                    embed_channels=y_embed_dim,
                     choir_dim=2 if single_modality == "noisy_pair" else 1,
                 )
                 if y_embed_dim is not None
@@ -113,18 +134,14 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         else:
             self.noisy_y_embedder = (
                 backbones[backbone][1](
-                    bps_grid_len=bps_grid_len,
                     choir_dim=2,
-                    embed_channels=y_embed_dim,
                 )
                 if y_embed_dim is not None
                 else None
             )
             self.object_y_embedder = (
                 backbones[backbone][1](
-                    bps_grid_len=bps_grid_len,
                     choir_dim=1,
-                    embed_channels=y_embed_dim,
                 )
                 if y_embed_dim is not None
                 else None
@@ -304,6 +321,15 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             + torch.sqrt(1 - batched_alpha) * eps_contacts
         )
         # 4. Predict the noise sample
+        x = (
+            torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
+            if self.object_in_encoder
+            else diffused_x_udf
+        )
+        if self._backbone_name == "mlp_resnet":
+            x = x.flatten(start_dim=1)
+            if y is not None:
+                y = y.flatten(start_dim=1)
         if y_modality == "noisy_pair":
             if self._single_modality is not None:
                 y_embed = self.y_embedder(y) if y is not None else None
@@ -315,14 +341,14 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             else:
                 y_embed = self.object_y_embedder(y) if y is not None else None
         eps_hat_udf, eps_hat_contacts = self.backbone(
-            torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
-            if self.object_in_encoder
-            else diffused_x_udf,
+            x,
             diffused_x_contacts,
             t,
             y_embed,
             debug=True,
         )
+        eps_hat_udf = eps_hat_udf.view(*x_udf.shape)
+        eps_hat_contacts = eps_hat_contacts.view(*x_contacts.shape)
         return {
             "udf": (eps_hat_udf, eps_udf),
             "contacts": (eps_hat_contacts, eps_contacts),
