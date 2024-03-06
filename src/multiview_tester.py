@@ -6,7 +6,6 @@
 # Distributed under terms of the MIT license.
 
 
-import json
 import os
 import pickle
 import signal
@@ -21,7 +20,6 @@ import torch
 import trimesh
 from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
-from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -983,10 +981,34 @@ class MultiViewTester(MultiViewTrainer):
                         torch.load(f, map_location=torch.device("cpu"))
                     )
             else:
+                mp_process_obj_meshes(
+                    mesh_pths,
+                    self._object_cache,
+                    self._data_loader.dataset.center_on_object_com,
+                    self._enable_contacts_tto,
+                    self._compute_iv,
+                    self._pitch,
+                    self._radius,
+                    self._n_pts_on_mesh,
+                    self._n_normals_on_mesh,
+                    dataset=self._data_loader.dataset.name,
+                )
                 batch_obj_data = make_batch_of_obj_data(
                     self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
                 )
         else:
+            mp_process_obj_meshes(
+                mesh_pths,
+                self._object_cache,
+                self._data_loader.dataset.center_on_object_com,
+                self._enable_contacts_tto,
+                self._compute_iv,
+                self._pitch,
+                self._radius,
+                self._n_pts_on_mesh,
+                self._n_normals_on_mesh,
+                dataset=self._data_loader.dataset.name,
+            )
             batch_obj_data = make_batch_of_obj_data(
                 self._object_cache, mesh_pths, keep_mesh_contact_indentity=False
             )
@@ -1076,8 +1098,8 @@ class MultiViewTester(MultiViewTrainer):
                     bps=self._bps,
                     anchor_indices=self._anchor_indices,
                     scalar=input_scalar,
-                    max_iterations=2000,
-                    loss_thresh=1e-6,
+                    max_iterations=1000,
+                    loss_thresh=1e-7,
                     lr=8e-2,
                     is_rhand=samples["is_rhand"],
                     use_smplx=use_smplx,
@@ -1130,47 +1152,47 @@ class MultiViewTester(MultiViewTrainer):
                             off_screen=False,
                         )
                         plots[grasp_key] = pl
-                        with open(
-                            os.path.join(
-                                image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.json"
-                            ),
-                            "w",
-                        ) as f:
-                            f.write(
-                                json.dumps(
-                                    {
-                                        "beta": mano_params_input["beta"][
-                                            i * samples["beta"].shape[1] + n - 1
-                                        ]
-                                        .detach()
-                                        .cpu()
-                                        .numpy()
-                                        .tolist(),
-                                        "pose": mano_params_input["pose"][
-                                            i * samples["theta"].shape[1] + n - 1
-                                        ]
-                                        .detach()
-                                        .cpu()
-                                        .numpy()
-                                        .tolist(),
-                                        "trans": mano_params_input["trans"][
-                                            i * samples["trans"].shape[1] + n - 1
-                                        ]
-                                        .detach()
-                                        .cpu()
-                                        .numpy()
-                                        .tolist(),
-                                        "hTm": rotation_6d_to_matrix(
-                                            mano_params_input["rot_6d"][
-                                                i * samples["rot"].shape[1] + n - 1
-                                            ].detach()
-                                        )
-                                        .cpu()
-                                        .numpy()
-                                        .tolist(),
-                                    }
-                                )
-                            )
+                        # with open(
+                        # os.path.join(
+                        # image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.json"
+                        # ),
+                        # "w",
+                        # ) as f:
+                        # f.write(
+                        # json.dumps(
+                        # {
+                        # "beta": mano_params_input["beta"][
+                        # i * samples["beta"].shape[1] + n - 1
+                        # ]
+                        # .detach()
+                        # .cpu()
+                        # .numpy()
+                        # .tolist(),
+                        # "pose": mano_params_input["pose"][
+                        # i * samples["theta"].shape[1] + n - 1
+                        # ]
+                        # .detach()
+                        # .cpu()
+                        # .numpy()
+                        # .tolist(),
+                        # "trans": mano_params_input["trans"][
+                        # i * samples["trans"].shape[1] + n - 1
+                        # ]
+                        # .detach()
+                        # .cpu()
+                        # .numpy()
+                        # .tolist(),
+                        # "hTm": rotation_6d_to_matrix(
+                        # mano_params_input["rot_6d"][
+                        # i * samples["rot"].shape[1] + n - 1
+                        # ].detach()
+                        # )
+                        # .cpu()
+                        # .numpy()
+                        # .tolist(),
+                        # }
+                        # )
+                        # )
 
                     pl = plots[grasp_key]
                     if not gt_is_plotted:
@@ -1258,7 +1280,7 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
             samples, labels, mesh_pths = batch  # type: ignore
-            if self._data_loader.dataset.name.lower() == "contactpose":
+            if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
                 self._save_batch_predictions(
                     samples, labels, mesh_pths, n_observations, i
                 )
@@ -1329,7 +1351,8 @@ class MultiViewTester(MultiViewTrainer):
             with torch.no_grad():
                 self._save_model_predictions(
                     min(4, self._max_observations)
-                    if self._data_loader.dataset.name.lower() == "contactpose"
+                    if self._data_loader.dataset.name.lower()
+                    in ["contactpose", "oakink"]
                     else 7
                 )
         else:
