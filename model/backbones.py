@@ -212,8 +212,6 @@ class ContactMLPResNetBackboneModel(torch.nn.Module):
         self.output_is_3d = output_is_3d
         self.output_dim_hand = output_dim
         self.anchor_indices = None
-        self.n_gaussian_params, self.n_anchors = contact_dim, 32
-        self.n_repeats = output_dim // self.n_anchors
 
     def set_anchor_indices(self, anchor_indices: torch.Tensor):
         self.anchor_indices = anchor_indices
@@ -375,11 +373,11 @@ class MLPResNetEncoderModel(torch.nn.Module):
             input_dim *= choir_dim
         self.input_dim = input_dim
         self.input_layer = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, 8192),
-            torch.nn.GroupNorm(32, 8192),
+            torch.nn.Linear(input_dim, input_dim),
+            torch.nn.GroupNorm(32, input_dim),
             torch.nn.SiLU(),
         )
-        self.block_1 = ResBlock(8192, hidden_dim)
+        self.block_1 = ResBlock(input_dim, hidden_dim)
         self.block_2 = ResBlock(hidden_dim, hidden_dim)
         self.block_3 = ResBlock(hidden_dim, hidden_dim)
         self.output_layer = torch.nn.Linear(hidden_dim, embed_dim)

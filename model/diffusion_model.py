@@ -53,6 +53,10 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
     ):
         super().__init__()
         assert input_normalization in ["standard", "scale"], "Unknown normalization"
+        self._bps_subdim_indices = torch.randperm(bps_dim)[:1024]
+        self.n_gaussian_params, self.n_anchors = 32 * 9, 32
+        self.n_repeats = bps_dim // self.n_anchors
+        bps_dim = 1024
         y_dim = (bps_dim * 2) if y_embed_dim is not None else None
         bps_grid_len = round(bps_dim ** (1 / 3))
         # TODO: Move all this crap to config (god I'm lazy to do that)
@@ -296,11 +300,15 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         x_contacts = fetch_gaussian_params_from_CHOIR(
             x,
             self.backbone.anchor_indices,
-            self.backbone.n_repeats,
-            self.backbone.n_anchors,
+            self.n_repeats,
+            self.n_anchors,
             choir_includes_obj=self.object_in_encoder,
         )
         x_contacts = x_contacts[:, :, 0, :].reshape(-1, 32 * 9)
+
+        x_udf = x_udf[..., self._bps_subdim_indices, :]
+        x = x[..., self._bps_subdim_indices, :]
+        y = y[..., self._bps_subdim_indices, :]
 
         if self._input_udf_shape is None:
             # Save for the generation.

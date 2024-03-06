@@ -82,6 +82,7 @@ def launch_experiment(
         )  # Use just() to get the config out of the Zen-Partial
     elif model.func in [BPSDiffusionModel, ContactsBPSDiffusionModel]:
         model_inst = model(bps_dim=just(dataset).bps_dim)
+        # model_inst = model()
     else:
         model_inst = model()
     print(model_inst)
