@@ -8,12 +8,14 @@
 
 from typing import Dict, List, Optional, Tuple, Union
 
+import open3d.io as o3dio
+import pyvista as pv
 import torch
+from trimesh import Trimesh
 
 from src.multiview_tester import MultiViewTester
 from utils import to_cuda, to_cuda_
 from utils.dataset import fetch_gaussian_params_from_CHOIR
-from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
 class MultiViewDDPMBaselineTester(MultiViewTester):
@@ -86,21 +88,120 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
             batch: The batch to process.
             epoch: The current epoch.
         """
-        visualize_model_predictions_with_multiple_views(
-            self._model,
-            batch,
-            epoch,
-            bps_dim=self._bps_dim,
-            bps=self._bps,
-            anchor_indices=self._anchor_indices,
-            remap_bps_distances=self._remap_bps_distances,
-            exponential_map_w=self._exponential_map_w,
-            dataset=self._data_loader.dataset.name,
-            theta_dim=self._data_loader.dataset.theta_dim,
-            use_deltas=self._use_deltas,
-            conditional=self.conditional,
-            method="baseline",
-        )  # User implementation goes here (utils/training.py)
+        samples, labels, mesh_pths = batch  # type: ignore
+        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        random_idx = 7
+        mesh_obj = o3dio.read_triangle_mesh(mesh_pths[random_idx])
+        mesh_obj.translate(-mesh_obj.get_center())
+        mano_params_gt = {
+            "pose": labels["theta"],
+            "beta": labels["beta"],
+            "rot_6d": labels["rot"],
+            "trans": labels["trans"],
+        }
+        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+        verts_gt, joints_gt = self._affine_mano(
+            mano_params_gt["pose"],
+            mano_params_gt["beta"],
+            mano_params_gt["trans"],
+            rot_6d=mano_params_gt["rot_6d"],
+        )
+        print(verts_gt.shape, verts_gt[random_idx].shape)
+        import open3d
+
+        hand_mesh = open3d.geometry.TriangleMesh(
+            vertices=open3d.utility.Vector3dVector(
+                verts_gt[random_idx].detach().cpu().numpy()
+            ),
+            triangles=open3d.utility.Vector3iVector(
+                self._affine_mano.faces.detach().cpu().numpy()
+            ),
+        )
+        hand_mesh.compute_vertex_normals()
+        print(hand_mesh)
+        t_mesh_obj = Trimesh(vertices=mesh_obj.vertices, faces=mesh_obj.triangles)
+        # We need a cone mesh and an arrow for the normal. The cone has an angle of 30 degrees and
+        # is along the normal, of about 2cm length:
+        # 740, 750
+        mano_vertex_idx_1, mano_vertex_idx_2 = 324, 750
+        normal1 = hand_mesh.vertex_normals[mano_vertex_idx_1]
+        normal2 = hand_mesh.vertex_normals[mano_vertex_idx_2]
+        # Make it a unit vector:
+        import numpy as np
+
+        normal1 /= np.linalg.norm(normal1)
+        normal2 /= np.linalg.norm(normal2)
+        normal_arrow1 = pv.Arrow(
+            start=hand_mesh.vertices[mano_vertex_idx_1],
+            direction=normal1,
+            scale=0.02,
+            tip_length=0.05,
+            tip_radius=0.05,
+            shaft_radius=0.02,
+        )
+        normal_arrow2 = pv.Arrow(
+            start=hand_mesh.vertices[mano_vertex_idx_2],
+            direction=normal2,
+            scale=0.02,
+            tip_length=0.05,
+            tip_radius=0.05,
+            shaft_radius=0.02,
+        )
+        # Let's make the cone along the normal, at the vertex position:
+        cone1 = pv.Cone(
+            direction=-normal1,
+            height=0.02,
+            radius=0.005,
+            resolution=100,
+            capping=True,
+            center=hand_mesh.vertices[mano_vertex_idx_1] + (0.005 * normal1),
+        )
+        cone2 = pv.Cone(
+            direction=-normal2,
+            height=0.02,
+            radius=0.005,
+            resolution=100,
+            capping=True,
+            center=hand_mesh.vertices[mano_vertex_idx_2] + (0.005 * normal2),
+        )
+
+        # Let's use pyvista to visualize hand and object meshes:
+        p = pv.Plotter()
+        p.add_mesh(
+            Trimesh(hand_mesh.vertices, hand_mesh.triangles),
+            color="lightblue",
+            show_edges=True,
+            opacity=1.0,
+            smooth_shading=True,
+        )
+        p.add_mesh(
+            t_mesh_obj,
+            color="orange",
+            show_edges=False,
+            opacity=1.0,
+            smooth_shading=True,
+        )
+        p.add_mesh(normal_arrow1, color="purple")
+        p.add_mesh(cone1, color="purple", opacity=0.5)
+        p.add_mesh(normal_arrow2, color="green")
+        p.add_mesh(cone2, color="green", opacity=0.5)
+        p.show()
+        raise Exception
+        # visualize_model_predictions_with_multiple_views(
+        # self._model,
+        # batch,
+        # epoch,
+        # bps_dim=self._bps_dim,
+        # bps=self._bps,
+        # anchor_indices=self._anchor_indices,
+        # remap_bps_distances=self._remap_bps_distances,
+        # exponential_map_w=self._exponential_map_w,
+        # dataset=self._data_loader.dataset.name,
+        # theta_dim=self._data_loader.dataset.theta_dim,
+        # use_deltas=self._use_deltas,
+        # conditional=self.conditional,
+        # method="baseline",
+        # )  # User implementation goes here (utils/training.py)
 
     # @to_cuda
     def _inference(

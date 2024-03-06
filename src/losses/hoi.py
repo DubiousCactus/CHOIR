@@ -391,7 +391,7 @@ class ContactsFittingLoss(torch.nn.Module):
                 knn = torch.gather(neighbours, -1, obj_pt_indices)
             if not self.update_knn_each_step:
                 self.knn = knn
-        else: # Reuse
+        else:  # Reuse
             knn = self.knn.detach()
 
         # 2. Compute the squared distance between each MANO vertex and its K nearest neighbors
@@ -488,14 +488,17 @@ class ContactsFittingLoss(torch.nn.Module):
             nearest_normals[..., :3],
             nearest_normals[..., 3:],
         )
-        # Shift the nearest normal roots 2mm inwards to avoid penalizing for the hand being
+        # Shift the nearest normal roots 2mm inwards (2mm * normal direction, assuming unit normals) to avoid penalizing for the hand being
         # in direct contact with the object.
+        assert (
+            torch.norm(nearest_normals) == 1
+        ), "The object normals must be unit vectors"
         nearest_normal_roots = nearest_normal_roots - 0.002 * nearest_normals
         dot_products = torch.einsum(
             "bvi,bvi->bv", (nearest_normals, verts - nearest_normal_roots)
         )
         # A negative dot product means the hand is penetrating the object. We allow a small
-        # tolerance of 3mm as per the above shift.
+        # tolerance of 2mm as per the above shift.
         return (torch.nn.functional.relu(-dot_products)).mean()
 
     def forward(
