@@ -391,8 +391,8 @@ class ContactsFittingLoss(torch.nn.Module):
                 knn = torch.gather(neighbours, -1, obj_pt_indices)
             if not self.update_knn_each_step:
                 self.knn = knn
-        else:
-            knn = self.knn
+        else: # Reuse
+            knn = self.knn.detach()
 
         # 2. Compute the squared distance between each MANO vertex and its K nearest neighbors
         distances = knn
