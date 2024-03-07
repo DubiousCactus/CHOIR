@@ -490,6 +490,9 @@ class ContactsFittingLoss(torch.nn.Module):
         )
         # Shift the nearest normal roots 2mm inwards (2mm * normal direction, assuming unit normals) to avoid penalizing for the hand being
         # in direct contact with the object.
+        nearest_normals = nearest_normals / torch.norm(
+            nearest_normals, dim=-1, keepdim=True
+        )
         assert (
             torch.norm(nearest_normals) == 1
         ), "The object normals must be unit vectors"

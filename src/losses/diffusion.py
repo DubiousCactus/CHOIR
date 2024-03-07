@@ -36,8 +36,8 @@ class DDPMLoss(torch.nn.Module):
                     reduction=self.reduction,
                 ),
                 "ancho_obj_udf_mse": torch.nn.functional.mse_loss(
-                    model_output["ancho_obj_udf"][0],
-                    model_output["ancho_obj_udf"][1],
+                    model_output["anchor_obj_udf"][0],
+                    model_output["anchor_obj_udf"][1],
                     reduction=self.reduction,
                 ),
             }
