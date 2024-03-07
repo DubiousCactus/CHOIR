@@ -251,17 +251,36 @@ class MultiViewTester(MultiViewTrainer):
                 # ============ Contact F1/Precision/Recall against ContactPose's object contact maps ============
                 mano_faces = self._affine_mano.closed_faces.detach().cpu().numpy()
                 pred_hand_meshes = [
-                    Trimesh(verts_pred[i].detach().cpu().numpy(), mano_faces)
+                    Trimesh(
+                        verts_pred[i].detach().cpu().numpy(),
+                        mano_faces,
+                        process=False,
+                        validate=False,
+                    )
                     for i in range(verts_pred.shape[0])
                 ]
+                gt_hand_meshes = [
+                    Trimesh(
+                        gt_verts[i].detach().cpu().numpy(),
+                        mano_faces,
+                        process=False,
+                        validate=False,
+                    )
+                    for i in range(gt_verts.shape[0])
+                ]
                 (
-                    batch_contact_f1,
-                    batch_contact_precision,
-                    batch_contact_recall,
+                    batch_obj_contact_f1,
+                    batch_obj_contact_precision,
+                    batch_obj_contact_recall,
+                    batch_hand_contact_f1,
+                    batch_hand_contact_precision,
+                    batch_hand_contact_recall,
                 ) = mp_compute_contacts_fscore(
                     pred_hand_meshes,
+                    gt_hand_meshes,
                     batch_obj_data["mesh"],
                     batch_obj_data["obj_contacts"],
+                    batch_obj_data["points"],
                     thresh_mm=2,
                     base_unit_mm=self._data_loader.dataset.base_unit,
                 )
@@ -273,9 +292,12 @@ class MultiViewTester(MultiViewTrainer):
             "MPVPE [mm] (↓)": mpvpe,
             "Intersection volume [cm3] (↓)": batch_intersection_volume,
             "Contact coverage [%] (↑)": batch_contact_coverage,
-            "Contact F1 score [%] (↑)": batch_contact_f1,
-            "Contact precision score [%] (↑)": batch_contact_precision,
-            "Contact recall score [%] (↑)": batch_contact_recall,
+            "[Object] Contact F1 score [%] (↑)": batch_obj_contact_f1,
+            "[Object] Contact precision score [%] (↑)": batch_obj_contact_precision,
+            "[Object] Contact recall score [%] (↑)": batch_obj_contact_recall,
+            "[Hand] Contact F1 score [%] (↑)": batch_hand_contact_f1,
+            "[Hand] Contact precision score [%] (↑)": batch_hand_contact_precision,
+            "[Hand] Contact recall score [%] (↑)": batch_hand_contact_recall,
         }
 
     def _test_batch(
@@ -1138,9 +1160,7 @@ class MultiViewTester(MultiViewTrainer):
                     if mesh_pth in pyvista_obj_meshes:
                         obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
                     else:
-                        obj_mesh = self._object_cache[mesh_name][
-                            "mesh"
-                        ]
+                        obj_mesh = self._object_cache[mesh_name]["mesh"]
                         obj_mesh_pv = pv.wrap(obj_mesh)
                         pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
 
