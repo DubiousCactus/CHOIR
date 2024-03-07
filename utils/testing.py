@@ -150,11 +150,20 @@ def process_object(
             remainder = n_normals % actual_n_normals
             if remainder > 0:
                 repeated_remainder = normals_w_roots[:remainder]
-                normals_w_roots = torch.cat((rep_normal_w_roots, repeated_remainder), dim=0)
+                normals_w_roots = torch.cat(
+                    (rep_normal_w_roots, repeated_remainder), dim=0
+                )
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
-    t_obj_mesh = trimesh.Trimesh(vertices=obj_mesh.vertices, faces=obj_mesh.triangles, process=False, validate=False).copy() # Don't remove my precious vertices you filthy animal!!!
-    assert t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0], "Trimesh changed the vert count!"
+    t_obj_mesh = trimesh.Trimesh(
+        vertices=obj_mesh.vertices,
+        faces=obj_mesh.triangles,
+        process=False,
+        validate=False,
+    ).copy()  # Don't remove my precious vertices you filthy animal!!!
+    assert (
+        t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0]
+    ), "Trimesh changed the vert count!"
     if gt_obj_contacts is not None:
         assert (
             t_obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
@@ -308,6 +317,10 @@ def compute_binary_contacts(
     n_mesh_upsamples: int = 2,
     return_upsampled_verts: bool = True,
 ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    non_batched = False
+    if len(hand_verts.shape) < 3:
+        non_batched = True
+        hand_verts = hand_verts.unsqueeze(0)
     bs = hand_verts.shape[0]
     if n_mesh_upsamples > 0:
         if type(faces) is not list:
@@ -316,10 +329,13 @@ def compute_binary_contacts(
         for _ in range(n_mesh_upsamples):
             hand_verts, faces = upsample_layer(hand_verts, faces)
     dists = torch.cdist(
-        hand_verts, obj_points.to(hand_verts.device)
+        hand_verts.float(), obj_points.to(hand_verts.device).float()
     )  # (B, VERTS, N_OBJ_POINTS)
     dists = dists.min(dim=-1).values
     binary_contacts = (dists <= (thresh_mm / base_unit)).int()
+    if non_batched:
+        binary_contacts = binary_contacts.squeeze(0)
+        hand_verts = hand_verts.squeeze(0)
     return (
         binary_contacts,
         hand_verts if return_upsampled_verts else None,
@@ -392,13 +408,15 @@ def fit_sigmoid(colors, a=0.05):
 
 
 def compute_contacts_fscore(
-    pred_hand_mesh_w_obj_contacts_mesh: Tuple[
-        trimesh.Trimesh, trimesh.Trimesh, torch.Tensor
+    data: Tuple[
+        trimesh.Trimesh, trimesh.Trimesh, torch.Tensor, torch.Tensor, torch.Tensor
     ],
     thresh_mm=2,
     base_unit_mm: int = 1000,
+    obj_gt_bin_threshold: float = 0.4,
+    hand_gt_bin_threshold: float = 0.4,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    pred_hand_mesh, obj_mesh, gt_obj_contacts = pred_hand_mesh_w_obj_contacts_mesh
+    pred_hand_mesh, gt_hand_mesh, obj_mesh, obj_pts, gt_obj_contacts = data
     pred_hand_pts = (
         torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0])
         .float()
@@ -421,7 +439,9 @@ def compute_contacts_fscore(
         pred_obj_contacts.shape == gt_obj_contacts.shape
     ), f"Predicted object contacts have shape {pred_obj_contacts.shape} and ground-truth object contacts have shape {gt_obj_contacts.shape}."
     # 2. Take the GT thermal contact map, threshold it at 0.4 to make it binary.
-    gt_obj_contacts = (gt_obj_contacts > 0.4).int().to(pred_hand_pts.device)
+    gt_obj_contacts = (
+        (gt_obj_contacts > obj_gt_bin_threshold).int().to(pred_hand_pts.device)
+    )
     """ End of code taken from ContactOpt """
     assert gt_obj_contacts.sum() > 0, "The ground-truth contact map is empty!"
     # 3. Call calculate_fscore on the two binary maps!
@@ -440,13 +460,63 @@ def compute_contacts_fscore(
         else 0
     )
 
-    return f1_score * 100.0, precision * 100.0, recall * 100.0
+    f1_obj, prec_obj, rec_obj = f1_score * 100.0, precision * 100.0, recall * 100.0
+
+    # =============== Now for the hand ===============
+    pred_hand_verts, gt_hand_verts = torch.from_numpy(
+        pred_hand_mesh.vertices
+    ), torch.from_numpy(gt_hand_mesh.vertices)
+    # compute_binary_contacts upscales the hand mesh in a deterministic way so that we can get more
+    # accurate contact maps. This is important because the hand mesh is very low-res and the object
+    # mesh is very high-res. It's not ideal because the upscaling is only interpolation-based,
+    # which leaves gaps in low-poly parts of the hand mesh, but it's better than nothing. Ideally
+    # we would sample on the mesh with a seed and be able to obtain the exact same points every
+    # time, under different shape/pose parameters. But that sounds very hard to achieve and we
+    # don't have time.
+    gt_hand_contacts = compute_binary_contacts(
+        gt_hand_verts,
+        torch.from_numpy(gt_hand_mesh.faces),
+        obj_pts,
+        thresh_mm,
+        base_unit_mm,
+        n_mesh_upsamples=2,
+        return_upsampled_verts=False,
+    )[0]
+    pred_hand_contacts = compute_binary_contacts(
+        pred_hand_verts,
+        torch.from_numpy(pred_hand_mesh.faces),
+        obj_pts,
+        thresh_mm,
+        base_unit_mm,
+        n_mesh_upsamples=2,
+        return_upsampled_verts=False,
+    )[0]
+    assert gt_hand_contacts.sum() > 0, "The ground-truth contact map is empty!"
+    # Compute precision
+    true_positives = (pred_hand_contacts * gt_hand_contacts).sum().cpu().float()
+    predicted_positives = pred_hand_contacts.sum().cpu().float()
+    precision = true_positives / predicted_positives if predicted_positives > 0 else 0
+
+    # Compute recall
+    actual_positives = gt_hand_contacts.sum().cpu().float()
+    recall = true_positives / actual_positives if actual_positives > 0 else 0
+    # Compute F1 score
+    f1_score = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0
+    )
+    f1_hand, prec_hand, rec_hand = f1_score * 100.0, precision * 100.0, recall * 100.0
+
+    return f1_obj, prec_obj, rec_obj, f1_hand, prec_hand, rec_hand
 
 
 def mp_compute_contacts_fscore(
     pred_hand_meshes: List[trimesh.Trimesh],
+    gt_hand_meshes: List[trimesh.Trimesh],
     obj_meshes: List[trimesh.Trimesh],
     obj_contacts: List[torch.Tensor],
+    obj_pts: List[torch.Tensor],
     thresh_mm=2,
     base_unit_mm: int = 1000,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -460,8 +530,11 @@ def mp_compute_contacts_fscore(
                 ),
                 zip(
                     pred_hand_meshes,
+                    gt_hand_meshes,
                     obj_meshes,
+                    [obj_pts[i].cpu() for i in range(len(obj_pts))],
                     [obj_contacts[i].cpu() for i in range(len(obj_contacts))],
+                    # [hand_contacts[i].cpu() for i in range(len(hand_contacts))],
                 ),
             ),
             total=len(obj_meshes),
@@ -469,9 +542,19 @@ def mp_compute_contacts_fscore(
         )
 
         # The result is a list of tuples, and we want the mean of each element of the tuples:
-        f1_scores, precisions, recalls = zip(*list(results))
+        (
+            obj_f1_scores,
+            obj_precisions,
+            obj_recalls,
+            hand_f1_scores,
+            hand_precisions,
+            hand_recalls,
+        ) = zip(*list(results))
         return (
-            torch.tensor(f1_scores).mean(),
-            torch.tensor(precisions).mean(),
-            torch.tensor(recalls).mean(),
+            torch.tensor(obj_f1_scores).mean(),
+            torch.tensor(obj_precisions).mean(),
+            torch.tensor(obj_recalls).mean(),
+            torch.tensor(hand_f1_scores).mean(),
+            torch.tensor(hand_precisions).mean(),
+            torch.tensor(hand_recalls).mean(),
         )

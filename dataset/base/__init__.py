@@ -439,19 +439,17 @@ class BaseDataset(TaskSet, abc.ABC):
                 else:
                     success = True
 
-            anchors = sample[9]
-            gt_anchors = label[4]
             obj_mesh = o3d.io.read_triangle_mesh(mesh_pth)
             obj_pt_samples = np.asarray(obj_mesh.sample_points_uniformly(3000).points)
 
             obj_dists = torch.cdist(
-                torch.from_numpy(anchors).float(),
+                torch.from_numpy(sample[9]).float(),
                 torch.from_numpy(obj_pt_samples).float(),
             )
             min_dists, _ = obj_dists.min(dim=1)
 
             gt_obj_dists = torch.cdist(
-                torch.from_numpy(gt_anchors).float(),
+                torch.from_numpy(label[4]).float(),
                 torch.from_numpy(obj_pt_samples).float(),
             )
             gt_min_dists, _ = gt_obj_dists.min(dim=1)
