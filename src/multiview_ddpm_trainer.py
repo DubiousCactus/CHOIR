@@ -254,18 +254,23 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         elif y_modality == "noisy_pair":
             pass  # Already comes in noisy_pair modality
 
+        x_anchor_obj_udf = (
+            labels["anchor_obj_dists"][:, -1] if self._model_contacts else None
+        )
+        y_anchor_ob_udf = samples["anchor_obj_dists"] if self._model_contacts else None
+
         if not self._use_deltas:
-            y_hat = self._model(x, y, y_modality)
+            y_hat = self._model(x, y, x_anchor_obj_udf, y_anchor_ob_udf, y_modality)
         else:
             raise NotImplementedError(
                 "Have to scrap embed_full_choir in DiffusionModel. I tried and it's not better."
             )
         losses = self._training_loss(None, None, y_hat)
         # dict: {"udf_mse": torch.Tensor, "contacts_mse": torch.Tensor}
-        if validation:
-            ema_y_hat = self._ema(x, y, y_modality)
-            ema_loss = self._training_loss(None, None, ema_y_hat)
-            losses["ema"] = sum([v for v in ema_loss.values()])
+        # if validation:
+        # ema_y_hat = self._ema(x, y, y_modality)
+        # ema_loss = self._training_loss(None, None, ema_y_hat)
+        # losses["ema"] = sum([v for v in ema_loss.values()])
 
         loss = sum([v for k, v in losses.items() if k != "ema"])
         # Reweight the losses to plot the *true* loss:

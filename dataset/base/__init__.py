@@ -23,6 +23,7 @@ from typing import Any, List, Optional, Tuple
 
 import blosc2
 import numpy as np
+import open3d as o3d
 import torch
 from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
 from hydra.utils import get_original_cwd
@@ -378,6 +379,7 @@ class BaseDataset(TaskSet, abc.ABC):
             trans,
             joints,
             anchors,
+            anchor_obj_dists,
             gt_choir,
             gt_rescaled_ref_pts,
             gt_scalar,
@@ -388,8 +390,11 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_rot_6d,
             gt_trans,
             gt_contact_gaussians,
+            gt_anchor_obj_dists,
             mesh_pths,
         ) = (
+            [],
+            [],
             [],
             [],
             [],
@@ -427,12 +432,35 @@ class BaseDataset(TaskSet, abc.ABC):
                     if failures == 5:
                         os.remove(sample_path)
                         raise e
-                    print(f"Couldn't decompress {sample_path}! Trying again ({failures}/5)")
+                    print(
+                        f"Couldn't decompress {sample_path}! Trying again ({failures}/5)"
+                    )
                     failures += 1
                 else:
                     success = True
+
+            anchors = sample[9]
+            gt_anchors = label[4]
+            obj_mesh = o3d.io.read_triangle_mesh(mesh_pth)
+            obj_pt_samples = np.asarray(obj_mesh.sample_points_uniformly(3000).points)
+
+            obj_dists = torch.cdist(
+                torch.from_numpy(anchors).float(),
+                torch.from_numpy(obj_pt_samples).float(),
+            )
+            min_dists, _ = obj_dists.min(dim=1)
+
+            gt_obj_dists = torch.cdist(
+                torch.from_numpy(gt_anchors).float(),
+                torch.from_numpy(obj_pt_samples).float(),
+            )
+            gt_min_dists, _ = gt_obj_dists.min(dim=1)
+
             choir.append(sample[0])
             gt_choir.append(label[0])
+            anchor_obj_dists.append(min_dists)
+            gt_anchor_obj_dists.append(gt_min_dists)
+
             if self._eval_mode:
                 rescaled_ref_pts.append(sample[1])
                 scalar.append(sample[2])
@@ -472,6 +500,9 @@ class BaseDataset(TaskSet, abc.ABC):
                 "trans": torch.from_numpy(np.array([a for a in trans])),
                 "joints": torch.from_numpy(np.array([a for a in joints])),
                 "anchors": torch.from_numpy(np.array([a for a in anchors])),
+                "anchor_obj_dists": torch.from_numpy(
+                    np.array([a for a in anchor_obj_dists])
+                ),
             }
             label = {
                 "choir": torch.from_numpy(np.array([a for a in gt_choir])),
@@ -488,10 +519,23 @@ class BaseDataset(TaskSet, abc.ABC):
                 "contact_gaussians": torch.from_numpy(
                     np.array([a for a in gt_contact_gaussians])
                 ),
+                "anchor_obj_dists": torch.from_numpy(
+                    np.array([a for a in gt_anchor_obj_dists])
+                ),
             }
         else:
             # This will hopefully save a lot of memory and allow to bump up the batch size during
             # training :) :)
-            sample = {"choir": torch.from_numpy(np.array([a for a in choir]))}
-            label = {"choir": torch.from_numpy(np.array([a for a in gt_choir]))}
+            sample = {
+                "choir": torch.from_numpy(np.array([a for a in choir])),
+                "anchor_obj_dists": torch.from_numpy(
+                    np.array([a for a in anchor_obj_dists])
+                ),
+            }
+            label = {
+                "choir": torch.from_numpy(np.array([a for a in gt_choir])),
+                "anchor_obj_dists": torch.from_numpy(
+                    np.array([a for a in gt_anchor_obj_dists])
+                ),
+            }
         return sample, label, mesh_pths

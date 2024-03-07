@@ -35,6 +35,11 @@ class DDPMLoss(torch.nn.Module):
                     model_output["contacts"][1],
                     reduction=self.reduction,
                 ),
+                "ancho_obj_udf_mse": torch.nn.functional.mse_loss(
+                    model_output["ancho_obj_udf"][0],
+                    model_output["ancho_obj_udf"][1],
+                    reduction=self.reduction,
+                ),
             }
         else:
             return {

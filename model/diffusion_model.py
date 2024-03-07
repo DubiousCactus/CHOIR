@@ -69,7 +69,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     output_dim=1,
                     contacts_hidden_dim=contacts_hidden_dim,
                     contacts_skip_connections=contacts_skip_connections,
-                    contacts_dim=9,
+                    contacts_dim=10,
                     use_self_attention=use_backbone_self_attn,
                     interpolate=not conv_transpose,
                 ),
@@ -103,7 +103,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             ], "Unknown single_modality"
             self.y_embedder = (
                 backbones[backbone][1](
-                    bps_grid_len=bps_grid_len,
+                    bps_grid_len=bps_grid_len,  # + 32, # + 32 anchor-object distances
                     embed_channels=y_embed_dim,
                     choir_dim=2 if single_modality == "noisy_pair" else 1,
                 )
@@ -189,7 +189,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         elif self.input_normalization == "scale":
             if min is not None and max is not None:
                 return 2 * (x - min.to(device)) / (max.to(device) - min.to(device)) - 1
-            else:
+            else:  # Use [0,1] -> [-1,1]
                 return 2 * x - 1
 
     def _destandardize(
@@ -215,6 +215,8 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self,
         x: torch.Tensor,
         y: Optional[torch.Tensor] = None,
+        x_anchor_obj_udf: Optional[torch.Tensor] = None,
+        y_anchor_obj_udf: Optional[torch.Tensor] = None,
         y_modality: Optional[str] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # ============= Preprocessing =============
@@ -242,6 +244,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 min=self.x_contacts_min,
                 max=self.x_contacts_max,
             )
+        x_anchor_obj_udf = self._standardize(
+            x_anchor_obj_udf, self.x_udf_mean[0], self.x_udf_std[0]
+        )
+        y_anchor_obj_udf = self._standardize(
+            y_anchor_obj_udf, self.y_udf_mean[0], self.y_udf_std[0]
+        )
         if y is not None:
             if y_modality == "noisy_pair":
                 y = self._standardize(y, self.y_udf_mean, self.y_udf_std)
@@ -290,20 +298,44 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             self._input_udf_shape = x_udf.shape[1:]
             self._input_contacts_shape = x_contacts.shape[1:]
 
-        eps_udf, eps_contacts = (
+        # print(f"x_anchor_obj_udf shape: {x_anchor_obj_udf.shape}")
+        # print(f"x_contacts shape: {x_contacts.shape}")
+        # print(f"x_udf shape: {x_udf.shape}")
+        eps_udf, eps_contacts, eps_anchor_obj_udf = (
             torch.randn_like(x_udf).to(x_udf.device).requires_grad_(False),
             torch.randn_like(x_contacts).to(x_contacts.device).requires_grad_(False),
+            torch.randn_like(x_anchor_obj_udf)
+            .to(x_anchor_obj_udf.device)
+            .requires_grad_(False),
         )
+        # print(f"eps_anchor_obj_udf shape: {eps_anchor_obj_udf.shape}")
+        # print(f"eps_contacts shape: {eps_contacts.shape}")
+        # print(f"eps_udf shape: {eps_udf.shape}")
         # 3. Diffuse the image
         batched_alpha = self.alpha[t]
-        diffused_x_udf, diffused_x_contacts = (
-            torch.sqrt(batched_alpha)[..., None] * x_udf
-            + torch.sqrt(1 - batched_alpha)[..., None] * eps_udf
-        ), (
-            torch.sqrt(batched_alpha) * x_contacts
-            + torch.sqrt(1 - batched_alpha) * eps_contacts
+        diffused_x_udf, diffused_x_contacts, diffused_x_anchor_obj_udf = (
+            (
+                torch.sqrt(batched_alpha)[..., None] * x_udf
+                + torch.sqrt(1 - batched_alpha)[..., None] * eps_udf
+            ),
+            (
+                torch.sqrt(batched_alpha) * x_contacts
+                + torch.sqrt(1 - batched_alpha) * eps_contacts
+            ),
+            (
+                torch.sqrt(batched_alpha) * x_anchor_obj_udf
+                + torch.sqrt(1 - batched_alpha) * eps_anchor_obj_udf
+            ),
         )
+        # print(f"diffused_x_anchor_obj_udf shape: {diffused_x_anchor_obj_udf.shape}")
+        # print(f"diffused_x_contacts shape: {diffused_x_contacts.shape}")
+        # print(f"diffused_x_udf shape: {diffused_x_udf.shape}")
         # 4. Predict the noise sample
+        # print(f"Original y shape: {y.shape if y is not None else None}")
+        # print(f"Original y_anchor_obj_udf shape: {y_anchor_obj_udf.shape if y_anchor_obj_udf is not None else None}")
+        # print(f"New y_anchor_obj_udf shape: {y_anchor_obj_udf.unsqueeze(-1).expand(-1, -1, -1, 2).shape if y_anchor_obj_udf is not None else None}")
+        # y = torch.cat((y, y_anchor_obj_udf.unsqueeze(-1).expand(-1, -1, -1, 2)), dim=-2) if y is not None else None
+        # print(f"Concatenated y shape: {y.shape if y is not None else None}")
         if y_modality == "noisy_pair":
             if self._single_modality is not None:
                 y_embed = self.y_embedder(y) if y is not None else None
@@ -314,11 +346,12 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 y_embed = self.y_embedder(y) if y is not None else None
             else:
                 y_embed = self.object_y_embedder(y) if y is not None else None
-        eps_hat_udf, eps_hat_contacts = self.backbone(
+        eps_hat_udf, eps_hat_contacts, eps_hat_anchor_obj_udf = self.backbone(
             torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
             if self.object_in_encoder
             else diffused_x_udf,
             diffused_x_contacts,
+            diffused_x_anchor_obj_udf,
             t,
             y_embed,
             debug=True,
@@ -326,6 +359,7 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         return {
             "udf": (eps_hat_udf, eps_udf),
             "contacts": (eps_hat_contacts, eps_contacts),
+            "anchor_obj_udf": (eps_hat_anchor_obj_udf, eps_anchor_obj_udf),
         }
 
     def generate(

@@ -857,6 +857,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         self,
         x_udf: torch.Tensor,
         x_contacts: torch.Tensor,
+        x_anchor_obj_udf: torch.Tensor,  # 32, 1
         t: torch.Tensor,
         y: Optional[torch.tensor] = None,
         debug: bool = False,
@@ -883,7 +884,10 @@ class ContactUNetBackboneModel(torch.nn.Module):
         )
         t = t.view(bs * ctx_len, -1)
         x_udf = x_udf.view(*comp_shape).permute(0, 4, 1, 2, 3)
-        x_contacts = x_contacts.view(bs * ctx_len, self.contacts_dim * self.n_anchors)
+        x_contacts = x_contacts.view(
+            bs * ctx_len, (self.contacts_dim - 1) * self.n_anchors
+        )  # last one for UDF
+        x_anchor_obj_udf = x_anchor_obj_udf.view(bs * ctx_len, -1)
         assert x_udf.shape[0] == t.shape[0], "Batch size mismatch between x and t"
         if self.multi_scale_encoder:
             assert (
@@ -908,7 +912,7 @@ class ContactUNetBackboneModel(torch.nn.Module):
         unet_features = x6.mean(dim=(2, 3, 4))
         unet_features = self.feat_prop(unet_features)
         c1 = self.contact_1(
-            torch.cat((x_contacts, unet_features), dim=-1),
+            torch.cat((x_contacts, x_anchor_obj_udf, unet_features), dim=-1),
             t_emb=t_embed,
             y_emb=y[4].view(bs * ctx_len, -1),
             debug=debug,
@@ -961,7 +965,11 @@ class ContactUNetBackboneModel(torch.nn.Module):
             .reshape(comp_output_shape)
             .view(output_shape)
         )
-        return output, c5.view(contacts_input_shape)
+        contact_gaussians = c5[
+            ..., : (self.n_gaussian_params - 1) * self.n_anchors
+        ].view(contacts_input_shape)
+        anchor_obj_udf = c5[..., (self.n_gaussian_params - 1) * self.n_anchors :]
+        return output, contact_gaussians, anchor_obj_udf
 
 
 class ContactUNetBackboneModel_legacy(UNetBackboneModel):
