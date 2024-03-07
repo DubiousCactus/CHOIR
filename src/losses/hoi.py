@@ -493,9 +493,9 @@ class ContactsFittingLoss(torch.nn.Module):
         nearest_normals = nearest_normals / torch.norm(
             nearest_normals, dim=-1, keepdim=True
         )
-        assert (
-            torch.norm(nearest_normals) == 1
-        ), "The object normals must be unit vectors"
+        #assert (
+        #    torch.norm(nearest_normals) == 1
+        #), "The object normals must be unit vectors"
         nearest_normal_roots = nearest_normal_roots - 0.002 * nearest_normals
         dot_products = torch.einsum(
             "bvi,bvi->bv", (nearest_normals, verts - nearest_normal_roots)
