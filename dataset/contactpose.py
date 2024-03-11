@@ -27,6 +27,7 @@ from open3d import visualization as o3dv
 from pytorch3d.transforms import matrix_to_rotation_6d
 from torchmetrics import MeanMetric
 from tqdm import tqdm
+from trimesh import Trimesh
 
 from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
@@ -42,8 +43,8 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
-    visualize_CHOIR_prediction,
     visualize_hand_contacts_from_3D_gaussians,
+    visualize_MANO,
 )
 
 
@@ -166,6 +167,8 @@ class ContactPoseDataset(BaseDataset):
                 noisy_samples_per_grasp = 16
             else:
                 noisy_samples_per_grasp = 4
+        if split != "train":
+            noisy_samples_per_grasp = 4  # We also want that for object-based splits
 
         self._eval_observation_plateau = eval_observations_plateau
         if eval_observations_plateau:
@@ -501,7 +504,10 @@ class ContactPoseDataset(BaseDataset):
                         ]
                     )
                 else:
-                    visualize = self._debug and (random.Random().random() < 0.5)
+                    if obj_name not in ["cell_phone"]:
+                        continue
+                    visualize = self._debug and (random.Random().random() < 0.8)
+                    visualize = visualize and obj_name in ["cell_phone"]
                     has_visualized = False
                     computed = True
                     # ================== Original Hand-Object Pair ==================
@@ -770,16 +776,17 @@ class ContactPoseDataset(BaseDataset):
                             # affine_mano,
                             # use_deltas=self._use_deltas,
                             # )
-                            # faces = affine_mano.faces
+                            faces = affine_mano.faces
                             # gt_MANO_mesh = Trimesh(
                             # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
                             # )
-                            # pred_MANO_mesh = Trimesh(
-                            # verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
-                            # visualize_MANO(
-                            # pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
-                            # )
+                            pred_MANO_mesh = Trimesh(
+                                verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
+                            visualize_MANO(
+                                pred_MANO_mesh,
+                                obj_mesh=obj_mesh,  # , gt_hand=gt_MANO_mesh
+                            )
                             # visualize_CHOIR_prediction(
                             # gt_choir,
                             # gt_choir,
@@ -957,29 +964,29 @@ class ContactPoseDataset(BaseDataset):
                             # plot_choir=False,
                             # )
 
-                            visualize_CHOIR_prediction(
-                                choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                gt_scalar,
-                                gt_scalar,
-                                gt_rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                contact_gaussians=choleksy_gaussian_params,
-                                obj_pts=obj_ptcld.float(),
-                                obj_normals=obj_vert_normals,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                                use_deltas=self._use_deltas,
-                                plot_choir=False,
-                            )
+                            # visualize_CHOIR_prediction(
+                            # choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # gt_scalar,
+                            # gt_scalar,
+                            # gt_rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # contact_gaussians=choleksy_gaussian_params,
+                            # obj_pts=obj_ptcld.float(),
+                            # obj_normals=obj_vert_normals,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # plot_choir=False,
+                            # )
                             # ==============================
                             # ==============================
                             has_visualized = True
