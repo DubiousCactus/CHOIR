@@ -1069,6 +1069,7 @@ class MultiViewTester(MultiViewTrainer):
                 "rot_6d": labels["rot"][:, :n],
                 "trans": labels["trans"][:, :n],
             }
+            gaussian_params_gt = labels["contact_gaussians"][:, :n]
             mano_params_input = {
                 "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
                 "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
@@ -1082,6 +1083,7 @@ class MultiViewTester(MultiViewTrainer):
             gt_verts, gt_joints = self._affine_mano(
                 gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
             )
+            gt_anchors = self._affine_mano.get_anchors(gt_verts)
             sample_verts, sample_joints = self._affine_mano(
                 mano_params_input["pose"],
                 mano_params_input["beta"],
@@ -1167,7 +1169,9 @@ class MultiViewTester(MultiViewTrainer):
                     grasp_key = (mesh_name, i)
                     if grasp_key not in plots:
                         pl = pv.Plotter(
-                            shape=(2, n_observations + 1),
+                            shape=(3, n_observations + 1)
+                            if self._model.single_modality != "object"
+                            else (2, n_observations + 1),
                             border=False,
                             off_screen=False,
                         )
@@ -1217,18 +1221,35 @@ class MultiViewTester(MultiViewTrainer):
                     pl = plots[grasp_key]
                     if not gt_is_plotted:
                         pl.subplot(0, 0)
-                        gt_hand_mesh = trimesh.Trimesh(
-                            vertices=gt_verts[i].detach().cpu().numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        gt_hand = pv.wrap(gt_hand_mesh)
-                        pl.add_mesh(
-                            gt_hand,
-                            opacity=1.0,
-                            name="gt_hand",
-                            label="Ground-truth Hand",
-                            smooth_shading=True,
-                        )
+                        if self._model.single_modality != "object":
+                            gt_hand_mesh = trimesh.Trimesh(
+                                vertices=gt_verts[i].detach().cpu().numpy(),
+                                faces=self._affine_mano.closed_faces.detach()
+                                .cpu()
+                                .numpy(),
+                            )
+                            gt_hand = pv.wrap(gt_hand_mesh)
+                            pl.add_mesh(
+                                gt_hand,
+                                opacity=1.0,
+                                name="gt_hand",
+                                label="Ground-truth Hand",
+                                smooth_shading=True,
+                            )
+                            gt_contact_map = visualize_hand_contacts_from_3D_gaussians(
+                                gt_hand_mesh,
+                                gaussian_params_gt[i].cpu(),
+                                gt_anchors[i].cpu(),
+                                return_trimesh=True,
+                            )
+                            pl.subplot(1, 0)
+                            pl.add_mesh(
+                                gt_contact_map,
+                                opacity=1.0,
+                                name="gt_contact_map",
+                                label="Ground-truth Contact Map",
+                                smooth_shading=True,
+                            )
                         pl.add_mesh(
                             obj_mesh_pv,
                             opacity=1.0,
@@ -1237,7 +1258,45 @@ class MultiViewTester(MultiViewTrainer):
                             smooth_shading=True,
                             color="red",
                         )
-                        pl.subplot(1, n)
+                    pl.subplot(0, n)
+                    hand_mesh = pv.wrap(pred_hand_mesh)
+                    pl.add_mesh(
+                        hand_mesh,
+                        opacity=1.0,
+                        name="hand_mesh",
+                        label="Predicted Hand",
+                        smooth_shading=True,
+                    )
+                    pl.add_mesh(
+                        obj_mesh_pv,
+                        opacity=1.0,
+                        name="obj_mesh",
+                        label="Object mesh",
+                        smooth_shading=True,
+                        color="red",
+                    )
+                    pl.subplot(1, n)
+                    reconstructed_gaussians = (
+                        lower_tril_cholesky_to_covmat(contacts_pred[i].unsqueeze(0))
+                        .squeeze(0)
+                        .cpu()
+                    )
+                    pred_contact_map = visualize_hand_contacts_from_3D_gaussians(
+                        pred_hand_mesh,
+                        reconstructed_gaussians,
+                        anchors_pred[i].cpu(),
+                        return_trimesh=True,
+                    )
+                    pl.add_mesh(
+                        pred_contact_map,
+                        opacity=1.0,
+                        name="pred_contact_map",
+                        label="Predicted Contact Map",
+                        smooth_shading=True,
+                    )
+                    viewed_meshes.append(mesh_name)
+                    if self._model.single_modality != "object":
+                        pl.subplot(2, n)
                         # i corresponds to batch element
                         # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
                         input_hand_mesh = trimesh.Trimesh(
@@ -1263,25 +1322,6 @@ class MultiViewTester(MultiViewTrainer):
                             smooth_shading=True,
                             color="red",
                         )
-
-                    pl.subplot(0, n)
-                    hand_mesh = pv.wrap(pred_hand_mesh)
-                    pl.add_mesh(
-                        hand_mesh,
-                        opacity=1.0,
-                        name="hand_mesh",
-                        label="Predicted Hand",
-                        smooth_shading=True,
-                    )
-                    pl.add_mesh(
-                        obj_mesh_pv,
-                        opacity=1.0,
-                        name="obj_mesh",
-                        label="Object mesh",
-                        smooth_shading=True,
-                        color="red",
-                    )
-                    viewed_meshes.append(mesh_name)
         for (mesh_name, i), plot in plots.items():
             plot.set_background("white")  # type: ignore
             plot.link_views()

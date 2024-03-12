@@ -1168,6 +1168,7 @@ def visualize_hand_contacts_from_3D_gaussians(
     gaussian_params: torch.Tensor,
     anchors: torch.Tensor,
     gt_contacts: Optional[torch.Tensor] = None,
+    return_trimesh: bool = False,
 ):
     geometries = []
     vertex_contacts = torch.zeros(np.asarray(hand_mesh.vertices).shape[0])
@@ -1220,4 +1221,6 @@ def visualize_hand_contacts_from_3D_gaussians(
         gt_hand_mesh.vertex_colors = open3d.utility.Vector3dVector(gt_colours)
         gt_hand_mesh.translate([0.1, 0, 0])
         geometries.append(gt_hand_mesh)
+    if return_trimesh:
+        return Trimesh(hand_mesh.vertices, hand_mesh.faces, vertex_colors=colours)
     open3d.visualization.draw_geometries(geometries)
