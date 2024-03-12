@@ -1095,6 +1095,7 @@ class KPContactsDiffusionModel(torch.nn.Module):
         y_embed_dim: Optional[int] = None,
         object_in_encoder: bool = False,
         skip_connections: bool = False,
+        single_modality: Optional[str] = None,
     ):
         super().__init__()
         self.object_in_encoder = object_in_encoder
@@ -1151,11 +1152,19 @@ class KPContactsDiffusionModel(torch.nn.Module):
             time_encoder=SinusoidalPosEncoder(time_steps, temporal_dim),
             temporal_dim=temporal_dim,
         )
-        self.embedder = (
-            backbones[backbone][1]()
-            if (y_embed_dim is not None and y_input_keypoints is not None)
-            else None
-        )
+        self._single_modality = single_modality
+        if single_modality is not None:
+            assert single_modality in [
+                "noisy_pair",
+                "object",
+            ], "Unknown single_modality"
+            self.embedder = (
+                backbones[backbone][1]()
+                if (y_embed_dim is not None and y_input_keypoints is not None)
+                else None
+            )
+        else:
+            raise NotImplementedError("Not implemented yet")
         self.time_steps = time_steps
         self.beta = torch.nn.Parameter(
             torch.linspace(beta_1, beta_T, time_steps), requires_grad=False
@@ -1184,7 +1193,6 @@ class KPContactsDiffusionModel(torch.nn.Module):
             None,
         )
         self.x_contacts_mean, self.x_contacts_std = None, None
-        self.single_modality = "noisy_pair"
 
     def set_dataset_stats(
         self,
@@ -1217,12 +1225,20 @@ class KPContactsDiffusionModel(torch.nn.Module):
     ) -> torch.Tensor:
         return x * std.to(x.device) + mean.to(x.device)
 
+    @property
+    def single_modality(self) -> Optional[str]:
+        return self._single_modality
+
     def forward(
         self,
         x: torch.Tensor,
         contacts: torch.Tensor,
         y: Optional[torch.Tensor] = None,
+        y_modality: Optional[str] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if y is not None:
+            assert y_modality is not None, "Must provide y_modality when y is not None"
+            assert y_modality in ["noisy_pair", "object"], "Unknown y_modality"
         if self._input_shape is None:
             self._input_shape = x.shape[1:]
         assert self.x_hand_mean is not None, "Must call set_dataset_stats first"
@@ -1235,12 +1251,16 @@ class KPContactsDiffusionModel(torch.nn.Module):
             )
         else:
             x = self._standardize(x, self.x_hand_mean, self.x_hand_std)
-        y[..., : self.n_obj_keypoints, :] = self._standardize(
-            y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
-        )
-        y[..., self.n_obj_keypoints :, :] = self._standardize(
-            y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
-        )
+        if y is not None:
+            if y_modality == "noisy_pair":
+                y[..., : self.n_obj_keypoints, :] = self._standardize(
+                    y[..., : self.n_obj_keypoints, :], self.y_obj_mean, self.y_obj_std
+                )
+                y[..., self.n_obj_keypoints :, :] = self._standardize(
+                    y[..., self.n_obj_keypoints :, :], self.y_hand_mean, self.y_hand_std
+                )
+            elif y_modality == "object":
+                y = self._standardize(y, self.y_obj_mean, self.y_obj_std)
         contacts = self._standardize(
             contacts, self.x_contacts_mean, self.x_contacts_std
         )
@@ -1270,7 +1290,10 @@ class KPContactsDiffusionModel(torch.nn.Module):
             1 - batched_alpha
         ) * eps_contacts
         # 4. Predict the noise sample
-        y_embed = self.embedder(y) if y is not None else None
+        if self._single_modality is not None:
+            y_embed = self.embedder(y) if y is not None else None
+        else:
+            raise NotImplementedError("Not implemented yet")
         eps_hat_x, eps_hat_contacts = self.backbone(
             torch.cat([obj_kpts, diffused_x], dim=-2)
             if self.object_in_encoder

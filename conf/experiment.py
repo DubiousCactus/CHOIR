@@ -288,6 +288,7 @@ model_store(
         y_input_keypoints=MISSING,
         object_in_encoder=False,
         skip_connections=True,
+        single_modality="noisy_pair",
     ),
     name="kp_coddpm",
 )
@@ -657,13 +658,14 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            n_obj_keypoints=4096,  # 1024 points taken from the object point cloud's target points of the BPS representation
+            n_obj_keypoints=4096,  # 4096 points taken from the object point cloud's target points of the BPS representation
             y_input_keypoints=4096
             + 21
             + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
             y_embed_dim=256,
             object_in_encoder=False,
             skip_connections=True,
+            single_modality="noisy_pair",
         ),
         run=dict(
             conditional=True,
@@ -672,7 +674,48 @@ experiment_store(
         ),  # We can reuse the "full_choir" flag for "hand_object_pair"
         bases=(Experiment,),
     ),
-    name="baseline_coddpm_3d_multiview_contactopt",
+    name="baseline_coddpm_3d_multiview_contactopt_noisy_pair",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "kp_coddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_baseline_multiview"},
+            {"override /tester": "ddpm_baseline_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,  # We won't exploit it but then it's a fairer comparison
+            bps_dim=16**3,  # 4096 points, as used in the PointNet++ paper
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            n_obj_keypoints=4096,  # 4096 points taken from the object point cloud's target points of the BPS representation
+            y_input_keypoints=4096,
+            y_embed_dim=256,
+            object_in_encoder=False,
+            skip_connections=True,
+            single_modality="object",
+        ),
+        run=dict(
+            conditional=True,
+            full_choir=False,
+            model_contacts=True,  # Must be equal to object_in_encoder!
+        ),  # We can reuse the "full_choir" flag for "hand_object_pair"
+        bases=(Experiment,),
+    ),
+    name="baseline_coddpm_3d_multiview_contactopt_object",
 )
 experiment_store(
     make_config(

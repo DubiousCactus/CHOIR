@@ -77,15 +77,23 @@ class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
             if self._full_choir  # full_hand_object_pair
             else torch.cat((labels["joints"][:, -1], labels["anchors"][:, -1]), dim=-2)
         )
-        y = (
-            torch.cat(
-                (samples["rescaled_ref_pts"], samples["joints"], samples["anchors"]),
-                dim=-2,
+        y_modality = self._sample_modality(epoch)
+        if y_modality == "object":
+            y = samples["rescaled_ref_pts"] if self.conditional else None
+        else:
+            y = (
+                torch.cat(
+                    (
+                        samples["rescaled_ref_pts"],
+                        samples["joints"],
+                        samples["anchors"],
+                    ),
+                    dim=-2,
+                )
+                if self.conditional
+                else None
             )
-            if self.conditional
-            else None
-        )
-        kwargs = {"x": x, "y": y}
+        kwargs = {"x": x, "y": y, "y_modality": y_modality}
         if self._model_contacts:
             kwargs["contacts"] = fetch_gaussian_params_from_CHOIR(
                 labels["choir"].squeeze(1),

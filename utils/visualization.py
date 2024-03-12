@@ -975,13 +975,13 @@ def visualize_MANO(
     if not isinstance(pred_hand, Trimesh):
         pred_hand = Trimesh(pred_hand.vertices, pred_hand.triangles)
     hand_mesh = pv.wrap(pred_hand)
-    pl.add_mesh(
-        hand_mesh,
-        opacity=opacity,
-        name="hand_mesh",
-        label="Predicted Hand",
-        smooth_shading=True,
-    )
+    # pl.add_mesh(
+    # hand_mesh,
+    # opacity=opacity,
+    # name="hand_mesh",
+    # label="Predicted Hand",
+    # smooth_shading=True,
+    # )
     if gt_hand is not None:
         if isinstance(gt_hand, Trimesh):
             gt_hand = pv.wrap(gt_hand)
@@ -999,7 +999,7 @@ def visualize_MANO(
         obj_mesh_pv = pv.wrap(obj_mesh)
         pl.add_mesh(
             obj_mesh_pv,
-            opacity=opacity,
+            # opacity=opacity,
             name="obj_mesh",
             label="Object mesh",
             smooth_shading=True,
@@ -1013,10 +1013,10 @@ def visualize_MANO(
             label="Object pointcloud",
             opacity=0.2,
         )
-    pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
+    # pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
     # pl.add_camera_orientation_widget()
-    pl.add_legend(loc="upper left", size=(0.1, 0.1))
+    # pl.add_legend(loc="upper left", size=(0.1, 0.1))
     if cam_pose is not None:
         pl.camera.model_transform_matrix = cam_pose[1]
         pl.camera.position = cam_pose[0]
@@ -1026,7 +1026,7 @@ def visualize_MANO(
         # pl.save_graphic(save_as)
         pl.export_html(save_as)
     else:
-        pl.add_axes_at_origin()
+        # pl.add_axes_at_origin()
         pl.show(interactive=True)
     if return_cam_pose:
         return (pl.camera.position, pl.camera.model_transform_matrix)
@@ -1108,7 +1108,7 @@ def visualize_3D_gaussians_on_hand_mesh(
         covariance = gaussian_params[i, 3:].reshape(3, 3)
         # print(covariance)
         # Sample points from the Gaussian
-        num_points = 5000
+        num_points = 10000
         points = np.random.multivariate_normal(mean, covariance, num_points)
 
         # Create a point cloud from the sampled points
@@ -1118,10 +1118,10 @@ def visualize_3D_gaussians_on_hand_mesh(
         pcd.paint_uniform_color(
             np.array(
                 [
-                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 0,
+                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 1,
                     (int((i * 16) % 255) / 255.0)
                     if (i >= 32 / 3 and i < 64 / 3)
-                    else 0,
+                    else 5,
                     (int((i * 16) % 255) / 255.0) if i >= 64 / 3 else 0,
                 ]
             )

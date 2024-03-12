@@ -504,10 +504,7 @@ class ContactPoseDataset(BaseDataset):
                         ]
                     )
                 else:
-                    if obj_name not in ["cell_phone"]:
-                        continue
                     visualize = self._debug and (random.Random().random() < 0.8)
-                    visualize = visualize and obj_name in ["cell_phone"]
                     has_visualized = False
                     computed = True
                     # ================== Original Hand-Object Pair ==================
