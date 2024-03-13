@@ -427,6 +427,7 @@ class RunConfig:
     compile_test_model: bool = False
     compute_contact_scores: bool = True
     debug_tto: bool = False
+    dump_videos: bool = False
     # RunConfig was never meant to be soiled like this :'(
 
 

@@ -117,6 +117,7 @@ class MultiViewTester(MultiViewTrainer):
         self._data_loader.dataset.set_eval_mode(True)
         self._debug_tto = kwargs.get("debug_tto", False)
         self._plot_contacts = kwargs.get("plot_contacts", False)
+        self._dump_videos = kwargs.get("dump_videos", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -1148,7 +1149,12 @@ class MultiViewTester(MultiViewTrainer):
                             )  # Initial pose is the last observation
                             for k, v in samples.items()
                             if k
-                            in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
                         },
                         beta_w=1e-4,
                         theta_w=1e-7,
@@ -1314,7 +1320,255 @@ class MultiViewTester(MultiViewTrainer):
                 os.path.join(image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.html")
             )
 
-    def _save_model_predictions(self, n_observations: int) -> None:
+    @to_cuda
+    def _save_batch_videos(
+        self,
+        samples: Dict,
+        labels: Dict,
+        mesh_pths: List[str],
+        n_observations: int,
+        batch_idx: int,
+    ):
+        def create_frame(
+            mesh,
+            frame_number,
+            total_frames: int = 120,
+            rotation_axis: str = "y",
+            distance_from_axis: float = 2,
+        ):
+            angle = frame_number * 2 * torch.pi / total_frames
+            Rx = pv.transforms.RotateX(angle)
+            Ry = pv.transforms.RotateY(angle)
+            Rz = pv.transforms.RotateZ(angle)
+
+            # Choose the rotation axis (Rx, Ry, or Rz)
+            camera_transform = {
+                "x": Rx,
+                "y": Ry,
+                "z": Rz,
+            }[rotation_axis]
+            if rotation_axis == "x":
+                camera_position = camera_transform.transform_point(
+                    (distance_from_axis, 0, 0)
+                )
+            elif rotation_axis == "y":
+                camera_position = camera_transform.transform_point(
+                    (0, distance_from_axis, 0)
+                )
+            else:
+                camera_position = camera_transform.transform_point(
+                    (0, 0, distance_from_axis)
+                )
+
+            return mesh, dict(camera_position=camera_position)
+
+        animations = []
+        total_frames, animation_duration = 120, 10
+        viewed_meshes = defaultdict(int)
+        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        if self._debug_tto:
+            batch_obj_path = "batch_obj_data.pkl"
+            if os.path.exists(batch_obj_path):
+                with open(batch_obj_path, "rb") as f:
+                    batch_obj_data = to_cuda_(
+                        torch.load(f, map_location=torch.device("cpu"))
+                    )
+            else:
+                mp_process_obj_meshes(
+                    mesh_pths,
+                    self._object_cache,
+                    self._data_loader.dataset.center_on_object_com,
+                    self._enable_contacts_tto,
+                    self._compute_iv,
+                    self._pitch,
+                    self._radius,
+                    self._n_pts_on_mesh,
+                    self._n_normals_on_mesh,
+                    dataset=self._data_loader.dataset.name,
+                    keep_mesh_contact_identity=False,
+                )
+                batch_obj_data = make_batch_of_obj_data(
+                    self._object_cache, mesh_pths, keep_mesh_contact_identity=False
+                )
+                with open(batch_obj_path, "wb") as f:
+                    batch_obj_data = {
+                        k: (v.cpu() if type(v) is torch.Tensor else v)
+                        for k, v in batch_obj_data.items()
+                    }
+                    torch.save(batch_obj_data, f)
+        else:
+            mp_process_obj_meshes(
+                mesh_pths,
+                self._object_cache,
+                self._data_loader.dataset.center_on_object_com,
+                self._enable_contacts_tto,
+                self._compute_iv,
+                self._pitch,
+                self._radius,
+                self._n_pts_on_mesh,
+                self._n_normals_on_mesh,
+                dataset=self._data_loader.dataset.name,
+                keep_mesh_contact_identity=False,
+            )
+            batch_obj_data = make_batch_of_obj_data(
+                self._object_cache, mesh_pths, keep_mesh_contact_identity=False
+            )
+        for n in range(1, n_observations + 1):
+            print(f"For {n} observations")
+            print(samples["choir"].shape, samples["choir"][:, :n].shape)
+            input_scalar = samples["scalar"]
+            if len(input_scalar.shape) == 2:
+                input_scalar = input_scalar.mean(
+                    dim=1
+                )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
+            # y_hat = self._model(samples["choir"][:, :n], use_mean=True)
+            if self._debug_tto:
+                cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+                if os.path.exists(cached_pred_path):
+                    with open(cached_pred_path, "rb") as f:
+                        y_hat = pickle.load(f)
+                        y_hat = to_cuda_(y_hat)
+                else:
+                    y_hat = self._inference(
+                        samples, labels, use_prior=True, max_observations=n
+                    )
+                    with open(cached_pred_path, "wb") as f:
+                        y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                        pickle.dump(y_hat, f)
+            else:
+                y_hat = self._inference(
+                    samples, labels, use_prior=True, max_observations=n
+                )
+            mano_params_gt = {
+                "pose": labels["theta"][:, :n],
+                "beta": labels["beta"][:, :n],
+                "rot_6d": labels["rot"][:, :n],
+                "trans": labels["trans"][:, :n],
+            }
+            gaussian_params_gt = labels["contact_gaussians"][:, -1]
+            mano_params_input = {
+                "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
+                "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
+                "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
+                "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
+            }
+            # Only use the last view for each batch element (they're all the same anyway for static
+            # grasps, but for dynamic grasps we want to predict the LAST frame!).
+            mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+            gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+            gt_verts, gt_joints = self._affine_mano(
+                gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
+            )
+            gt_anchors = self._affine_mano.get_anchors(gt_verts)
+            sample_verts, sample_joints = self._affine_mano(
+                mano_params_input["pose"],
+                mano_params_input["beta"],
+                mano_params_input["trans"],
+                rot_6d=mano_params_input["rot_6d"],
+            )
+            if not self._data_loader.dataset.is_right_hand_only:
+                raise NotImplementedError("Right hand only is implemented for testing.")
+            multiple_obs = len(samples["theta"].shape) > 2
+            use_smplx = False  # TODO: I don't use it for now
+            contacts_pred, obj_points, obj_normals = (
+                y_hat.get("contacts", None),
+                None,
+                None,
+            )
+            if self._enable_contacts_tto and contacts_pred is not None:
+                obj_points, obj_normals = (
+                    batch_obj_data["points"],
+                    batch_obj_data["normals"],
+                )
+            cache_fitted = f"cache_fitted_{batch_idx}.pkl"
+            if self._debug_tto and os.path.exists(cache_fitted):
+                with open(cache_fitted, "rb") as f:
+                    anchors_pred, verts_pred, joints_pred = pickle.load(f)
+            else:
+                with torch.set_grad_enabled(True):
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(  # TODO: make a partial
+                        y_hat["choir"],
+                        contact_gaussians=contacts_pred,
+                        obj_pts=obj_points,
+                        obj_normals=obj_normals,
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=1000,
+                        loss_thresh=1e-7,
+                        lr=8e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=use_smplx,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params={
+                            k: (
+                                v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in [
+                                "theta",
+                                ("vtemp" if use_smplx else "beta"),
+                                "rot",
+                                "trans",
+                            ]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
+                    if self._debug_tto:
+                        with open(cache_fitted, "wb") as f:
+                            anchors_pred = anchors_pred.cpu()
+                            verts_pred = verts_pred.cpu()
+                            joints_pred = joints_pred.cpu()
+                            pickle.dump((anchors_pred, verts_pred, joints_pred), f)
+            image_dir = os.path.join(
+                HydraConfig.get().runtime.output_dir,
+                "tto_images",
+            )
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+            print(batch_obj_data.keys())
+            for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
+                # mesh_name = batch_obj_data["mesh_name"][i]
+                mesh_name = i
+                if viewed_meshes[mesh_name] == 5:
+                    continue
+                pred_hand_mesh = trimesh.Trimesh(
+                    vertices=verts_pred[i].detach().cpu().numpy(),
+                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                )
+                obj_mesh_pv = pv.wrap(obj_mesh)
+                hand_mesh = pv.wrap(pred_hand_mesh)
+                animation = pv.Animation(
+                    create_frame, range(total_frames), default_views=False
+                )
+                plotter = pv.Plotter(background="white", window_size=[800, 800])
+                plotter.camera_position = "xy"
+                frame_rate = total_frames / animation_duration
+                plotter.add_mesh(animation, smooth_shading=True, frame_rate=frame_rate)
+                animations.append((mesh_name, i, plotter))
+                viewed_meshes[mesh_name] += 1
+        for mesh_name, i, plot in animations:
+            plot.screenshot(
+                f"{mesh_name}_{i}_tto_{batch_idx}.mp4",
+                off_screen=True,
+                animated=True,
+                magnification=1,
+            )
+
+    def _save_model_predictions(self, n_observations: int, dump_videos: bool) -> None:
         # Use a batch size of 1 cause no clue what happens above that
         """The deadline is in 20h so I'll write this quick and dirty, sorry reader."""
         self._data_loader.dataset.set_observations_number(n_observations)
@@ -1328,8 +1582,14 @@ class MultiViewTester(MultiViewTrainer):
             if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
                 self._save_batch_predictions(
                     samples, labels, mesh_pths, n_observations, i
+                ) if not dump_videos else self._save_batch_videos(
+                    samples, labels, mesh_pths, n_observations, i
                 )
             elif self._data_loader.dataset.name.lower() == "grab":
+                if self._dump_videos:
+                    raise NotImplementedError(
+                        "Grab dataset does not support video dumping."
+                    )
                 scenes = self._save_batch_predictions_as_sequence(
                     samples, labels, mesh_pths, n_observations, i, scenes
                 )
@@ -1392,13 +1652,14 @@ class MultiViewTester(MultiViewTrainer):
             Defaults to 0 (no visualization).
         """
         self._model.eval()
-        if self._save_predictions:
+        if self._save_predictions or self._dump_videos:
             with torch.no_grad():
                 self._save_model_predictions(
                     min(4, self._max_observations)
                     if self._data_loader.dataset.name.lower()
                     in ["contactpose", "oakink"]
-                    else 7
+                    else 7,
+                    self._dump_videos,
                 )
         else:
             test_errors = []
