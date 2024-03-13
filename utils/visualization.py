@@ -1179,10 +1179,13 @@ def visualize_hand_contacts_from_3D_gaussians(
     anchor_distances, anchor_indices = torch.topk(
         anchor_distances, 1, dim=-1, largest=False, sorted=False
     )
+    scale_tril_norm_activation_threshold=1e-3
     for i in range(gaussian_params.shape[0]):
         if torch.allclose(
             gaussian_params[i], torch.zeros_like(gaussian_params[i]), atol=1e-6
         ):
+            continue
+        if torch.norm(gaussian_params[i, 3:]) < scale_tril_norm_activation_threshold**2:
             continue
         mean = gaussian_params[i, :3] + anchors[i]
         covariance = (

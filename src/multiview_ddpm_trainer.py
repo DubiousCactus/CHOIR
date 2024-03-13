@@ -102,6 +102,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             )
         # p_1 is the probability of event 1 (object). We want to start with high p_1 (close to 1.0)
         # and ramp down to p_1 = 0.5.
+        p_0 = 0.5
         s = torch.bernoulli(1.0 - torch.tensor(p_0)).int().item()
         return ["noisy_pair", "object"][s]
 

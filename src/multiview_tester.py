@@ -1069,7 +1069,7 @@ class MultiViewTester(MultiViewTrainer):
                 "rot_6d": labels["rot"][:, :n],
                 "trans": labels["trans"][:, :n],
             }
-            gaussian_params_gt = labels["contact_gaussians"][:, :n]
+            gaussian_params_gt = labels["contact_gaussians"][:, -1]
             mano_params_input = {
                 "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
                 "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
@@ -1276,11 +1276,12 @@ class MultiViewTester(MultiViewTrainer):
                         color="red",
                     )
                     pl.subplot(1, n)
-                    reconstructed_gaussians = (
-                        lower_tril_cholesky_to_covmat(contacts_pred[i].unsqueeze(0))
+                    reconstructed_gaussians = torch.cat((contacts_pred[i][..., :3].cpu(),
+                        lower_tril_cholesky_to_covmat(contacts_pred[i].unsqueeze(0)[..., 3:])
                         .squeeze(0)
+                        .view(32, 9)
                         .cpu()
-                    )
+                    ), dim=-1)
                     pred_contact_map = visualize_hand_contacts_from_3D_gaussians(
                         pred_hand_mesh,
                         reconstructed_gaussians,
