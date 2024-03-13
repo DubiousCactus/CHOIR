@@ -6,6 +6,7 @@
 # Distributed under terms of the MIT license.
 
 
+import json
 import os
 import pickle
 import signal
@@ -20,6 +21,7 @@ import torch
 import trimesh
 from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
+from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
 from torchmetrics import MeanMetric
 from tqdm import tqdm
@@ -1200,7 +1202,47 @@ class MultiViewTester(MultiViewTrainer):
                         off_screen=False,
                     )
                     plots[grasp_key] = pl
-
+                    with open(
+                        os.path.join(
+                            image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.json"
+                        ),
+                        "w",
+                    ) as f:
+                        f.write(
+                            json.dumps(
+                                {
+                                    "beta": mano_params_input["beta"][
+                                        i * samples["beta"].shape[1] + n - 1
+                                    ]
+                                    .detach()
+                                    .cpu()
+                                    .numpy()
+                                    .tolist(),
+                                    "pose": mano_params_input["pose"][
+                                        i * samples["theta"].shape[1] + n - 1
+                                    ]
+                                    .detach()
+                                    .cpu()
+                                    .numpy()
+                                    .tolist(),
+                                    "trans": mano_params_input["trans"][
+                                        i * samples["trans"].shape[1] + n - 1
+                                    ]
+                                    .detach()
+                                    .cpu()
+                                    .numpy()
+                                    .tolist(),
+                                    "hTm": rotation_6d_to_matrix(
+                                        mano_params_input["rot_6d"][
+                                            i * samples["rot"].shape[1] + n - 1
+                                        ].detach()
+                                    )
+                                    .cpu()
+                                    .numpy()
+                                    .tolist(),
+                                }
+                            )
+                        )
                 pl = plots[grasp_key]
                 if not gt_is_plotted:
                     pl.subplot(0, 0)
@@ -1519,12 +1561,28 @@ class MultiViewTester(MultiViewTrainer):
                         faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                     )
                 )
+                input_hand_mesh = pv.wrap(
+                    trimesh.Trimesh(
+                        vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
+                        .detach()
+                        .cpu()
+                        .numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                )
+                gt_hand_mesh = pv.wrap(
+                    trimesh.Trimesh(
+                        vertices=gt_verts[i].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                )
                 obj_mesh = pv.wrap(obj_mesh)
-                file_name = os.path.join(
+
+                pred_file_name = os.path.join(
                     vid_dir, f"{mesh_name}_{viewed_meshes[mesh_name]}.mp4"
                 )
                 plotter = pv.Plotter(window_size=[800, 800], off_screen=True)
-                plotter.open_movie(file_name)
+                plotter.open_movie(pred_file_name)
                 plotter.set_background("white")
                 # camera = pv.Camera()
                 # camera.position = (1.0, 1.0, 1.0)
@@ -1544,6 +1602,57 @@ class MultiViewTester(MultiViewTrainer):
                     plotter.write_frame()  # Write this frame
                 # Be sure to close the plotter when finished
                 plotter.close()
+
+                if self._model.single_modality != "object":
+                    gt_file_name = os.path.join(
+                        vid_dir, f"gt_{mesh_name}_{viewed_meshes[mesh_name]}.mp4"
+                    )
+                    plotter = pv.Plotter(window_size=[800, 800], off_screen=True)
+                    plotter.open_movie(gt_file_name)
+                    plotter.set_background("white")
+                    # camera = pv.Camera()
+                    # camera.position = (1.0, 1.0, 1.0)
+                    # camera.focal_point = (0.0, 0.0, 0.0)
+                    # plotter.camera = camera
+                    plotter.camera_position = "iso"
+                    plotter.camera.zoom(2)
+                    plotter.add_mesh(gt_hand_mesh, smooth_shading=True, color="cyan")
+                    plotter.add_mesh(obj_mesh, smooth_shading=True, color="yellow")
+                    plotter.show(auto_close=False)
+                    plotter.write_frame()  # write initial data
+                    # Rotate the mesh on each frame
+                    for i in range(total_frames):
+                        angle = 540 / total_frames  # in degrees
+                        obj_mesh.rotate_z(angle, inplace=True)
+                        gt_hand_mesh.rotate_z(angle, inplace=True)
+                        plotter.write_frame()  # Write this frame
+                    # Be sure to close the plotter when finished
+                    plotter.close()
+
+                    input_file_name = os.path.join(
+                        vid_dir, f"input_{mesh_name}_{viewed_meshes[mesh_name]}.mp4"
+                    )
+                    plotter = pv.Plotter(window_size=[800, 800], off_screen=True)
+                    plotter.open_movie(input_file_name)
+                    plotter.set_background("white")
+                    # camera = pv.Camera()
+                    # camera.position = (1.0, 1.0, 1.0)
+                    # camera.focal_point = (0.0, 0.0, 0.0)
+                    # plotter.camera = camera
+                    plotter.camera_position = "iso"
+                    plotter.camera.zoom(2)
+                    plotter.add_mesh(input_hand_mesh, smooth_shading=True, color="cyan")
+                    plotter.add_mesh(obj_mesh, smooth_shading=True, color="yellow")
+                    plotter.show(auto_close=False)
+                    plotter.write_frame()  # write initial data
+                    # Rotate the mesh on each frame
+                    for i in range(total_frames):
+                        angle = 540 / total_frames  # in degrees
+                        obj_mesh.rotate_z(angle, inplace=True)
+                        input_hand_mesh.rotate_z(angle, inplace=True)
+                        plotter.write_frame()  # Write this frame
+                    # Be sure to close the plotter when finished
+                    plotter.close()
                 viewed_meshes[mesh_name] += 1
 
     def _save_model_predictions(self, n_observations: int, dump_videos: bool) -> None:
