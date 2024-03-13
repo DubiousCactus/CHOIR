@@ -1325,12 +1325,11 @@ class MultiViewTester(MultiViewTrainer):
         samples: Dict,
         labels: Dict,
         mesh_pths: List[str],
+        viewed_meshes: Dict,
         n_observations: int,
         batch_idx: int,
     ):
-        animations = []
         total_frames = 120
-        viewed_meshes = defaultdict(int)
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
             batch_obj_path = "batch_obj_data.pkl"
@@ -1507,7 +1506,7 @@ class MultiViewTester(MultiViewTrainer):
                 os.makedirs(vid_dir)
             for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
                 mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
-                if viewed_meshes[mesh_name] == 5:
+                if viewed_meshes[mesh_name] == 8:
                     continue
                 print(
                     colorize(
@@ -1554,6 +1553,7 @@ class MultiViewTester(MultiViewTrainer):
         self._pbar = tqdm(total=len(self._data_loader), desc="Exporting predictions")
         self._pbar.refresh()
         scenes = {}
+        viewed_meshes = defaultdict(int)
         for i, batch in enumerate(self._data_loader):
             if not self._running:
                 print("[!] Testing aborted.")
@@ -1562,7 +1562,7 @@ class MultiViewTester(MultiViewTrainer):
                 self._save_batch_predictions(
                     samples, labels, mesh_pths, n_observations, i
                 ) if not dump_videos else self._save_batch_videos(
-                    samples, labels, mesh_pths, n_observations, i
+                    samples, labels, mesh_pths, viewed_meshes, n_observations, i
                 )
             elif self._data_loader.dataset.name.lower() == "grab":
                 if self._dump_videos:
