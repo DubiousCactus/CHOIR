@@ -116,6 +116,7 @@ class MultiViewTester(MultiViewTrainer):
         self._n_normals_on_mesh = 5000
         self._data_loader.dataset.set_eval_mode(True)
         self._debug_tto = kwargs.get("debug_tto", False)
+        self._plot_contacts = kwargs.get("plot_contacts", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -1020,6 +1021,13 @@ class MultiViewTester(MultiViewTrainer):
                 batch_obj_data = make_batch_of_obj_data(
                     self._object_cache, mesh_pths, keep_mesh_contact_identity=False
                 )
+                with open(batch_obj_path, "wb") as f:
+                    batch_obj_data = {
+                        k: v.cpu()
+                        for k, v in batch_obj_data.items()
+                        if type(v) is torch.Tensor
+                    }
+                    torch.save(batch_obj_data, f)
         else:
             mp_process_obj_meshes(
                 mesh_pths,
@@ -1141,101 +1149,59 @@ class MultiViewTester(MultiViewTrainer):
                     theta_w=1e-7,
                     choir_w=1000,
                 )
-                image_dir = os.path.join(
-                    HydraConfig.get().runtime.output_dir,
-                    "tto_images",
-                )
-                if not os.path.exists(image_dir):
-                    os.makedirs(image_dir)
-                viewed_meshes = []
-                pyvista_obj_meshes, hands_trimesh = {}, {}
-                for i, mesh_pth in enumerate(mesh_pths):
-                    mesh_name = os.path.basename(mesh_pth)
-                    if mesh_pth in hands_trimesh:
-                        pred_hand_mesh = hands_trimesh[mesh_pth]
-                    else:
-                        pred_hand_mesh = trimesh.Trimesh(
-                            vertices=verts_pred[i].detach().cpu().numpy(),
+            image_dir = os.path.join(
+                HydraConfig.get().runtime.output_dir,
+                "tto_images",
+            )
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+            viewed_meshes = []
+            pyvista_obj_meshes, hands_trimesh = {}, {}
+            for i, mesh_pth in enumerate(mesh_pths):
+                mesh_name = os.path.basename(mesh_pth)
+                if mesh_pth in hands_trimesh:
+                    pred_hand_mesh = hands_trimesh[mesh_pth]
+                else:
+                    pred_hand_mesh = trimesh.Trimesh(
+                        vertices=verts_pred[i].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    hands_trimesh[mesh_pth] = pred_hand_mesh
+                if mesh_pth in pyvista_obj_meshes:
+                    obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
+                else:
+                    obj_mesh = self._object_cache[mesh_name]["mesh"]
+                    obj_mesh_pv = pv.wrap(obj_mesh)
+                    pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
+
+                grasp_key = (mesh_name, i)
+                if grasp_key not in plots:
+                    pl = pv.Plotter(
+                        shape=(3 if self._plot_contacts else 2, n_observations + 1)
+                        if self._model.single_modality != "object"
+                        else (2 if self._plot_contacts else 1, n_observations + 1),
+                        border=False,
+                        off_screen=False,
+                    )
+                    plots[grasp_key] = pl
+
+                pl = plots[grasp_key]
+                if not gt_is_plotted:
+                    pl.subplot(0, 0)
+                    if self._model.single_modality != "object":
+                        gt_hand_mesh = trimesh.Trimesh(
+                            vertices=gt_verts[i].detach().cpu().numpy(),
                             faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                         )
-                        hands_trimesh[mesh_pth] = pred_hand_mesh
-                    if mesh_pth in pyvista_obj_meshes:
-                        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
-                    else:
-                        obj_mesh = self._object_cache[mesh_name]["mesh"]
-                        obj_mesh_pv = pv.wrap(obj_mesh)
-                        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
-
-                    grasp_key = (mesh_name, i)
-                    if grasp_key not in plots:
-                        pl = pv.Plotter(
-                            shape=(3, n_observations + 1)
-                            if self._model.single_modality != "object"
-                            else (2, n_observations + 1),
-                            border=False,
-                            off_screen=False,
+                        gt_hand = pv.wrap(gt_hand_mesh)
+                        pl.add_mesh(
+                            gt_hand,
+                            opacity=1.0,
+                            name="gt_hand",
+                            label="Ground-truth Hand",
+                            smooth_shading=True,
                         )
-                        plots[grasp_key] = pl
-                        # with open(
-                        # os.path.join(
-                        # image_dir, f"{mesh_name}_{i}_tto_{batch_idx}.json"
-                        # ),
-                        # "w",
-                        # ) as f:
-                        # f.write(
-                        # json.dumps(
-                        # {
-                        # "beta": mano_params_input["beta"][
-                        # i * samples["beta"].shape[1] + n - 1
-                        # ]
-                        # .detach()
-                        # .cpu()
-                        # .numpy()
-                        # .tolist(),
-                        # "pose": mano_params_input["pose"][
-                        # i * samples["theta"].shape[1] + n - 1
-                        # ]
-                        # .detach()
-                        # .cpu()
-                        # .numpy()
-                        # .tolist(),
-                        # "trans": mano_params_input["trans"][
-                        # i * samples["trans"].shape[1] + n - 1
-                        # ]
-                        # .detach()
-                        # .cpu()
-                        # .numpy()
-                        # .tolist(),
-                        # "hTm": rotation_6d_to_matrix(
-                        # mano_params_input["rot_6d"][
-                        # i * samples["rot"].shape[1] + n - 1
-                        # ].detach()
-                        # )
-                        # .cpu()
-                        # .numpy()
-                        # .tolist(),
-                        # }
-                        # )
-                        # )
-
-                    pl = plots[grasp_key]
-                    if not gt_is_plotted:
-                        pl.subplot(0, 0)
-                        if self._model.single_modality != "object":
-                            gt_hand_mesh = trimesh.Trimesh(
-                                vertices=gt_verts[i].detach().cpu().numpy(),
-                                faces=self._affine_mano.closed_faces.detach()
-                                .cpu()
-                                .numpy(),
-                            )
-                            gt_hand = pv.wrap(gt_hand_mesh)
-                            pl.add_mesh(
-                                gt_hand,
-                                opacity=1.0,
-                                name="gt_hand",
-                                label="Ground-truth Hand",
-                                smooth_shading=True,
-                            )
+                        if self._plot_contacts:
                             gt_contact_map = visualize_hand_contacts_from_3D_gaussians(
                                 gt_hand_mesh,
                                 gaussian_params_gt[i].cpu(),
@@ -1250,23 +1216,6 @@ class MultiViewTester(MultiViewTrainer):
                                 label="Ground-truth Contact Map",
                                 smooth_shading=True,
                             )
-                        pl.add_mesh(
-                            obj_mesh_pv,
-                            opacity=1.0,
-                            name="obj_mesh",
-                            label="Object mesh",
-                            smooth_shading=True,
-                            color="red",
-                        )
-                    pl.subplot(0, n)
-                    hand_mesh = pv.wrap(pred_hand_mesh)
-                    pl.add_mesh(
-                        hand_mesh,
-                        opacity=1.0,
-                        name="hand_mesh",
-                        label="Predicted Hand",
-                        smooth_shading=True,
-                    )
                     pl.add_mesh(
                         obj_mesh_pv,
                         opacity=1.0,
@@ -1275,13 +1224,37 @@ class MultiViewTester(MultiViewTrainer):
                         smooth_shading=True,
                         color="red",
                     )
+                pl.subplot(0, n)
+                hand_mesh = pv.wrap(pred_hand_mesh)
+                pl.add_mesh(
+                    hand_mesh,
+                    opacity=1.0,
+                    name="hand_mesh",
+                    label="Predicted Hand",
+                    smooth_shading=True,
+                )
+                pl.add_mesh(
+                    obj_mesh_pv,
+                    opacity=1.0,
+                    name="obj_mesh",
+                    label="Object mesh",
+                    smooth_shading=True,
+                    color="red",
+                )
+                if self._plot_contacts:
                     pl.subplot(1, n)
-                    reconstructed_gaussians = torch.cat((contacts_pred[i][..., :3].cpu(),
-                        lower_tril_cholesky_to_covmat(contacts_pred[i].unsqueeze(0)[..., 3:])
-                        .squeeze(0)
-                        .view(32, 9)
-                        .cpu()
-                    ), dim=-1)
+                    reconstructed_gaussians = torch.cat(
+                        (
+                            contacts_pred[i][..., :3].cpu(),
+                            lower_tril_cholesky_to_covmat(
+                                contacts_pred[i].unsqueeze(0)[..., 3:]
+                            )
+                            .squeeze(0)
+                            .view(32, 9)
+                            .cpu(),
+                        ),
+                        dim=-1,
+                    )
                     pred_contact_map = visualize_hand_contacts_from_3D_gaussians(
                         pred_hand_mesh,
                         reconstructed_gaussians,
@@ -1295,34 +1268,34 @@ class MultiViewTester(MultiViewTrainer):
                         label="Predicted Contact Map",
                         smooth_shading=True,
                     )
-                    viewed_meshes.append(mesh_name)
-                    if self._model.single_modality != "object":
-                        pl.subplot(2, n)
-                        # i corresponds to batch element
-                        # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
-                        input_hand_mesh = trimesh.Trimesh(
-                            vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
-                            .detach()
-                            .cpu()
-                            .numpy(),
-                            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                        )
-                        input_hand = pv.wrap(input_hand_mesh)
-                        pl.add_mesh(
-                            input_hand,
-                            opacity=1.0,
-                            name="input_hand",
-                            label="Input Hand",
-                            smooth_shading=True,
-                        )
-                        pl.add_mesh(
-                            obj_mesh_pv,
-                            opacity=1.0,
-                            name="obj_mesh",
-                            label="Object mesh",
-                            smooth_shading=True,
-                            color="red",
-                        )
+                viewed_meshes.append(mesh_name)
+                if self._model.single_modality != "object":
+                    pl.subplot(2, n)
+                    # i corresponds to batch element
+                    # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
+                    input_hand_mesh = trimesh.Trimesh(
+                        vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
+                        .detach()
+                        .cpu()
+                        .numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    input_hand = pv.wrap(input_hand_mesh)
+                    pl.add_mesh(
+                        input_hand,
+                        opacity=1.0,
+                        name="input_hand",
+                        label="Input Hand",
+                        smooth_shading=True,
+                    )
+                    pl.add_mesh(
+                        obj_mesh_pv,
+                        opacity=1.0,
+                        name="obj_mesh",
+                        label="Object mesh",
+                        smooth_shading=True,
+                        color="red",
+                    )
         for (mesh_name, i), plot in plots.items():
             plot.set_background("white")  # type: ignore
             plot.link_views()
