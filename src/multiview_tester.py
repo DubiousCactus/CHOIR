@@ -1024,9 +1024,8 @@ class MultiViewTester(MultiViewTrainer):
                 )
                 with open(batch_obj_path, "wb") as f:
                     batch_obj_data = {
-                        k: v.cpu()
+                        k: (v.cpu() if type(v) is torch.Tensor else v)
                         for k, v in batch_obj_data.items()
-                        if type(v) is torch.Tensor
                     }
                     torch.save(batch_obj_data, f)
         else:
@@ -1329,41 +1328,8 @@ class MultiViewTester(MultiViewTrainer):
         n_observations: int,
         batch_idx: int,
     ):
-        def create_frame(
-            mesh,
-            frame_number,
-            total_frames: int = 120,
-            rotation_axis: str = "y",
-            distance_from_axis: float = 2,
-        ):
-            angle = frame_number * 2 * torch.pi / total_frames
-            Rx = pv.transforms.RotateX(angle)
-            Ry = pv.transforms.RotateY(angle)
-            Rz = pv.transforms.RotateZ(angle)
-
-            # Choose the rotation axis (Rx, Ry, or Rz)
-            camera_transform = {
-                "x": Rx,
-                "y": Ry,
-                "z": Rz,
-            }[rotation_axis]
-            if rotation_axis == "x":
-                camera_position = camera_transform.transform_point(
-                    (distance_from_axis, 0, 0)
-                )
-            elif rotation_axis == "y":
-                camera_position = camera_transform.transform_point(
-                    (0, distance_from_axis, 0)
-                )
-            else:
-                camera_position = camera_transform.transform_point(
-                    (0, 0, distance_from_axis)
-                )
-
-            return mesh, dict(camera_position=camera_position)
-
         animations = []
-        total_frames, animation_duration = 120, 10
+        total_frames = 120
         viewed_meshes = defaultdict(int)
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
@@ -1533,40 +1499,53 @@ class MultiViewTester(MultiViewTrainer):
                             verts_pred = verts_pred.cpu()
                             joints_pred = joints_pred.cpu()
                             pickle.dump((anchors_pred, verts_pred, joints_pred), f)
-            image_dir = os.path.join(
+            vid_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
-                "tto_images",
+                "tto_videos",
             )
-            if not os.path.exists(image_dir):
-                os.makedirs(image_dir)
-            print(batch_obj_data.keys())
+            if not os.path.exists(vid_dir):
+                os.makedirs(vid_dir)
             for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
-                # mesh_name = batch_obj_data["mesh_name"][i]
-                mesh_name = i
+                mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
                 if viewed_meshes[mesh_name] == 5:
                     continue
-                pred_hand_mesh = trimesh.Trimesh(
-                    vertices=verts_pred[i].detach().cpu().numpy(),
-                    faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                print(
+                    colorize(
+                        f"- Rendering {mesh_name}", project_conf.ANSI_COLORS["cyan"]
+                    )
                 )
-                obj_mesh_pv = pv.wrap(obj_mesh)
-                hand_mesh = pv.wrap(pred_hand_mesh)
-                animation = pv.Animation(
-                    create_frame, range(total_frames), default_views=False
+                pred_hand_mesh = pv.wrap(
+                    trimesh.Trimesh(
+                        vertices=verts_pred[i].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
                 )
-                plotter = pv.Plotter(background="white", window_size=[800, 800])
-                plotter.camera_position = "xy"
-                frame_rate = total_frames / animation_duration
-                plotter.add_mesh(animation, smooth_shading=True, frame_rate=frame_rate)
-                animations.append((mesh_name, i, plotter))
+                obj_mesh = pv.wrap(obj_mesh)
+                file_name = os.path.join(
+                    vid_dir, f"{mesh_name}_{viewed_meshes[mesh_name]}.mp4"
+                )
+                plotter = pv.Plotter(window_size=[800, 800], off_screen=True)
+                plotter.open_movie(file_name)
+                plotter.set_background("white")
+                # camera = pv.Camera()
+                # camera.position = (1.0, 1.0, 1.0)
+                # camera.focal_point = (0.0, 0.0, 0.0)
+                # plotter.camera = camera
+                plotter.camera_position = "iso"
+                plotter.camera.zoom(2)
+                plotter.add_mesh(pred_hand_mesh, smooth_shading=True, color="cyan")
+                plotter.add_mesh(obj_mesh, smooth_shading=True, color="yellow")
+                plotter.show(auto_close=False)
+                plotter.write_frame()  # write initial data
+                # Rotate the mesh on each frame
+                for i in range(total_frames):
+                    angle = 540 / total_frames  # in degrees
+                    obj_mesh.rotate_z(angle, inplace=True)
+                    pred_hand_mesh.rotate_z(angle, inplace=True)
+                    plotter.write_frame()  # Write this frame
+                # Be sure to close the plotter when finished
+                plotter.close()
                 viewed_meshes[mesh_name] += 1
-        for mesh_name, i, plot in animations:
-            plot.screenshot(
-                f"{mesh_name}_{i}_tto_{batch_idx}.mp4",
-                off_screen=True,
-                animated=True,
-                magnification=1,
-            )
 
     def _save_model_predictions(self, n_observations: int, dump_videos: bool) -> None:
         # Use a batch size of 1 cause no clue what happens above that
