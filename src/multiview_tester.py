@@ -1112,43 +1112,54 @@ class MultiViewTester(MultiViewTrainer):
                     batch_obj_data["points"],
                     batch_obj_data["normals"],
                 )
-            with torch.set_grad_enabled(True):
-                (
-                    _,
-                    _,
-                    _,
-                    _,
-                    anchors_pred,
-                    verts_pred,
-                    joints_pred,
-                ) = optimize_pose_pca_from_choir(  # TODO: make a partial
-                    y_hat["choir"],
-                    contact_gaussians=contacts_pred,
-                    obj_pts=obj_points,
-                    obj_normals=obj_normals,
-                    bps=self._bps,
-                    anchor_indices=self._anchor_indices,
-                    scalar=input_scalar,
-                    max_iterations=1000,
-                    loss_thresh=1e-7,
-                    lr=8e-2,
-                    is_rhand=samples["is_rhand"],
-                    use_smplx=use_smplx,
-                    dataset=self._data_loader.dataset.name,
-                    remap_bps_distances=self._remap_bps_distances,
-                    exponential_map_w=self._exponential_map_w,
-                    initial_params={
-                        k: (
-                            v[:, :n][:, -1] if multiple_obs else v[:, :n]
-                        )  # Initial pose is the last observation
-                        for k, v in samples.items()
-                        if k
-                        in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
-                    },
-                    beta_w=1e-4,
-                    theta_w=1e-7,
-                    choir_w=1000,
-                )
+            cache_fitted = f"cache_fitted_{batch_idx}.pkl"
+            if self._debug_tto and os.path.exists(cache_fitted):
+                with open(cache_fitted, "rb") as f:
+                    anchors_pred, verts_pred, joints_pred = pickle.load(f)
+            else:
+                with torch.set_grad_enabled(True):
+                    (
+                        _,
+                        _,
+                        _,
+                        _,
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                    ) = optimize_pose_pca_from_choir(  # TODO: make a partial
+                        y_hat["choir"],
+                        contact_gaussians=contacts_pred,
+                        obj_pts=obj_points,
+                        obj_normals=obj_normals,
+                        bps=self._bps,
+                        anchor_indices=self._anchor_indices,
+                        scalar=input_scalar,
+                        max_iterations=1000,
+                        loss_thresh=1e-7,
+                        lr=8e-2,
+                        is_rhand=samples["is_rhand"],
+                        use_smplx=use_smplx,
+                        dataset=self._data_loader.dataset.name,
+                        remap_bps_distances=self._remap_bps_distances,
+                        exponential_map_w=self._exponential_map_w,
+                        initial_params={
+                            k: (
+                                v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                            )  # Initial pose is the last observation
+                            for k, v in samples.items()
+                            if k
+                            in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
+                        },
+                        beta_w=1e-4,
+                        theta_w=1e-7,
+                        choir_w=1000,
+                    )
+                    if self._debug_tto:
+                        with open(cache_fitted, "wb") as f:
+                            anchors_pred = anchors_pred.cpu()
+                            verts_pred = verts_pred.cpu()
+                            joints_pred = joints_pred.cpu()
+                            pickle.dump((anchors_pred, verts_pred, joints_pred), f)
             image_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
                 "tto_images",
