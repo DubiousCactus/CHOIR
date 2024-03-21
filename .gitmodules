@@ -19,3 +19,6 @@
 [submodule "vendor/OakInk"]
 	path = vendor/OakInk
 	url = https://github.com/oakink/OakInk
+[submodule "vendor/GraspTTA"]
+	path = vendor/GraspTTA
+	url = https://github.com/hwjiang1510/GraspTTA
