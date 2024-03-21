@@ -128,8 +128,8 @@ class BaseDataset(TaskSet, abc.ABC):
                 bps = sample_grid_cube(
                     grid_size=grid_len,
                     n_dims=3,
-                    minv=-0.2 if rescale == "none" else -0.6,
-                    maxv=0.2 if rescale == "none" else 0.6,
+                    minv=-0.1 if rescale == "none" else -0.6,
+                    maxv=0.1 if rescale == "none" else 0.6,
                 ).cpu()
             else:
                 bps = sample_sphere_uniform(
@@ -427,7 +427,9 @@ class BaseDataset(TaskSet, abc.ABC):
                     if failures == 5:
                         os.remove(sample_path)
                         raise e
-                    print(f"Couldn't decompress {sample_path}! Trying again ({failures}/5)")
+                    print(
+                        f"Couldn't decompress {sample_path}! Trying again ({failures}/5)"
+                    )
                     failures += 1
                 else:
                     success = True

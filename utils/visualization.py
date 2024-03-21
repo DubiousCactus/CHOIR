@@ -957,6 +957,11 @@ def visualize_CHOIR(
 
     pl.link_views()
     pl.set_background("white")  # type: ignore
+    pl.add_arrows(
+        cent=np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]]),
+        direction=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        mag=0.1,
+    )
     pl.add_camera_orientation_widget()
     pl.show(interactive=True)
 
@@ -975,19 +980,19 @@ def visualize_MANO(
     if not isinstance(pred_hand, Trimesh):
         pred_hand = Trimesh(pred_hand.vertices, pred_hand.triangles)
     hand_mesh = pv.wrap(pred_hand)
-    # pl.add_mesh(
-    # hand_mesh,
-    # opacity=opacity,
-    # name="hand_mesh",
-    # label="Predicted Hand",
-    # smooth_shading=True,
-    # )
+    pl.add_mesh(
+        hand_mesh,
+        opacity=opacity,
+        name="hand_mesh",
+        label="Predicted Hand",
+        smooth_shading=True,
+    )
     if gt_hand is not None:
         if isinstance(gt_hand, Trimesh):
             gt_hand = pv.wrap(gt_hand)
         pl.add_mesh(
             gt_hand,
-            opacity=0.2,
+            opacity=0.8,
             name="gt_hand",
             label="Ground-truth Hand",
             smooth_shading=True,
@@ -1027,6 +1032,12 @@ def visualize_MANO(
         pl.export_html(save_as)
     else:
         # pl.add_axes_at_origin()
+        # We need smaller axes, so let's do it manually:
+        pl.add_arrows(
+            cent=np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]]),
+            direction=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+            mag=0.1,
+        )
         pl.show(interactive=True)
     if return_cam_pose:
         return (pl.camera.position, pl.camera.model_transform_matrix)
@@ -1179,13 +1190,16 @@ def visualize_hand_contacts_from_3D_gaussians(
     anchor_distances, anchor_indices = torch.topk(
         anchor_distances, 1, dim=-1, largest=False, sorted=False
     )
-    scale_tril_norm_activation_threshold=1e-3
+    scale_tril_norm_activation_threshold = 1e-3
     for i in range(gaussian_params.shape[0]):
         if torch.allclose(
             gaussian_params[i], torch.zeros_like(gaussian_params[i]), atol=1e-6
         ):
             continue
-        if torch.norm(gaussian_params[i, 3:]) < scale_tril_norm_activation_threshold**2:
+        if (
+            torch.norm(gaussian_params[i, 3:])
+            < scale_tril_norm_activation_threshold**2
+        ):
             continue
         mean = gaussian_params[i, :3] + anchors[i]
         covariance = (

@@ -43,6 +43,7 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
+    visualize_CHOIR,
     visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
 )
@@ -759,30 +760,29 @@ class ContactPoseDataset(BaseDataset):
                             print(
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
-                            # visualize_CHOIR(
-                            # # choir.squeeze(0),
-                            # gt_choir.squeeze(0),
-                            # self._bps,
-                            # self._anchor_indices,
-                            # scalar,
-                            # gt_verts.squeeze(0),
-                            # gt_anchors.squeeze(0),
-                            # obj_mesh,
-                            # obj_ptcld,
-                            # gt_rescaled_ref_pts.squeeze(0),
-                            # affine_mano,
-                            # use_deltas=self._use_deltas,
-                            # )
+                            visualize_CHOIR(
+                                # choir.squeeze(0),
+                                gt_choir.squeeze(0),
+                                self._bps,
+                                self._anchor_indices,
+                                scalar,
+                                gt_verts.squeeze(0),
+                                gt_anchors.squeeze(0),
+                                obj_mesh,
+                                obj_ptcld,
+                                gt_rescaled_ref_pts.squeeze(0),
+                                affine_mano,
+                                use_deltas=self._use_deltas,
+                            )
                             faces = affine_mano.faces
-                            # gt_MANO_mesh = Trimesh(
-                            # gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
-                            # )
+                            gt_MANO_mesh = Trimesh(
+                                gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
+                            )
                             pred_MANO_mesh = Trimesh(
                                 verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
                             )
                             visualize_MANO(
-                                pred_MANO_mesh,
-                                obj_mesh=obj_mesh,  # , gt_hand=gt_MANO_mesh
+                                pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                             )
                             # visualize_CHOIR_prediction(
                             # gt_choir,
