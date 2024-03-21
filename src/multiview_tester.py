@@ -830,6 +830,7 @@ class MultiViewTester(MultiViewTrainer):
             n_observations,
             batch_idx,
             use_prior=True,
+            use_input=True,
         )
         # TODO: Refactor this mess! I can just return the right dict in _test_batch and get rid of
         # _test_iteration which is completely useless :/. There was a lot of bad code written in a
@@ -994,6 +995,7 @@ class MultiViewTester(MultiViewTrainer):
         samples: Dict,
         labels: Dict,
         mesh_pths: List[str],
+        viewed_meshes,
         n_observations: int,
         batch_idx: int,
     ):
@@ -1173,25 +1175,42 @@ class MultiViewTester(MultiViewTrainer):
             )
             if not os.path.exists(image_dir):
                 os.makedirs(image_dir)
-            viewed_meshes = []
-            pyvista_obj_meshes, hands_trimesh = {}, {}
-            for i, mesh_pth in enumerate(mesh_pths):
-                mesh_name = os.path.basename(mesh_pth)
-                if mesh_pth in hands_trimesh:
-                    pred_hand_mesh = hands_trimesh[mesh_pth]
-                else:
-                    pred_hand_mesh = trimesh.Trimesh(
+            for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
+                mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
+                if mesh_name not in viewed_meshes:
+                    viewed_meshes[mesh_name] = 0
+                if viewed_meshes[mesh_name] == 10:
+                    continue
+                print(
+                    colorize(
+                        f"- Rendering {mesh_name}", project_conf.ANSI_COLORS["cyan"]
+                    )
+                )
+            #pyvista_obj_meshes, hands_trimesh = {}, {}
+            #for i, mesh_pth in enumerate(mesh_pths):
+            #    mesh_name = os.path.basename(mesh_pth)
+            #    if mesh_pth in hands_trimesh:
+            #        pred_hand_mesh = hands_trimesh[mesh_pth]
+            #    else:
+            #        pred_hand_mesh = trimesh.Trimesh(
+            #            vertices=verts_pred[i].detach().cpu().numpy(),
+            #            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+            #        )
+            #        hands_trimesh[mesh_pth] = pred_hand_mesh
+            #    if mesh_pth in pyvista_obj_meshes:
+            #        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
+            #    else:
+            #        obj_mesh = self._object_cache[mesh_name]["mesh"]
+            #        obj_mesh_pv = pv.wrap(obj_mesh)
+            #        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
+                pred_hand_mesh = pv.wrap(
+                    trimesh.Trimesh(
                         vertices=verts_pred[i].detach().cpu().numpy(),
                         faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                     )
-                    hands_trimesh[mesh_pth] = pred_hand_mesh
-                if mesh_pth in pyvista_obj_meshes:
-                    obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
-                else:
-                    obj_mesh = self._object_cache[mesh_name]["mesh"]
-                    obj_mesh_pv = pv.wrap(obj_mesh)
-                    pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
-
+                )
+                obj_mesh = pv.wrap(obj_mesh)
+                pv.start_xvfb()
                 grasp_key = (mesh_name, i)
                 if grasp_key not in plots:
                     pl = pv.Plotter(
@@ -1275,7 +1294,7 @@ class MultiViewTester(MultiViewTrainer):
                                 smooth_shading=True,
                             )
                     pl.add_mesh(
-                        obj_mesh_pv,
+                        obj_mesh,
                         opacity=1.0,
                         name="obj_mesh",
                         label="Object mesh",
@@ -1292,7 +1311,7 @@ class MultiViewTester(MultiViewTrainer):
                     smooth_shading=True,
                 )
                 pl.add_mesh(
-                    obj_mesh_pv,
+                    obj_mesh,
                     opacity=1.0,
                     name="obj_mesh",
                     label="Object mesh",
@@ -1326,9 +1345,9 @@ class MultiViewTester(MultiViewTrainer):
                         label="Predicted Contact Map",
                         smooth_shading=True,
                     )
-                viewed_meshes.append(mesh_name)
+                viewed_meshes[mesh_name] += 1
                 if self._model.single_modality != "object":
-                    pl.subplot(2, n)
+                    pl.subplot(2 if self._plot_contacts else 1, n)
                     # i corresponds to batch element
                     # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
                     input_hand_mesh = trimesh.Trimesh(
@@ -1347,7 +1366,7 @@ class MultiViewTester(MultiViewTrainer):
                         smooth_shading=True,
                     )
                     pl.add_mesh(
-                        obj_mesh_pv,
+                        obj_mesh,
                         opacity=1.0,
                         name="obj_mesh",
                         label="Object mesh",
@@ -1367,7 +1386,7 @@ class MultiViewTester(MultiViewTrainer):
         samples: Dict,
         labels: Dict,
         mesh_pths: List[str],
-        viewed_meshes: Dict,
+        viewed_meshes,
         n_observations: int,
         batch_idx: int,
     ):
@@ -1487,6 +1506,8 @@ class MultiViewTester(MultiViewTrainer):
                     batch_obj_data["points"],
                     batch_obj_data["normals"],
                 )
+            else:
+                contacts_pred = None
             cache_fitted = f"cache_fitted_{batch_idx}.pkl"
             if self._debug_tto and os.path.exists(cache_fitted):
                 with open(cache_fitted, "rb") as f:
@@ -1548,7 +1569,9 @@ class MultiViewTester(MultiViewTrainer):
                 os.makedirs(vid_dir)
             for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
                 mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
-                if viewed_meshes[mesh_name] == 8:
+                if mesh_name not in viewed_meshes:
+                    viewed_meshes[mesh_name] = 0
+                if viewed_meshes[mesh_name] == 5:
                     continue
                 print(
                     colorize(
@@ -1581,6 +1604,7 @@ class MultiViewTester(MultiViewTrainer):
                 pred_file_name = os.path.join(
                     vid_dir, f"{mesh_name}_{viewed_meshes[mesh_name]}.mp4"
                 )
+                pv.start_xvfb()
                 plotter = pv.Plotter(window_size=[800, 800], off_screen=True)
                 plotter.open_movie(pred_file_name)
                 plotter.set_background("white")
@@ -1669,7 +1693,7 @@ class MultiViewTester(MultiViewTrainer):
             samples, labels, mesh_pths = batch  # type: ignore
             if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
                 self._save_batch_predictions(
-                    samples, labels, mesh_pths, n_observations, i
+                    samples, labels, mesh_pths, viewed_meshes, n_observations, i
                 ) if not dump_videos else self._save_batch_videos(
                     samples, labels, mesh_pths, viewed_meshes, n_observations, i
                 )
