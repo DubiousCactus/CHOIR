@@ -529,6 +529,5 @@ class BaseDataset(TaskSet, abc.ABC):
                 np.array([a for a in gt_obj_pts])
             ).float()
         else:
-            label["obj_pts"] = None
-            pass  # Not implemented
+            label["obj_pts"] = torch.tensor(0.0)
         return sample, label, mesh_pths
