@@ -411,7 +411,9 @@ class BaseTrainer:
             {
                 **{
                     "model_ckpt": self._model.state_dict(),
-                    "ema_model_ckpt": self._ema.state_dict(),
+                    "ema_model_ckpt": self._ema.state_dict()
+                    if self._ema is not None
+                    else None,
                     "opt_ckpt": self._opt.state_dict(),
                     "scheduler_ckpt": self._scheduler.state_dict()
                     if self._scheduler is not None
