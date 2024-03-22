@@ -520,6 +520,6 @@ class BaseDataset(TaskSet, abc.ABC):
                 "beta": torch.from_numpy(np.array([a for a in gt_beta])),
                 "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
                 "trans": torch.from_numpy(np.array([a for a in gt_trans])),
-                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])),
+                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])).float(),
             }
         return sample, label, mesh_pths

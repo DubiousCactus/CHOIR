@@ -47,7 +47,7 @@ class VAE(nn.Module):
         z = torch.randn([batch_size, self.latent_size], device=c.device)
         recon_x = self.decoder(z, c)
 
-        return recon_x, z
+        return recon_x
 
 
 class Encoder(nn.Module):
