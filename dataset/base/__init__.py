@@ -438,13 +438,16 @@ class BaseDataset(TaskSet, abc.ABC):
                     success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
-            gt_obj_pts.append(
-                np.asarray(
-                    o3dio.read_triangle_mesh(mesh_pth)
-                    .sample_points_uniformly(3000)
-                    .points
+            if self._dataset_name == "contactpose":
+                gt_obj_pts.append(
+                    np.asarray(
+                        o3dio.read_triangle_mesh(mesh_pth)
+                        .sample_points_uniformly(3000)
+                        .points
+                    )
                 )
-            )
+            else:
+                pass
             theta.append(sample[4])
             beta.append(sample[5])
             rot_6d.append(sample[6])
@@ -500,7 +503,6 @@ class BaseDataset(TaskSet, abc.ABC):
                 "contact_gaussians": torch.from_numpy(
                     np.array([a for a in gt_contact_gaussians])
                 ),
-                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])),
             }
         else:
             # This will hopefully save a lot of memory and allow to bump up the batch size during
@@ -520,6 +522,13 @@ class BaseDataset(TaskSet, abc.ABC):
                 "beta": torch.from_numpy(np.array([a for a in gt_beta])),
                 "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
                 "trans": torch.from_numpy(np.array([a for a in gt_trans])),
-                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])).float(),
             }
+
+        if self._dataset_name == "contactpose":
+            label["obj_pts"] = torch.from_numpy(
+                np.array([a for a in gt_obj_pts])
+            ).float()
+        else:
+            label["obj_pts"] = None
+            pass  # Not implemented
         return sample, label, mesh_pths
