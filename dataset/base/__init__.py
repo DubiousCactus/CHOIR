@@ -27,6 +27,7 @@ import torch
 from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
 from hydra.utils import get_original_cwd
 from metabatch import TaskSet
+from open3d import io as o3dio
 
 
 class BaseDataset(TaskSet, abc.ABC):
@@ -389,7 +390,9 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_trans,
             gt_contact_gaussians,
             mesh_pths,
+            gt_obj_pts,
         ) = (
+            [],
             [],
             [],
             [],
@@ -435,6 +438,13 @@ class BaseDataset(TaskSet, abc.ABC):
                     success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
+            gt_obj_pts.append(
+                np.asarray(
+                    o3dio.read_triangle_mesh(mesh_pth)
+                    .sample_points_uniformly(3000)
+                    .points
+                )
+            )
             if self._eval_mode:
                 rescaled_ref_pts.append(sample[1])
                 scalar.append(sample[2])
@@ -490,6 +500,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 "contact_gaussians": torch.from_numpy(
                     np.array([a for a in gt_contact_gaussians])
                 ),
+                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])),
             }
         else:
             # This will hopefully save a lot of memory and allow to bump up the batch size during
