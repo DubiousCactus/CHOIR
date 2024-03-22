@@ -164,7 +164,14 @@ class GraspCVAELoss(torch.nn.Module):
             recon_xyz, hand_xyz, reduction="none"
         ).sum() / hand_xyz.size(0)
 
-        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / hand_xyz.size(0)
+        if mu is None or logvar is None:
+            KLD = torch.tensor(0.0).to(recon_xyz.device)
+        else:
+            KLD = (
+                -0.5
+                * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+                / hand_xyz.size(0)
+            )
         cvae_loss = recon_loss + KLD
         ho_loss = self.loss_cnet(
             recon_xyz,
