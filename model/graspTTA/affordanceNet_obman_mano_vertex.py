@@ -58,7 +58,7 @@ class affordanceNet(nn.Module):
             # inference
             recon = self.cvae.inference(B, obj_glb_feature)
             recon = recon.contiguous().view(B, self.mano_params_dim)
-            return recon
+            return recon, None, None, None
 
         recon, means, log_var, z = self.cvae(
             hand_glb_feature, obj_glb_feature
