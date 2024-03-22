@@ -13,13 +13,16 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 
+from model.affine_mano import AffineMANO
 from src.base_trainer import BaseTrainer
-from utils import to_cuda
+from utils import to_cuda, to_cuda_
 
 
 class GraspCVAETrainer(BaseTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # TODO: For now it's only for contactpose, later we may use OakInk as well.
+        self.affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
 
     @to_cuda
     def _visualize(
@@ -49,12 +52,36 @@ class GraspCVAETrainer(BaseTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        samples, labels, _ = batch
+        _, labels, _ = batch
         gt_hand_params = torch.cat(
-            (labels["theta"], labels["beta"], labels["rot"], labels["trans"]), dim=-1
+            (labels["theta"], labels["beta"], labels["trans"], labels["rot"]), dim=-1
+        )[:, -1]
+        recon_param, mean, log_var, z = self._model(
+            labels["obj_pts"][:, -1].permute(0, 2, 1), gt_hand_params
         )
-        recon_param, mean, log_var, z = self.model(labels["obj_pts"], gt_hand_params)
-        loss = torch.tensor(0.0)
-        losses = {}
-        raise NotImplementedError("Implement the training/validation iteration method.")
-        return loss, losses
+
+        # TODO: Implement for OakInk
+        recon_verts, _ = self.affine_mano(
+            recon_param[:, :18],
+            recon_param[:, 18:28],
+            recon_param[:, 28:31],
+            rot_6d=recon_param[:, 31:37],
+        )
+        gt_verts, _ = self.affine_mano(
+            labels["theta"][:, -1],
+            labels["beta"][:, -1],
+            labels["trans"][:, -1],
+            rot_6d=labels["rot"][:, -1],
+        )
+
+        loss, loss_items = self._training_loss(
+            recon_param,
+            gt_hand_params,
+            mean,
+            log_var,
+            recon_verts,
+            gt_verts,
+            self.affine_mano.faces.detach().unsqueeze(0).repeat(gt_verts.size(0), 1, 1),
+            labels["obj_pts"][:, -1],
+        )
+        return loss, loss_items

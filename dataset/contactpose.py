@@ -59,10 +59,10 @@ class ContactPoseDataset(BaseDataset):
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
 
     # ====== UDFs ======
-    gt_udf_mean = torch.tensor([0.4796, 0.3610])  # object distances, hand distances
-    gt_udf_std = torch.tensor([0.1489, 0.1299])  # object distances, hand distances
-    noisy_udf_mean = torch.tensor([0.4796, 0.3421])  # object distances, hand distances
-    noisy_udf_std = torch.tensor([0.1490, 0.1393])  # object distances, hand distances
+    gt_udf_mean = torch.tensor([0.7469, 0.5524])  # object distances, hand distances
+    gt_udf_std = torch.tensor([0.1128, 0.1270])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.7469, 0.4955])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1128, 0.1432])  # object distances, hand distances
 
     # ====== Keypoints ======
     gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
@@ -107,10 +107,10 @@ class ContactPoseDataset(BaseDataset):
     )
 
     contacts_min = torch.tensor(
-        [-0.0196, -0.0189, -0.0192, 0.0000, -0.0106, 0.0000, -0.0110, -0.0108, 0.0000]
+        [-0.0195, -0.0197, -0.0196, 0.0000, -0.0119, 0.0000, -0.0113, -0.0113, 0.0000]
     )
     contacts_max = torch.tensor(
-        [0.0196, 0.0193, 0.0200, 0.0133, 0.0113, 0.0118, 0.0105, 0.0110, 0.0110]
+        [0.0195, 0.0195, 0.0194, 0.0129, 0.0108, 0.0129, 0.0112, 0.0105, 0.0117]
     )
 
     def __init__(
@@ -254,7 +254,7 @@ class ContactPoseDataset(BaseDataset):
             or self._eval_anchor_assignment
         )
         cp_dataset = {} if not participant_splits else []
-        n_participants = 2 if tiny else 51
+        n_participants = 5 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(

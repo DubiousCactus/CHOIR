@@ -445,14 +445,18 @@ class BaseDataset(TaskSet, abc.ABC):
                     .points
                 )
             )
+            theta.append(sample[4])
+            beta.append(sample[5])
+            rot_6d.append(sample[6])
+            trans.append(sample[7])
+            gt_theta.append(label[5])
+            gt_beta.append(label[6])
+            gt_rot_6d.append(label[7])
+            gt_trans.append(label[8])
             if self._eval_mode:
                 rescaled_ref_pts.append(sample[1])
                 scalar.append(sample[2])
                 hand_idx.append(sample[3])
-                theta.append(sample[4])
-                beta.append(sample[5])
-                rot_6d.append(sample[6])
-                trans.append(sample[7])
                 if len(sample) > 8:
                     # To avoid recomputing the dataset for experiments that don't need sample
                     # joints/anchors
@@ -462,10 +466,6 @@ class BaseDataset(TaskSet, abc.ABC):
                 gt_scalar.append(label[2])
                 gt_joints.append(label[3])
                 gt_anchors.append(label[4])
-                gt_theta.append(label[5])
-                gt_beta.append(label[6])
-                gt_rot_6d.append(label[7])
-                gt_trans.append(label[8])
                 gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
                 mesh_pths.append(mesh_pth)
 
@@ -505,6 +505,21 @@ class BaseDataset(TaskSet, abc.ABC):
         else:
             # This will hopefully save a lot of memory and allow to bump up the batch size during
             # training :) :)
-            sample = {"choir": torch.from_numpy(np.array([a for a in choir]))}
-            label = {"choir": torch.from_numpy(np.array([a for a in gt_choir]))}
+            # In retrospect: it didn't. The whole project has mutated several times into its final
+            # ugly form.
+            sample = {
+                "choir": torch.from_numpy(np.array([a for a in choir])),
+                "theta": torch.from_numpy(np.array([a for a in theta])),
+                "beta": torch.from_numpy(np.array([a for a in beta])),
+                "rot": torch.from_numpy(np.array([a for a in rot_6d])),
+                "trans": torch.from_numpy(np.array([a for a in trans])),
+            }
+            label = {
+                "choir": torch.from_numpy(np.array([a for a in gt_choir])),
+                "theta": torch.from_numpy(np.array([a for a in gt_theta])),
+                "beta": torch.from_numpy(np.array([a for a in gt_beta])),
+                "rot": torch.from_numpy(np.array([a for a in gt_rot_6d])),
+                "trans": torch.from_numpy(np.array([a for a in gt_trans])),
+                "obj_pts": torch.from_numpy(np.array([a for a in gt_obj_pts])),
+            }
         return sample, label, mesh_pths

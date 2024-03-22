@@ -46,6 +46,7 @@ from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.grasptta_graspcvae_trainer import GraspCVAETrainer
 from src.losses.diffusion import DDPMLoss
+from src.losses.graspTTA import GraspCVAELoss
 from src.losses.hoi import CHOIRLoss
 from src.multiview_ddpm_baseline_tester import MultiViewDDPMBaselineTester
 from src.multiview_ddpm_baseline_trainer import MultiViewDDPMBaselineTrainer
@@ -346,6 +347,13 @@ training_loss_store(
     name="diffusion",
 )
 
+training_loss_store(
+    pbuilds(
+        GraspCVAELoss,
+        hand_weights_path="src/losses/rhand_weights.npy",
+    ),
+    name="grasp_tta_cvae",
+)
 " ================== Optimizer ================== "
 
 
@@ -1215,6 +1223,7 @@ experiment_store(
             {"override /trainer": "grasp_tta_cvae"},
             {"override /tester": "multiview"},  # TODO
             {"override /dataset": "contactpose"},
+            {"override /training_loss": "grasp_tta_cvae"},
         ],
         dataset=dict(
             perturbation_level=2,
@@ -1223,7 +1232,6 @@ experiment_store(
             augment=False,
         ),
         model=dict(mano_params_dim=37),
-        training_loss=dict(multi_view=True),
         data_loader=dict(batch_size=128),
         bases=(Experiment,),
     ),
