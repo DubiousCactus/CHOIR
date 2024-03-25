@@ -438,7 +438,7 @@ class BaseDataset(TaskSet, abc.ABC):
                     success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
-            if self._dataset_name == "contactpose":
+            if self._dataset_name.lower() == "contactpose":
                 gt_obj_pts.append(
                     np.asarray(
                         o3dio.read_triangle_mesh(mesh_pth)
@@ -524,7 +524,7 @@ class BaseDataset(TaskSet, abc.ABC):
                 "trans": torch.from_numpy(np.array([a for a in gt_trans])),
             }
 
-        if self._dataset_name == "contactpose":
+        if self._dataset_name.lower() == "contactpose":
             label["obj_pts"] = torch.from_numpy(
                 np.array([a for a in gt_obj_pts])
             ).float()

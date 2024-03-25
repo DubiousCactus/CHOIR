@@ -22,3 +22,6 @@
 [submodule "vendor/GraspTTA"]
 	path = vendor/GraspTTA
 	url = https://github.com/hwjiang1510/GraspTTA
+[submodule "vendor/emd"]
+	path = vendor/emd
+	url = https://github.com/vinits5/emd

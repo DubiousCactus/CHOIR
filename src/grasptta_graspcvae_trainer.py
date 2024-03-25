@@ -56,8 +56,16 @@ class GraspCVAETrainer(BaseTrainer):
         gt_hand_params = torch.cat(
             (labels["theta"], labels["beta"], labels["trans"], labels["rot"]), dim=-1
         )[:, -1]
+
+        gt_verts, _ = self.affine_mano(
+            labels["theta"][:, -1],
+            labels["beta"][:, -1],
+            labels["trans"][:, -1],
+            rot_6d=labels["rot"][:, -1],
+        )
+
         recon_param, mean, log_var, z = self._model(
-            labels["obj_pts"][:, -1].permute(0, 2, 1), gt_hand_params
+            labels["obj_pts"][:, -1].permute(0, 2, 1), gt_verts.permute(0, 2, 1)
         )
 
         # TODO: Implement for OakInk
@@ -66,12 +74,6 @@ class GraspCVAETrainer(BaseTrainer):
             recon_param[:, 18:28],
             recon_param[:, 28:31],
             rot_6d=recon_param[:, 31:37],
-        )
-        gt_verts, _ = self.affine_mano(
-            labels["theta"][:, -1],
-            labels["beta"][:, -1],
-            labels["trans"][:, -1],
-            rot_6d=labels["rot"][:, -1],
         )
 
         loss, loss_items = self._training_loss(
