@@ -85,5 +85,7 @@ class GraspCVAETrainer(BaseTrainer):
             gt_verts,
             self.affine_mano.faces.detach().unsqueeze(0).repeat(gt_verts.size(0), 1, 1),
             labels["obj_pts"][:, -1],
+            epoch,
+            training_mode=not validation
         )
         return loss, loss_items

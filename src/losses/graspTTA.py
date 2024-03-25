@@ -13,7 +13,7 @@ GraspTTA losses.
 import chamfer_distance as chd
 import numpy as np
 import torch
-from emd import earth_mover_distance
+import importlib
 from pytorch3d.loss import chamfer_distance
 from pytorch3d.ops.knn import knn_points
 from pytorch3d.structures import Meshes
@@ -91,6 +91,7 @@ class GraspCVAELoss(torch.nn.Module):
         hand_weights_path: str = "rhand_weights.npy",
     ):
         super().__init__()
+        self.emd_module = importlib.import_module("vendor.MSN-Point-Cloud-Completion.emd.emd_module")
         self.a = a
         self.b = b
         self.c = c
@@ -238,11 +239,14 @@ class GraspCVAELoss(torch.nn.Module):
                 recon_x, x, point_reduction="sum", batch_reduction="mean"
             )
         elif loss_tpye == "EMD":
-            recon_loss = earth_mover_distance(
-                recon_x, x, transpose=False
-            ).sum() / x.size(0)
+            emd = self.emd_module.emdModule()
+            #recon_loss = earth_mover_distance(
+            #    recon_x, x, transpose=False
+            #).sum() / x.size(0)
+            dist, _ = emd(recon_x, x, 0.002, 1000) # Defaults from the package
+            recon_loss = dist.sum() / x.size(0)
         if mode != "train":
-            return recon_loss
+            return torch.tensor(0.0), recon_loss, torch.tensor(0.0)
         # KLD loss
         KLD = (
             -0.5
@@ -506,7 +510,29 @@ class GraspCVAELoss(torch.nn.Module):
         ).sum() / recon_dists.size(0)
         return consistency
 
-    def inter_penetr_loss(hand_xyz, hand_face, obj_xyz, nn_dist, nn_idx):
+    def CMap_consistency_loss(self, obj_xyz, recon_hand_xyz, gt_hand_xyz, recon_dists, gt_dists):
+       '''
+       :param recon_hand_xyz: [B, N2, 3]
+       :param gt_hand_xyz: [B, N2, 3]
+       :param obj_xyz: [B, N1, 3]
+       :return:
+       '''
+       # if not recon_dists or not gt_dists:
+       #     recon_dists, _ = utils_loss.get_NN(obj_xyz, recon_hand_xyz)  # [B, N1]
+       #     gt_dists, _ = utils_loss.get_NN(obj_xyz, gt_hand_xyz)  # [B, N1]
+       recon_dists = torch.sqrt(recon_dists)
+       gt_dists = torch.sqrt(gt_dists)
+       # hard cmap
+       recon_cmap = recon_dists < 0.005
+       gt_cmap = gt_dists < 0.005
+       gt_cpoint_num = gt_cmap.sum() + 0.0001
+       consistency = (recon_cmap * gt_cmap).sum() / gt_cpoint_num
+       # soft cmap
+       #consistency2 = torch.nn.functional.mse_loss(recon_dists, gt_dists, reduction='none').sum() / recon_dists.size(0)
+       return -5.0 * consistency #+ consistency2
+
+
+    def inter_penetr_loss(self, hand_xyz, hand_face, obj_xyz, nn_dist, nn_idx):
         """
         get penetrate object xyz and the distance to its NN
         :param hand_xyz: [B, 778, 3]
@@ -526,54 +552,62 @@ class GraspCVAELoss(torch.nn.Module):
         penetr_dist = nn_dist[interior].sum() / B  # batch reduction
         return 100.0 * penetr_dist
 
-    def forward(self, recon_x, x, mu, logvar, recon_xyz, hand_xyz, hand_faces, obj_pts):
+    def forward(self, recon_x, x, mu, logvar, recon_xyz, hand_xyz, hand_faces, obj_pts, epoch: int, training_mode=True):
         # L2 MANO params loss
         param_loss = torch.nn.functional.mse_loss(
             recon_x, x, reduction="none"
         ).sum() / recon_x.size(0)
 
         cvae_loss, recon_loss, kld_loss = self.CVAE_loss_mano(
-            recon_xyz, hand_xyz, mu, logvar, "CD", "train"
+            recon_xyz, hand_xyz, mu, logvar, "CD", "train" if training_mode else "eval"
         )
 
-        # obj xyz NN dist and idx
-        obj_nn_dist_gt, obj_nn_idx_gt = get_NN(obj_pts.permute(0, 2, 1), hand_xyz)
-        obj_nn_dist_recon, obj_nn_idx_recon = get_NN(
-            obj_pts.permute(0, 2, 1), recon_xyz
-        )
+        if training_mode:
+            # obj xyz NN dist and idx
+            obj_nn_dist_gt, obj_nn_idx_gt = get_NN(obj_pts, hand_xyz)
+            obj_nn_dist_recon, obj_nn_idx_recon = get_NN(
+                obj_pts, recon_xyz
+            )
 
-        cmap_loss = self.CMap_loss3(
-            obj_pts.permute(0, 2, 1), recon_xyz, obj_nn_dist_recon < 0.01**2
-        )
-        # cmap consistency loss
-        consistency_loss = self.CMap_consistency_loss(
-            obj_pts.permute(0, 2, 1),
-            recon_xyz,
-            hand_xyz,
-            obj_nn_dist_recon,
-            obj_nn_dist_gt,
-        )
-        # inter penetration loss
-        penetr_loss = self.inter_penetr_loss(
-            recon_xyz,
-            hand_faces,
-            obj_pts.permute(0, 2, 1),
-            obj_nn_dist_recon,
-            obj_nn_idx_recon,
-        )
+            cmap_loss = self.CMap_loss3(
+                obj_pts, recon_xyz, obj_nn_dist_recon < 0.01**2
+            )
+            # cmap consistency loss
+            consistency_loss = self.CMap_consistency_loss(
+                obj_pts,
+                recon_xyz,
+                hand_xyz,
+                obj_nn_dist_recon,
+                obj_nn_dist_gt,
+            )
+            # inter penetration loss
+            penetr_loss = self.inter_penetr_loss(
+                recon_xyz,
+                hand_faces,
+                obj_pts,
+                obj_nn_dist_recon,
+                obj_nn_idx_recon,
+            )
 
-        loss = (
-            self.a * cvae_loss
-            + self.b * param_loss
-            + self.c * cmap_loss
-            + self.d * penetr_loss
-            + self.e * consistency_loss
-        )
-        return loss, {
-            "param_loss": param_loss,
-            "recon_loss": recon_loss,
-            "KLD_loss": kld_loss,
-            "cam_loss": cmap_loss,
-            "penetr_loss": penetr_loss,
-            "consistency_loss": consistency_loss,
-        }
+            loss = (
+                self.a * cvae_loss
+                + self.b * param_loss
+                + self.d * penetr_loss
+                + self.e * consistency_loss
+            )
+            if epoch >= 5:
+                loss += self.c * cmap_loss
+            return loss, {
+                "param_loss": param_loss,
+                "recon_loss": recon_loss,
+                "KLD_loss": kld_loss,
+                "cam_loss": cmap_loss,
+                "penetr_loss": penetr_loss,
+                "consistency_loss": consistency_loss,
+            }
+        else:
+            loss = param_loss + recon_loss
+            return loss, {
+                        "param_loss": param_loss,
+                        "recon_loss": recon_loss,
+                    }
