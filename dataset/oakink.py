@@ -55,10 +55,10 @@ class OakInkDataset(BaseDataset):
     base_unit = 1000.0  # The dataset is in meters, we want to work in mm.
 
     # ====== UDFs ======
-    gt_udf_mean = torch.tensor([0.4945, 0.3616])  # object distances, hand distances
-    gt_udf_std = torch.tensor([0.1532, 0.1297])  # object distances, hand distances
-    noisy_udf_mean = torch.tensor([0.4945, 0.3409])  # object distances, hand distances
-    noisy_udf_std = torch.tensor([0.1532, 0.1399])  # object distances, hand distances
+    gt_udf_mean = torch.tensor([0.7684, 0.5530])  # object distances, hand distances
+    gt_udf_std = torch.tensor([0.1136, 0.1258])  # object distances, hand distances
+    noisy_udf_mean = torch.tensor([0.7684, 0.4961])  # object distances, hand distances
+    noisy_udf_std = torch.tensor([0.1136, 0.1424])  # object distances, hand distances
 
     # ====== Keypoints ======
     gt_kp_obj_mean, gt_kp_hand_mean = torch.tensor(
@@ -103,10 +103,10 @@ class OakInkDataset(BaseDataset):
     )
 
     contacts_min = torch.tensor(
-        [-0.0099, -0.0100, -0.0100, 0.0000, -0.0145, 0.0000, -0.0147, -0.0130, 0.0000]
+        [-0.0099, -0.0099, -0.0099, 0.0000, -0.0145, 0.0000, -0.0141, -0.0147, 0.0000]
     )
     contacts_max = torch.tensor(
-        [0.0100, 0.0100, 0.0100, 0.0157, 0.0147, 0.0147, 0.0145, 0.0126, 0.0135]
+        [0.0101, 0.0101, 0.0101, 0.0185, 0.0144, 0.0170, 0.0138, 0.0161, 0.0144]
     )
 
     def __init__(
