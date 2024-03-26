@@ -62,7 +62,7 @@ class ContactNetTrainer(BaseTrainer):
         )
 
         obj_pts = labels["obj_pts"][:, -1].permute(0, 2, 1)
-        obj_contacts = labels["obj_contacts"][:, -1]
+        obj_contacts = labels["obj_contacts"][:, -1].squeeze(dim=-1)
 
         recon_cmap = self._model(obj_pts, gt_verts.permute(0, 2, 1))
         # but why not use MSE mean reduction directly???? I'm just copying the code from the original implementation.

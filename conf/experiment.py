@@ -1271,7 +1271,7 @@ experiment_store(
             use_improved_contactopt_splits=True,
             augment=False,
         ),
-        data_loader=dict(batch_size=128),
+        data_loader=dict(batch_size=64),
         bases=(Experiment,),
     ),
     name="grasp_tta_contactnet_contactpose",
