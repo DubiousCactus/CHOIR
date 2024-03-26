@@ -40,10 +40,12 @@ from model.diffusion_model import (
     KPDiffusionModel,
 )
 from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
+from model.graspTTA.ContactNet import pointnet_reg
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
+from src.grasptta_contactnet_trainer import ContactNetTrainer
 from src.grasptta_graspcvae_trainer import GraspCVAETrainer
 from src.losses.diffusion import DDPMLoss
 from src.losses.graspTTA import GraspCVAELoss
@@ -304,6 +306,16 @@ model_store(
     name="grasp_tta_cvae",
 )
 
+model_store(
+    pbuilds(
+        pointnet_reg,
+        num_class=1,
+        with_rgb=False,
+        n_pts=3000,
+    ),
+    name="grasp_tta_contactnet",
+)
+
 " ================== Losses ================== "
 
 
@@ -467,6 +479,10 @@ trainer_store(
 trainer_store(
     pbuilds(GraspCVAETrainer, populate_full_signature=True),
     name="grasp_tta_cvae",
+)
+trainer_store(
+    pbuilds(ContactNetTrainer, populate_full_signature=True),
+    name="grasp_tta_contactnet",
 )
 
 tester_store = store(group="tester")
@@ -1236,4 +1252,27 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="grasp_tta_cvae_contactpose",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "grasp_tta_contactnet"},
+            {"override /trainer": "grasp_tta_contactnet"},
+            {"override /tester": "multiview"},  # TODO
+            {"override /dataset": "contactpose"},
+            {"override /training_loss": "grasp_tta_cvae"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_improved_contactopt_splits=True,
+            augment=False,
+        ),
+        data_loader=dict(batch_size=128),
+        bases=(Experiment,),
+    ),
+    name="grasp_tta_contactnet_contactpose",
 )

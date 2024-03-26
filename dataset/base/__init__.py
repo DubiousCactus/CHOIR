@@ -29,6 +29,8 @@ from hydra.utils import get_original_cwd
 from metabatch import TaskSet
 from open3d import io as o3dio
 
+from utils.testing import fit_sigmoid
+
 
 class BaseDataset(TaskSet, abc.ABC):
     def __init__(
@@ -391,7 +393,9 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_contact_gaussians,
             mesh_pths,
             gt_obj_pts,
+            gt_obj_contacts,
         ) = (
+            [],
             [],
             [],
             [],
@@ -439,13 +443,14 @@ class BaseDataset(TaskSet, abc.ABC):
             choir.append(sample[0])
             gt_choir.append(label[0])
             if self._dataset_name.lower() == "contactpose":
-                gt_obj_pts.append(
-                    np.asarray(
-                        o3dio.read_triangle_mesh(mesh_pth)
-                        .sample_points_uniformly(3000)
-                        .points
+                mesh = o3dio.read_triangle_mesh(mesh_pth)
+                gt_obj_pts.append(np.asarray(mesh.sample_points_uniformly(3000).points))
+                vertex_colors = np.array(mesh.vertex_colors, dtype=np.float32)
+                gt_obj_contacts.append(
+                    torch.from_numpy(
+                        np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
                     )
-                )
+                )  # Normalize with sigmoid, shape (V, 1)
             else:
                 pass
             theta.append(sample[4])
@@ -528,6 +533,11 @@ class BaseDataset(TaskSet, abc.ABC):
             label["obj_pts"] = torch.from_numpy(
                 np.array([a for a in gt_obj_pts])
             ).float()
+            label["obj_contacts"] = torch.from_numpy(
+                np.array([a for a in gt_obj_contacts])
+            ).float()
+
         else:
             label["obj_pts"] = torch.tensor(0.0)
+            label["obj_contacts"] = torch.tensor(0.0)
         return sample, label, mesh_pths
