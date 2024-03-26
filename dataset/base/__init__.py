@@ -444,15 +444,19 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_choir.append(label[0])
             if self._dataset_name.lower() == "contactpose":
                 mesh = o3dio.read_triangle_mesh(mesh_pth)
-                gt_obj_pts.append(np.asarray(mesh.sample_points_uniformly(3000).points))
+                obj_pts = np.asarray(mesh.sample_points_uniformly(3000).points)
+                gt_obj_pts.append(obj_pts)
                 vertex_colors = np.array(mesh.vertex_colors, dtype=np.float32)
-                gt_obj_contacts.append(
-                    torch.from_numpy(
-                        np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
-                    )
-                )  # Normalize with sigmoid, shape (V, 1)
-            else:
-                pass
+                obj_contacts = np.zeros((obj_pts.shape[0], 1))
+                # assign contact value using nearest neighbor search with vertex colors:
+                dists = torch.cdist(
+                    torch.from_numpy(obj_pts), torch.from_numpy(mesh.vertices)
+                )
+                nearest_vcolors = vertex_colors[dists.argmin(dim=-1)]
+                obj_contacts = np.expand_dims(
+                    fit_sigmoid(nearest_vcolors[:, 0]), axis=1
+                )
+                gt_obj_contacts.append(obj_contacts)
             theta.append(sample[4])
             beta.append(sample[5])
             rot_6d.append(sample[6])
