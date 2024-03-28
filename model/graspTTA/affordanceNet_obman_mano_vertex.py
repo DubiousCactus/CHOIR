@@ -13,6 +13,7 @@ class affordanceNet(nn.Module):
         cvae_latent_size=64,
         cvae_decoder_sizes=[1024, 256, 37],
         cvae_condition_size=1024,
+        **kwargs,
     ):
         super(affordanceNet, self).__init__()
 
@@ -60,9 +61,9 @@ class affordanceNet(nn.Module):
             recon = recon.contiguous().view(B, self.mano_params_dim)
             return recon, None, None, None
 
-    def inference(self, obj_pc):
-        B = obj_pc.size(0)
-        obj_glb_feature, _, _ = self.obj_encoder(obj_pc)
-        recon, z = self.cvae.inference(B, obj_glb_feature)
-        recon = recon.contiguous().view(B, self.mano_params_dim)
-        return recon
+    # def inference(self, obj_pc):
+    # B = obj_pc.size(0)
+    # obj_glb_feature, _, _ = self.obj_encoder(obj_pc)
+    # recon, z = self.cvae.inference(B, obj_glb_feature)
+    # recon = recon.contiguous().view(B, self.mano_params_dim)
+    # return recon

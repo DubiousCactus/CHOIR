@@ -14,8 +14,8 @@ transforming it may be extended through class inheritance in a specific dataset 
 
 
 import abc
-import itertools
 import functools
+import itertools
 import os
 import os.path as osp
 import pickle
@@ -41,13 +41,13 @@ def sample_obj_mesh(mesh_pth: str) -> Tuple[torch.Tensor, torch.Tensor]:
     obj_contacts = np.zeros((obj_pts.shape[0], 1))
     # assign contact value using nearest neighbor search with vertex colors:
     dists = torch.cdist(
-        torch.from_numpy(obj_pts), torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32))
+        torch.from_numpy(obj_pts),
+        torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32)),
     )
     nearest_vcolors = vertex_colors[dists.argmin(dim=-1)]
-    obj_contacts = np.expand_dims(
-        fit_sigmoid(nearest_vcolors[:, 0]), axis=1
-    )
+    obj_contacts = np.expand_dims(fit_sigmoid(nearest_vcolors[:, 0]), axis=1)
     return obj_pts, obj_contacts
+
 
 class BaseDataset(TaskSet, abc.ABC):
     def __init__(
@@ -74,6 +74,7 @@ class BaseDataset(TaskSet, abc.ABC):
         dataset_name: str,
         use_deltas: bool,
         use_bps_grid: bool,
+        compute_pointclouds: bool = False,  # For GraspTTA, set to True
         noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
         # For GRAB, noisy_samples_per_grasp is actually the number of frames in the sequence. At
@@ -101,6 +102,7 @@ class BaseDataset(TaskSet, abc.ABC):
             predict_full_target=False,
             predict_full_target_during_eval=False,
         )
+        self._compute_pointclouds = compute_pointclouds
         self._mm_unit = 1.0
         self._split = split
         self._validation_objects = validation_objects
@@ -459,10 +461,16 @@ class BaseDataset(TaskSet, abc.ABC):
                     success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
-            if self._dataset_name.lower() == "contactpose":
+            if (
+                self._dataset_name.lower() == "contactpose"
+                and self._compute_pointclouds
+            ):
                 obj_pts, obj_contacts = sample_obj_mesh(mesh_pth)
                 gt_obj_pts.append(obj_pts)
                 gt_obj_contacts.append(obj_contacts)
+            elif self._dataset_name.lower() == "contactpose":
+                gt_obj_pts.append(np.zeros(1))
+                gt_obj_contacts.append(np.zeros(1))
             theta.append(sample[4])
             beta.append(sample[5])
             rot_6d.append(sample[6])
