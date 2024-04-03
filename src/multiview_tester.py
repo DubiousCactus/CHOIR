@@ -568,6 +568,21 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data,
                         )
 
+                elif self._is_grasptta:
+                    verts_pred, joints_pred, anchors_pred = (
+                        y_hat["verts"],
+                        y_hat["joints"],
+                        y_hat["anchors"],
+                    )
+                    eval_metrics["GraspTTA"] = self._compute_eval_metrics(
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                        gt_anchors,
+                        gt_verts,
+                        gt_joints,
+                        batch_obj_data,
+                    )
                 else:
                     sample_to_viz = 3
                     contacts_pred, obj_points, obj_normals = (
@@ -1186,23 +1201,23 @@ class MultiViewTester(MultiViewTrainer):
                         f"- Rendering {mesh_name}", project_conf.ANSI_COLORS["cyan"]
                     )
                 )
-            #pyvista_obj_meshes, hands_trimesh = {}, {}
-            #for i, mesh_pth in enumerate(mesh_pths):
-            #    mesh_name = os.path.basename(mesh_pth)
-            #    if mesh_pth in hands_trimesh:
-            #        pred_hand_mesh = hands_trimesh[mesh_pth]
-            #    else:
-            #        pred_hand_mesh = trimesh.Trimesh(
-            #            vertices=verts_pred[i].detach().cpu().numpy(),
-            #            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-            #        )
-            #        hands_trimesh[mesh_pth] = pred_hand_mesh
-            #    if mesh_pth in pyvista_obj_meshes:
-            #        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
-            #    else:
-            #        obj_mesh = self._object_cache[mesh_name]["mesh"]
-            #        obj_mesh_pv = pv.wrap(obj_mesh)
-            #        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
+                # pyvista_obj_meshes, hands_trimesh = {}, {}
+                # for i, mesh_pth in enumerate(mesh_pths):
+                #    mesh_name = os.path.basename(mesh_pth)
+                #    if mesh_pth in hands_trimesh:
+                #        pred_hand_mesh = hands_trimesh[mesh_pth]
+                #    else:
+                #        pred_hand_mesh = trimesh.Trimesh(
+                #            vertices=verts_pred[i].detach().cpu().numpy(),
+                #            faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                #        )
+                #        hands_trimesh[mesh_pth] = pred_hand_mesh
+                #    if mesh_pth in pyvista_obj_meshes:
+                #        obj_mesh_pv = pyvista_obj_meshes[mesh_pth]
+                #    else:
+                #        obj_mesh = self._object_cache[mesh_name]["mesh"]
+                #        obj_mesh_pv = pv.wrap(obj_mesh)
+                #        pyvista_obj_meshes[mesh_pth] = obj_mesh_pv
                 pred_hand_mesh = pv.wrap(
                     trimesh.Trimesh(
                         vertices=verts_pred[i].detach().cpu().numpy(),

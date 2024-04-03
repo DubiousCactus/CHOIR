@@ -10,13 +10,25 @@ GraspTTA losses.
 """
 
 
+import importlib
+
 import chamfer_distance as chd
 import numpy as np
 import torch
-import importlib
 from pytorch3d.loss import chamfer_distance
 from pytorch3d.ops.knn import knn_points
 from pytorch3d.structures import Meshes
+
+
+def get_pseudo_cmap(nn_dists):
+    """
+    calculate pseudo contactmap: 0~3cm mapped into value 1~0
+    :param nn_dists: object nn distance [B, N] or [N,] in meter**2
+    :return: pseudo contactmap [B,N] or [N,] range in [0,1]
+    """
+    nn_dists = 100.0 * torch.sqrt(nn_dists)  # turn into center-meter
+    cmap = 1.0 - 2 * (torch.sigmoid(nn_dists * 2) - 0.5)
+    return cmap
 
 
 def batched_index_select(input, index, dim=1):
@@ -80,6 +92,61 @@ def get_NN(src_xyz, trg_xyz, k=1):
     return nn_dists, nn_idx
 
 
+def contact_loss(obj_xyz, hand_xyz, cmap):
+    """
+    # prior cmap loss on gt cmap
+    :param obj_xyz: [B, N1, 3]
+    :param hand_xyz: [B, N2, 3]
+    :param cmap: [B, N1] for contact map from NN dist thresholding
+    :param hand_faces_index: [B, 1538, 3] hand index in [0,N2] for 3 vertices in a face
+    :return:
+    """
+
+    # finger_vertices = [309, 317, 318, 319, 320, 322, 323, 324, 325,
+    #                    326, 327, 328, 329, 332, 333, 337, 338, 339, 343, 347, 348, 349,
+    #                    350, 351, 352, 353, 354, 355,  # 2nd finger
+    #                    429, 433, 434, 435, 436, 437, 438, 439, 442, 443, 444, 455, 461, 462, 463, 465, 466,
+    #                    467,  # 3rd
+    #                    547, 548, 549, 550, 553, 566, 573, 578,  # 4th
+    #                    657, 661, 662, 664, 665, 666, 667, 670, 671, 672, 677, 678, 683, 686, 687, 688, 689, 690, 691,
+    #                    692, 693, 694, 695,  # 5th
+    #                    736, 737, 738, 739, 740, 741, 743, 753, 754, 755, 756, 757, 759, 760, 761, 762, 763, 764, 766,
+    #                    767, 768,  # 1st
+    #                    73, 96, 98, 99, 772, 774, 775, 777]  # hand
+    f1 = [ 697, 698, 699, 700, 712, 713, 714, 715, 737, 738, 739, 740, 741, 743, 744, 745, 746,
+          748, 749, 750, 753, 754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767,
+          768, ]  # fmt: skip
+    f2 = [ 46, 47, 48, 49, 164, 165, 166, 167, 194, 195, 223, 237, 238, 280, 281, 298, 301, 317,
+          320, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 340, 341, 342, 343, 344, 345,
+          346, 347, 348, 349, 350, 351, 352, 353, 354, 355, ]  # fmt: skip
+    f3 = [ 356, 357, 358, 359, 375, 376, 386, 387, 396, 397, 402, 403, 413, 429, 433, 434, 435,
+          436, 437, 438, 439, 440, 441, 442, 443, 444, 452, 453, 454, 455, 456, 459, 460, 461, 462,
+          463, 464, 465, 466, 467, ]  # fmt: skip
+    f4 = [ 468, 469, 470, 471, 484, 485, 486, 496, 497, 506, 507, 513, 514, 524, 545, 546, 547,
+          548, 549, 550, 551, 552, 553, 555, 563, 564, 565, 566, 567, 570, 572, 573, 574, 575, 576,
+          577, 578, ]  # fmt: skip
+    f5 = [ 580, 581, 582, 583, 600, 601, 602, 614, 615, 624, 625, 630, 631, 641, 663, 664, 665,
+          666, 667, 668, 670, 672, 680, 681, 682, 683, 684, 686, 687, 688, 689, 690, 691, 692, 693,
+          694, 695, ]  # fmt: skip
+    f0 = [73, 96, 98, 99, 772, 774, 775, 777]  # fmt: skip
+    prior_idx = f1 + f2 + f3 + f4 + f5 + f0
+    hand_xyz_prior = hand_xyz[
+        :, prior_idx, :
+    ]  # only using prior points for contact map
+
+    B = obj_xyz.size(0)
+
+    obj_CD, _ = get_NN(
+        obj_xyz, hand_xyz_prior
+    )  # [B, N1] NN distance from obj pc to hand pc
+
+    # compute contact map loss
+    n_points = torch.sum(cmap)
+    cmap_loss = obj_CD[cmap].sum() / (B * n_points)
+
+    return 3000.0 * cmap_loss
+
+
 class GraspCVAELoss(torch.nn.Module):
     def __init__(
         self,
@@ -91,7 +158,9 @@ class GraspCVAELoss(torch.nn.Module):
         hand_weights_path: str = "rhand_weights.npy",
     ):
         super().__init__()
-        self.emd_module = importlib.import_module("vendor.MSN-Point-Cloud-Completion.emd.emd_module")
+        self.emd_module = importlib.import_module(
+            "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
+        )
         self.a = a
         self.b = b
         self.c = c
@@ -240,10 +309,10 @@ class GraspCVAELoss(torch.nn.Module):
             )
         elif loss_tpye == "EMD":
             emd = self.emd_module.emdModule()
-            #recon_loss = earth_mover_distance(
+            # recon_loss = earth_mover_distance(
             #    recon_x, x, transpose=False
-            #).sum() / x.size(0)
-            dist, _ = emd(recon_x, x, 0.002, 1000) # Defaults from the package
+            # ).sum() / x.size(0)
+            dist, _ = emd(recon_x, x, 0.002, 1000)  # Defaults from the package
             recon_loss = dist.sum() / x.size(0)
         if mode != "train":
             return torch.tensor(0.0), recon_loss, torch.tensor(0.0)
@@ -257,251 +326,6 @@ class GraspCVAELoss(torch.nn.Module):
         if mode == "train":
             return recon_loss + KLD, recon_loss, KLD
 
-    def CMap_loss3(self, obj_xyz, hand_xyz, cmap):
-        """
-        # prior cmap loss on gt cmap
-        :param obj_xyz: [B, N1, 3]
-        :param hand_xyz: [B, N2, 3]
-        :param cmap: [B, N1] for contact map from NN dist thresholding
-        :param hand_faces_index: [B, 1538, 3] hand index in [0,N2] for 3 vertices in a face
-        :return:
-        """
-
-        # finger_vertices = [309, 317, 318, 319, 320, 322, 323, 324, 325,
-        #                    326, 327, 328, 329, 332, 333, 337, 338, 339, 343, 347, 348, 349,
-        #                    350, 351, 352, 353, 354, 355,  # 2nd finger
-        #                    429, 433, 434, 435, 436, 437, 438, 439, 442, 443, 444, 455, 461, 462, 463, 465, 466,
-        #                    467,  # 3rd
-        #                    547, 548, 549, 550, 553, 566, 573, 578,  # 4th
-        #                    657, 661, 662, 664, 665, 666, 667, 670, 671, 672, 677, 678, 683, 686, 687, 688, 689, 690, 691,
-        #                    692, 693, 694, 695,  # 5th
-        #                    736, 737, 738, 739, 740, 741, 743, 753, 754, 755, 756, 757, 759, 760, 761, 762, 763, 764, 766,
-        #                    767, 768,  # 1st
-        #                    73, 96, 98, 99, 772, 774, 775, 777]  # hand
-        f1 = [
-            697,
-            698,
-            699,
-            700,
-            712,
-            713,
-            714,
-            715,
-            737,
-            738,
-            739,
-            740,
-            741,
-            743,
-            744,
-            745,
-            746,
-            748,
-            749,
-            750,
-            753,
-            754,
-            755,
-            756,
-            757,
-            758,
-            759,
-            760,
-            761,
-            762,
-            763,
-            764,
-            765,
-            766,
-            767,
-            768,
-        ]
-        f2 = [
-            46,
-            47,
-            48,
-            49,
-            164,
-            165,
-            166,
-            167,
-            194,
-            195,
-            223,
-            237,
-            238,
-            280,
-            281,
-            298,
-            301,
-            317,
-            320,
-            323,
-            324,
-            325,
-            326,
-            327,
-            328,
-            329,
-            330,
-            331,
-            332,
-            333,
-            340,
-            341,
-            342,
-            343,
-            344,
-            345,
-            346,
-            347,
-            348,
-            349,
-            350,
-            351,
-            352,
-            353,
-            354,
-            355,
-        ]
-        f3 = [
-            356,
-            357,
-            358,
-            359,
-            375,
-            376,
-            386,
-            387,
-            396,
-            397,
-            402,
-            403,
-            413,
-            429,
-            433,
-            434,
-            435,
-            436,
-            437,
-            438,
-            439,
-            440,
-            441,
-            442,
-            443,
-            444,
-            452,
-            453,
-            454,
-            455,
-            456,
-            459,
-            460,
-            461,
-            462,
-            463,
-            464,
-            465,
-            466,
-            467,
-        ]
-        f4 = [
-            468,
-            469,
-            470,
-            471,
-            484,
-            485,
-            486,
-            496,
-            497,
-            506,
-            507,
-            513,
-            514,
-            524,
-            545,
-            546,
-            547,
-            548,
-            549,
-            550,
-            551,
-            552,
-            553,
-            555,
-            563,
-            564,
-            565,
-            566,
-            567,
-            570,
-            572,
-            573,
-            574,
-            575,
-            576,
-            577,
-            578,
-        ]
-        f5 = [
-            580,
-            581,
-            582,
-            583,
-            600,
-            601,
-            602,
-            614,
-            615,
-            624,
-            625,
-            630,
-            631,
-            641,
-            663,
-            664,
-            665,
-            666,
-            667,
-            668,
-            670,
-            672,
-            680,
-            681,
-            682,
-            683,
-            684,
-            686,
-            687,
-            688,
-            689,
-            690,
-            691,
-            692,
-            693,
-            694,
-            695,
-        ]
-        f0 = [73, 96, 98, 99, 772, 774, 775, 777]
-        prior_idx = f1 + f2 + f3 + f4 + f5 + f0
-        hand_xyz_prior = hand_xyz[
-            :, prior_idx, :
-        ]  # only using prior points for contact map
-
-        B = obj_xyz.size(0)
-
-        obj_CD, _ = get_NN(
-            obj_xyz, hand_xyz_prior
-        )  # [B, N1] NN distance from obj pc to hand pc
-
-        # compute contact map loss
-        n_points = torch.sum(cmap)
-        cmap_loss = obj_CD[cmap].sum() / (B * n_points)
-
-        return 3000.0 * cmap_loss
-
     def CMap_consistency_loss_soft(recon_hand_xyz, gt_hand_xyz, obj_xyz):
         recon_dists, _ = get_NN(obj_xyz, recon_hand_xyz)  # [B, N1]
         gt_dists, _ = get_NN(obj_xyz, gt_hand_xyz)  # [B, N1]
@@ -510,27 +334,28 @@ class GraspCVAELoss(torch.nn.Module):
         ).sum() / recon_dists.size(0)
         return consistency
 
-    def CMap_consistency_loss(self, obj_xyz, recon_hand_xyz, gt_hand_xyz, recon_dists, gt_dists):
-       '''
-       :param recon_hand_xyz: [B, N2, 3]
-       :param gt_hand_xyz: [B, N2, 3]
-       :param obj_xyz: [B, N1, 3]
-       :return:
-       '''
-       # if not recon_dists or not gt_dists:
-       #     recon_dists, _ = utils_loss.get_NN(obj_xyz, recon_hand_xyz)  # [B, N1]
-       #     gt_dists, _ = utils_loss.get_NN(obj_xyz, gt_hand_xyz)  # [B, N1]
-       recon_dists = torch.sqrt(recon_dists)
-       gt_dists = torch.sqrt(gt_dists)
-       # hard cmap
-       recon_cmap = recon_dists < 0.005
-       gt_cmap = gt_dists < 0.005
-       gt_cpoint_num = gt_cmap.sum() + 0.0001
-       consistency = (recon_cmap * gt_cmap).sum() / gt_cpoint_num
-       # soft cmap
-       #consistency2 = torch.nn.functional.mse_loss(recon_dists, gt_dists, reduction='none').sum() / recon_dists.size(0)
-       return -5.0 * consistency #+ consistency2
-
+    def CMap_consistency_loss(
+        self, obj_xyz, recon_hand_xyz, gt_hand_xyz, recon_dists, gt_dists
+    ):
+        """
+        :param recon_hand_xyz: [B, N2, 3]
+        :param gt_hand_xyz: [B, N2, 3]
+        :param obj_xyz: [B, N1, 3]
+        :return:
+        """
+        # if not recon_dists or not gt_dists:
+        #     recon_dists, _ = utils_loss.get_NN(obj_xyz, recon_hand_xyz)  # [B, N1]
+        #     gt_dists, _ = utils_loss.get_NN(obj_xyz, gt_hand_xyz)  # [B, N1]
+        recon_dists = torch.sqrt(recon_dists)
+        gt_dists = torch.sqrt(gt_dists)
+        # hard cmap
+        recon_cmap = recon_dists < 0.005
+        gt_cmap = gt_dists < 0.005
+        gt_cpoint_num = gt_cmap.sum() + 0.0001
+        consistency = (recon_cmap * gt_cmap).sum() / gt_cpoint_num
+        # soft cmap
+        # consistency2 = torch.nn.functional.mse_loss(recon_dists, gt_dists, reduction='none').sum() / recon_dists.size(0)
+        return -5.0 * consistency  # + consistency2
 
     def inter_penetr_loss(self, hand_xyz, hand_face, obj_xyz, nn_dist, nn_idx):
         """
@@ -552,7 +377,19 @@ class GraspCVAELoss(torch.nn.Module):
         penetr_dist = nn_dist[interior].sum() / B  # batch reduction
         return 100.0 * penetr_dist
 
-    def forward(self, recon_x, x, mu, logvar, recon_xyz, hand_xyz, hand_faces, obj_pts, epoch: int, training_mode=True):
+    def forward(
+        self,
+        recon_x,
+        x,
+        mu,
+        logvar,
+        recon_xyz,
+        hand_xyz,
+        hand_faces,
+        obj_pts,
+        epoch: int,
+        training_mode=True,
+    ):
         # L2 MANO params loss
         param_loss = torch.nn.functional.mse_loss(
             recon_x, x, reduction="none"
@@ -565,13 +402,9 @@ class GraspCVAELoss(torch.nn.Module):
         if training_mode:
             # obj xyz NN dist and idx
             obj_nn_dist_gt, obj_nn_idx_gt = get_NN(obj_pts, hand_xyz)
-            obj_nn_dist_recon, obj_nn_idx_recon = get_NN(
-                obj_pts, recon_xyz
-            )
+            obj_nn_dist_recon, obj_nn_idx_recon = get_NN(obj_pts, recon_xyz)
 
-            cmap_loss = self.CMap_loss3(
-                obj_pts, recon_xyz, obj_nn_dist_recon < 0.01**2
-            )
+            cmap_loss = contact_loss(obj_pts, recon_xyz, obj_nn_dist_recon < 0.01**2)
             # cmap consistency loss
             consistency_loss = self.CMap_consistency_loss(
                 obj_pts,
@@ -608,6 +441,38 @@ class GraspCVAELoss(torch.nn.Module):
         else:
             loss = param_loss + recon_loss
             return loss, {
-                        "param_loss": param_loss,
-                        "recon_loss": recon_loss,
-                    }
+                "param_loss": param_loss,
+                "recon_loss": recon_loss,
+            }
+
+
+def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
+    """
+    :param hand_xyz:
+    :param hand_face:
+    :param obj_xyz:
+    :param cmap_affordance: contact map calculated from predicted hand mesh
+    :param cmap_pointnet: target contact map predicted from ContactNet
+    :return:
+    """
+    B = hand_xyz.size(0)
+
+    # inter-penetration loss
+    mesh = Meshes(verts=hand_xyz.cuda(), faces=hand_face.cuda())
+    hand_normal = mesh.verts_normals_packed().view(-1, 778, 3)
+    nn_dist, nn_idx = get_NN(obj_xyz, hand_xyz)
+    interior = get_interior(hand_normal, hand_xyz, obj_xyz, nn_idx).type(torch.bool)
+    penetr_dist = 120 * nn_dist[interior].sum() / B  # batch reduction
+
+    # cmap consistency loss
+    consistency_loss = (
+        0.0001
+        * torch.nn.functional.mse_loss(
+            cmap_affordance, cmap_pointnet, reduction="none"
+        ).sum()
+        / B
+    )
+
+    # hand-centric loss
+    cl = 2.5 * contact_loss(obj_xyz, hand_xyz, cmap=nn_dist < 0.02**2)
+    return penetr_dist, consistency_loss, cl

@@ -142,6 +142,7 @@ class ContactPoseDataset(BaseDataset):
         eval_anchor_assignment: bool = False,
         use_deltas: bool = False,
         use_bps_grid: bool = False,
+        compute_pointclouds: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -201,6 +202,7 @@ class ContactPoseDataset(BaseDataset):
             random_anchor_assignment=random_anchor_assignment,
             use_deltas=use_deltas,
             use_bps_grid=use_bps_grid,
+            compute_pointclouds=compute_pointclouds,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -254,7 +256,7 @@ class ContactPoseDataset(BaseDataset):
             or self._eval_anchor_assignment
         )
         cp_dataset = {} if not participant_splits else []
-        n_participants = 5 if tiny else 51
+        n_participants = 10 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(
@@ -419,6 +421,7 @@ class ContactPoseDataset(BaseDataset):
             )
         )
         assert len(objects_w_contacts) == len(grasps)
+        assert len(grasps) > 0, "No grasps found!"
         return (
             objects_w_contacts,
             grasps,

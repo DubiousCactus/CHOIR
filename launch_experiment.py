@@ -111,7 +111,9 @@ def launch_experiment(
             opt_inst
         )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
 
-    if training_loss.func is CHOIRLoss:
+    if not run.training_mode:
+        training_loss_inst = None
+    elif training_loss.func is CHOIRLoss:
         training_loss_inst = training_loss(
             bps=bps,
             remap_bps_distances=remap_bps_distances,

@@ -1,0 +1,90 @@
+#! /usr/bin/env python3
+# vim:fenc=utf-8
+#
+# Copyright © 2024 Théo Morales <theo.morales.fr@gmail.com>
+#
+# Distributed under terms of the MIT license.
+
+"""
+GraspTTA wrapper aroung GraspCVAE and ContactNet.
+"""
+
+import torch
+from tqdm import tqdm
+
+import conf.project as project_conf
+from model.affine_mano import AffineMANO
+from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
+from model.graspTTA.ContactNet import pointnet_reg
+from src.losses.graspTTA import TTT_loss, get_NN, get_pseudo_cmap
+from utils import colorize
+
+
+class GraspTTA(torch.nn.Module):
+    def __init__(self, mano_params_dim: int, n_pts: int, tto_steps: int, **kwargs):
+        super().__init__()
+        self.graspcvae = affordanceNet(mano_params_dim=mano_params_dim, **kwargs)
+        self.contactnet = pointnet_reg(n_pts=n_pts, **kwargs)
+        print(
+            colorize(
+                "Creating GraspTTA for ContactPose only!",
+                project_conf.ANSI_COLORS["red"],
+            )
+        )
+        self.affine_mano = AffineMANO(for_contactpose=True)  # TODO: OakInk?
+        self.graspcvae.eval()
+        self.contactnet.eval()
+        self.tto_steps = tto_steps
+
+    def forward(self, obj_pts, hand_xyz):
+        """
+        :param obj_pc: [B, N1, 3+n]
+        :param hand_xyz: [B, 778, 3]
+        :return: reconstructed hand vertex
+        """
+        B = obj_pts.size(0)
+        recon_param, _, _, _ = self.graspcvae(
+            obj_pts.permute(0, 2, 1), hand_xyz.permute(0, 2, 1)
+        )
+        recon_param = torch.autograd.Variable(recon_param.detach(), requires_grad=True)
+        optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        # TODO: The original implementation applies 1e6 random rotations to the object to obtain
+        # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
+        # If we need to sample more grasps, we can just call this function multiple times. But in
+        # effect, the GraspCVAE samples z from a random normal, so why would random rotation be
+        # needed?
+
+        for _ in tqdm(
+            range(self.tto_steps), desc="TTO"
+        ):  # non-learning based optimization steps
+            optimizer.zero_grad()
+
+            recon_xyz, recon_joints = self.affine_mano(
+                recon_param[:, :18],
+                recon_param[:, 18:28],
+                recon_param[:, 28:31],
+                rot_6d=recon_param[:, 31:37],
+            )
+            recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
+
+            # calculate cmap from current hand
+            obj_nn_dist_affordance, _ = get_NN(obj_pts, recon_xyz)
+            cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)  # [B,3000]
+
+            # predict target cmap by ContactNet
+            recon_cmap = self.contactnet(
+                obj_pts.permute(0, 2, 1), recon_xyz.permute(0, 2, 1).contiguous()
+            )  # [B,3000]
+            recon_cmap = (recon_cmap / torch.max(recon_cmap, dim=1)[0]).detach()
+
+            penetr_loss, consistency_loss, contact_loss = TTT_loss(
+                recon_xyz,
+                self.affine_mano.faces,
+                obj_pts.contiguous(),
+                cmap_affordance,
+                recon_cmap,
+            )
+            loss = 1 * contact_loss + 1 * consistency_loss + 7 * penetr_loss
+            loss.backward()
+            optimizer.step()
+        return recon_xyz, recon_joints, recon_anchors, recon_param
