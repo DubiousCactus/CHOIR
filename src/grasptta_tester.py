@@ -23,6 +23,7 @@ class GraspTTATester(MultiViewTester):
         super().__init__(*args, **kwargs)
         self._data_loader.dataset.set_observations_number(1)
         self.affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
+        self._is_grasptta = True
 
     def _inference(
         self,

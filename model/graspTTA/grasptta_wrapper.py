@@ -54,37 +54,39 @@ class GraspTTA(torch.nn.Module):
         # effect, the GraspCVAE samples z from a random normal, so why would random rotation be
         # needed?
 
-        for _ in tqdm(
-            range(self.tto_steps), desc="TTO"
-        ):  # non-learning based optimization steps
-            optimizer.zero_grad()
+        with torch.enable_grad():
+            for _ in tqdm(
+                range(self.tto_steps), desc="TTO"
+            ):  # non-learning based optimization steps
+                optimizer.zero_grad()
 
-            recon_xyz, recon_joints = self.affine_mano(
-                recon_param[:, :18],
-                recon_param[:, 18:28],
-                recon_param[:, 28:31],
-                rot_6d=recon_param[:, 31:37],
-            )
-            recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
+                recon_xyz, recon_joints = self.affine_mano(
+                    recon_param[:, :18],
+                    recon_param[:, 18:28],
+                    recon_param[:, 28:31],
+                    rot_6d=recon_param[:, 31:37],
+                )
+                recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
 
-            # calculate cmap from current hand
-            obj_nn_dist_affordance, _ = get_NN(obj_pts, recon_xyz)
-            cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)  # [B,3000]
+                # calculate cmap from current hand
+                obj_nn_dist_affordance, _ = get_NN(obj_pts, recon_xyz)
+                cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)  # [B,3000]
 
-            # predict target cmap by ContactNet
-            recon_cmap = self.contactnet(
-                obj_pts.permute(0, 2, 1), recon_xyz.permute(0, 2, 1).contiguous()
-            )  # [B,3000]
-            recon_cmap = (recon_cmap / torch.max(recon_cmap, dim=1)[0]).detach()
+                # predict target cmap by ContactNet
+                recon_cmap = self.contactnet(
+                    obj_pts.permute(0, 2, 1), recon_xyz.permute(0, 2, 1).contiguous()
+                )  # [B,3000]
+                recon_cmap = (recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]).detach()
 
-            penetr_loss, consistency_loss, contact_loss = TTT_loss(
-                recon_xyz,
-                self.affine_mano.faces,
-                obj_pts.contiguous(),
-                cmap_affordance,
-                recon_cmap,
-            )
-            loss = 1 * contact_loss + 1 * consistency_loss + 7 * penetr_loss
-            loss.backward()
-            optimizer.step()
+                faces = torch.tensor(self.affine_mano.faces, dtype=torch.int, device=recon_xyz.device).expand(B, -1, -1)
+                penetr_loss, consistency_loss, contact_loss = TTT_loss(
+                    recon_xyz,
+                    faces,
+                    obj_pts.contiguous(),
+                    cmap_affordance,
+                    recon_cmap,
+                )
+                loss = 1 * contact_loss + 1 * consistency_loss + 7 * penetr_loss
+                loss.backward()
+                optimizer.step()
         return recon_xyz, recon_joints, recon_anchors, recon_param

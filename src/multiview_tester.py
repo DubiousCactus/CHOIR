@@ -845,7 +845,7 @@ class MultiViewTester(MultiViewTrainer):
             n_observations,
             batch_idx,
             use_prior=True,
-            use_input=True,
+            use_input=False,
         )
         # TODO: Refactor this mess! I can just return the right dict in _test_batch and get rid of
         # _test_iteration which is completely useless :/. There was a lot of bad code written in a
