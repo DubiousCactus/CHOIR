@@ -32,21 +32,8 @@ class GraspTTATester(MultiViewTester):
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
-        max_observations = max_observations or samples["choir"].shape[1]
-        gt_hand_params = torch.cat(
-            (labels["theta"], labels["beta"], labels["trans"], labels["rot"]), dim=-1
-        )[:, -1]
-
-        gt_verts, _ = self.affine_mano(
-            labels["theta"][:, -1],
-            labels["beta"][:, -1],
-            labels["trans"][:, -1],
-            rot_6d=labels["rot"][:, -1],
-        )
-
-        recon_xyz, recon_joints, recon_anchors, recon_param = self._model(
+        recon_xyz, recon_joints, recon_anchors, _ = self._model(
             labels["obj_pts"][:, -1],
-            gt_verts,
         )
         return {
             "verts": recon_xyz,
