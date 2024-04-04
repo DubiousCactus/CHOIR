@@ -327,6 +327,8 @@ model_store(
         with_rgb=False,
         n_pts=3000,
         tto_steps=300,
+        graspCVAE_model_pth=None,
+        contactnet_model_pth=None,
     ),
     name="grasp_tta_wrapper",
 )

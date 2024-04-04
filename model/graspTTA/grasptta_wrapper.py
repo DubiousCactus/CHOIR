@@ -9,6 +9,8 @@
 GraspTTA wrapper aroung GraspCVAE and ContactNet.
 """
 
+from typing import Optional
+
 import torch
 from tqdm import tqdm
 
@@ -21,7 +23,15 @@ from utils import colorize
 
 
 class GraspTTA(torch.nn.Module):
-    def __init__(self, mano_params_dim: int, n_pts: int, tto_steps: int, **kwargs):
+    def __init__(
+        self,
+        mano_params_dim: int,
+        n_pts: int,
+        tto_steps: int,
+        graspCVAE_model_pth: Optional[str] = None,
+        contactnet_model_pth: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__()
         self.graspcvae = affordanceNet(mano_params_dim=mano_params_dim, **kwargs)
         self.contactnet = pointnet_reg(n_pts=n_pts, **kwargs)
@@ -35,6 +45,8 @@ class GraspTTA(torch.nn.Module):
         self.graspcvae.eval()
         self.contactnet.eval()
         self.tto_steps = tto_steps
+        self._graspCVAE_model_pth = graspCVAE_model_pth
+        self._contactnet_model_pth = contactnet_model_pth
 
     def forward(self, obj_pts, hand_xyz):
         """
@@ -42,6 +54,33 @@ class GraspTTA(torch.nn.Module):
         :param hand_xyz: [B, 778, 3]
         :return: reconstructed hand vertex
         """
+        if (
+            self._graspCVAE_model_pth is not None
+            and self._contactnet_model_pth is not None
+        ):
+            print(
+                colorize(
+                    "[*] Manually loading GraspTTA models...",
+                    project_conf.ANSI_COLORS["green"],
+                )
+            )
+            print(
+                colorize(
+                    f"-> Loading GraspCVAE from {self._graspCVAE_model_pth}",
+                    project_conf.ANSI_COLORS["green"],
+                )
+            )
+            self.graspcvae.load_state_dict(torch.load(self._graspCVAE_model_pth))
+            print(
+                colorize(
+                    f"-> Loading ContactNet from {self._contactnet_model_pth}",
+                    project_conf.ANSI_COLORS["green"],
+                )
+            )
+            self.contactnet.load_state_dict(torch.load(self._contactnet_model_pth))
+            self._graspCVAE_model_pth = None
+            self._contactnet_model_pth = None
+
         B = obj_pts.size(0)
         recon_param, _, _, _ = self.graspcvae(
             obj_pts.permute(0, 2, 1), hand_xyz.permute(0, 2, 1)
@@ -76,9 +115,13 @@ class GraspTTA(torch.nn.Module):
                 recon_cmap = self.contactnet(
                     obj_pts.permute(0, 2, 1), recon_xyz.permute(0, 2, 1).contiguous()
                 )  # [B,3000]
-                recon_cmap = (recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]).detach()
+                recon_cmap = (
+                    recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]
+                ).detach()
 
-                faces = torch.tensor(self.affine_mano.faces, dtype=torch.int, device=recon_xyz.device).expand(B, -1, -1)
+                faces = torch.tensor(
+                    self.affine_mano.faces, dtype=torch.int, device=recon_xyz.device
+                ).expand(B, -1, -1)
                 penetr_loss, consistency_loss, contact_loss = TTT_loss(
                     recon_xyz,
                     faces,
