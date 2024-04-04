@@ -47,6 +47,7 @@ class GraspTTA(torch.nn.Module):
         self.tto_steps = tto_steps
         self._graspCVAE_model_pth = graspCVAE_model_pth
         self._contactnet_model_pth = contactnet_model_pth
+        self.single_modality="object"
 
     def forward(self, obj_pts, hand_xyz):
         """
