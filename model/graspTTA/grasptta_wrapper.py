@@ -47,7 +47,7 @@ class GraspTTA(torch.nn.Module):
         self.tto_steps = tto_steps
         self._graspCVAE_model_pth = graspCVAE_model_pth
         self._contactnet_model_pth = contactnet_model_pth
-        self.single_modality="object"
+        self.single_modality = "object"
 
     def forward(self, obj_pts, hand_xyz):
         """
@@ -71,14 +71,18 @@ class GraspTTA(torch.nn.Module):
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            self.graspcvae.load_state_dict(torch.load(self._graspCVAE_model_pth)['model_ckpt'])
+            self.graspcvae.load_state_dict(
+                torch.load(self._graspCVAE_model_pth)["model_ckpt"]
+            )
             print(
                 colorize(
                     f"-> Loading ContactNet from {self._contactnet_model_pth}",
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            self.contactnet.load_state_dict(torch.load(self._contactnet_model_pth)['model_ckpt'])
+            self.contactnet.load_state_dict(
+                torch.load(self._contactnet_model_pth)["model_ckpt"]
+            )
             self._graspCVAE_model_pth = None
             self._contactnet_model_pth = None
 
@@ -94,10 +98,9 @@ class GraspTTA(torch.nn.Module):
         # effect, the GraspCVAE samples z from a random normal, so why would random rotation be
         # needed?
 
+        pbar = tqdm(range(self.tto_steps), desc="TTO")
         with torch.enable_grad():
-            for _ in tqdm(
-                range(self.tto_steps), desc="TTO"
-            ):  # non-learning based optimization steps
+            for _ in pbar:  # non-learning based optimization steps
                 optimizer.zero_grad()
 
                 recon_xyz, recon_joints = self.affine_mano(
@@ -131,6 +134,9 @@ class GraspTTA(torch.nn.Module):
                     recon_cmap,
                 )
                 loss = 1 * contact_loss + 1 * consistency_loss + 7 * penetr_loss
+                pbar.set_description(
+                    f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
+                )
                 loss.backward()
                 optimizer.step()
         return recon_xyz, recon_joints, recon_anchors, recon_param
