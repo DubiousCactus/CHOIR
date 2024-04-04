@@ -1120,51 +1120,78 @@ class MultiViewTester(MultiViewTrainer):
             )
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
+
             multiple_obs = len(samples["theta"].shape) > 2
-            use_smplx = False  # TODO: I don't use it for now
-            contacts_pred, obj_points, obj_normals = (
-                y_hat.get("contacts", None),
-                None,
-                None,
-            )
-            if self._enable_contacts_tto and contacts_pred is not None:
-                obj_points, obj_normals = (
-                    batch_obj_data["points"],
-                    batch_obj_data["normals"],
+            if self._is_baseline:
+                joints_pred, anchors_pred = (
+                    y_hat["hand_keypoints"][:, :21],
+                    y_hat["hand_keypoints"][:, 21:],
                 )
-            cache_fitted = f"cache_fitted_{batch_idx}.pkl"
-            if self._debug_tto and os.path.exists(cache_fitted):
-                with open(cache_fitted, "rb") as f:
-                    anchors_pred, verts_pred, joints_pred = pickle.load(f)
-            else:
-                with torch.set_grad_enabled(True):
+                contacts_pred, obj_points, obj_normals = (
+                    None,
+                    None,
+                    None,
+                )
+                (
+                    verts_pred,
+                    anchors_pred,
+                    joints_pred,
+                ) = optimize_mesh_from_joints_and_anchors(
+                    y_hat["hand_keypoints"],
+                    scalar=torch.mean(input_scalar)
+                    .unsqueeze(0)
+                    .to(input_scalar.device),  # TODO: What should I do here?
+                    is_rhand=samples["is_rhand"][0],
+                    max_iterations=1000,
+                    loss_thresh=1e-6,
+                    lr=8e-2,
+                    dataset=self._data_loader.dataset.name,
+                    use_smplx=use_smplx,
+                    initial_params={
+                        k: (
+                            v[:, -1] if multiple_obs else v
+                        )  # Initial pose is the last observation
+                        for k, v in samples.items()
+                        if k
+                        in [
+                            "theta",
+                            ("vtemp" if use_smplx else "beta"),
+                            "rot",
+                            "trans",
+                        ]
+                    },
+                    beta_w=1e-4,
+                    theta_w=1e-8,
+                )
+
+                if self._enable_contacts_tto:
+                    # del anchors_pred, verts_pred, joints_pred
+                    contacts_pred, obj_points, obj_normals = (
+                        y_hat.get("contacts", None),
+                        batch_obj_data["points"],
+                        batch_obj_data["normals"],
+                    )
                     (
-                        _,
-                        _,
-                        _,
-                        _,
-                        anchors_pred,
                         verts_pred,
+                        anchors_pred,
                         joints_pred,
-                    ) = optimize_pose_pca_from_choir(  # TODO: make a partial
-                        y_hat["choir"],
+                    ) = optimize_mesh_from_joints_and_anchors(
+                        y_hat["hand_keypoints"],
                         contact_gaussians=contacts_pred,
                         obj_pts=obj_points,
                         obj_normals=obj_normals,
-                        bps=self._bps,
-                        anchor_indices=self._anchor_indices,
-                        scalar=input_scalar,
+                        scalar=torch.mean(input_scalar)
+                        .unsqueeze(0)
+                        .to(input_scalar.device),  # TODO: What should I do here?
+                        is_rhand=samples["is_rhand"][0],
                         max_iterations=1000,
                         loss_thresh=1e-7,
                         lr=8e-2,
-                        is_rhand=samples["is_rhand"],
-                        use_smplx=use_smplx,
                         dataset=self._data_loader.dataset.name,
-                        remap_bps_distances=self._remap_bps_distances,
-                        exponential_map_w=self._exponential_map_w,
+                        use_smplx=use_smplx,
                         initial_params={
                             k: (
-                                v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                                v[:, -1] if multiple_obs else v
                             )  # Initial pose is the last observation
                             for k, v in samples.items()
                             if k
@@ -1176,15 +1203,80 @@ class MultiViewTester(MultiViewTrainer):
                             ]
                         },
                         beta_w=1e-4,
-                        theta_w=1e-7,
-                        choir_w=1000,
+                        theta_w=1e-8,
                     )
-                    if self._debug_tto:
-                        with open(cache_fitted, "wb") as f:
-                            anchors_pred = anchors_pred.cpu()
-                            verts_pred = verts_pred.cpu()
-                            joints_pred = joints_pred.cpu()
-                            pickle.dump((anchors_pred, verts_pred, joints_pred), f)
+
+            elif self._is_grasptta:
+                verts_pred, joints_pred, anchors_pred = (
+                    y_hat["verts"],
+                    y_hat["joints"],
+                    y_hat["anchors"],
+                )
+            else:
+                use_smplx = False  # TODO: I don't use it for now
+                contacts_pred, obj_points, obj_normals = (
+                    y_hat.get("contacts", None),
+                    None,
+                    None,
+                )
+                if self._enable_contacts_tto and contacts_pred is not None:
+                    obj_points, obj_normals = (
+                        batch_obj_data["points"],
+                        batch_obj_data["normals"],
+                    )
+                cache_fitted = f"cache_fitted_{batch_idx}.pkl"
+                if self._debug_tto and os.path.exists(cache_fitted):
+                    with open(cache_fitted, "rb") as f:
+                        anchors_pred, verts_pred, joints_pred = pickle.load(f)
+                else:
+                    with torch.set_grad_enabled(True):
+                        (
+                            _,
+                            _,
+                            _,
+                            _,
+                            anchors_pred,
+                            verts_pred,
+                            joints_pred,
+                        ) = optimize_pose_pca_from_choir(  # TODO: make a partial
+                            y_hat["choir"],
+                            contact_gaussians=contacts_pred,
+                            obj_pts=obj_points,
+                            obj_normals=obj_normals,
+                            bps=self._bps,
+                            anchor_indices=self._anchor_indices,
+                            scalar=input_scalar,
+                            max_iterations=1000,
+                            loss_thresh=1e-7,
+                            lr=8e-2,
+                            is_rhand=samples["is_rhand"],
+                            use_smplx=use_smplx,
+                            dataset=self._data_loader.dataset.name,
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
+                            initial_params={
+                                k: (
+                                    v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                                )  # Initial pose is the last observation
+                                for k, v in samples.items()
+                                if k
+                                in [
+                                    "theta",
+                                    ("vtemp" if use_smplx else "beta"),
+                                    "rot",
+                                    "trans",
+                                ]
+                            },
+                            beta_w=1e-4,
+                            theta_w=1e-7,
+                            choir_w=1000,
+                        )
+                        if self._debug_tto:
+                            with open(cache_fitted, "wb") as f:
+                                anchors_pred = anchors_pred.cpu()
+                                verts_pred = verts_pred.cpu()
+                                joints_pred = joints_pred.cpu()
+                                pickle.dump((anchors_pred, verts_pred, joints_pred), f)
             image_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
                 "tto_images",
