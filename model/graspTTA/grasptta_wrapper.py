@@ -49,10 +49,9 @@ class GraspTTA(torch.nn.Module):
         self._contactnet_model_pth = contactnet_model_pth
         self.single_modality = "object"
 
-    def forward(self, obj_pts, hand_xyz):
+    def forward(self, obj_pts):
         """
         :param obj_pc: [B, N1, 3+n]
-        :param hand_xyz: [B, 778, 3]
         :return: reconstructed hand vertex
         """
         if (
@@ -83,14 +82,16 @@ class GraspTTA(torch.nn.Module):
             self.contactnet.load_state_dict(
                 torch.load(self._contactnet_model_pth)["model_ckpt"]
             )
+            self.graspcvae.eval()
+            self.contactnet.eval()
             self._graspCVAE_model_pth = None
             self._contactnet_model_pth = None
 
         B = obj_pts.size(0)
-        recon_param, _, _, _ = self.graspcvae(
-            obj_pts.permute(0, 2, 1), hand_xyz.permute(0, 2, 1)
-        )
-        recon_param = torch.autograd.Variable(recon_param.detach(), requires_grad=True)
+        recon_param = self.graspcvae.inference(
+            obj_pts.permute(0, 2, 1)
+        ).detach()  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
+        recon_param = torch.autograd.Variable(recon_param, requires_grad=True)
         optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
         # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
@@ -112,7 +113,9 @@ class GraspTTA(torch.nn.Module):
                 recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
 
                 # calculate cmap from current hand
-                obj_nn_dist_affordance, _ = get_NN(obj_pts, recon_xyz)
+                obj_nn_dist_affordance, _ = get_NN(
+                    obj_pts, recon_xyz
+                )  # Input: obj: (B, N, 3), hand: (B, 778, 3), Output: (B, N)
                 cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)  # [B,3000]
 
                 # predict target cmap by ContactNet
@@ -129,7 +132,7 @@ class GraspTTA(torch.nn.Module):
                 penetr_loss, consistency_loss, contact_loss = TTT_loss(
                     recon_xyz,
                     faces,
-                    obj_pts.contiguous(),
+                    obj_pts.contiguous(),  # [B, N, 3]
                     cmap_affordance,
                     recon_cmap,
                 )
