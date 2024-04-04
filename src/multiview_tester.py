@@ -70,6 +70,7 @@ class MultiViewTester(MultiViewTrainer):
             val_loader (torch.utils.data.DataLoader): Validation dataloader.
         """
         self._is_baseline = False
+        self._is_grasptta = False
         self._run_name = run_name
         self._model = model
         self._ema = EMA(

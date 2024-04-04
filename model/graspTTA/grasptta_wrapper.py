@@ -70,14 +70,14 @@ class GraspTTA(torch.nn.Module):
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            self.graspcvae.load_state_dict(torch.load(self._graspCVAE_model_pth))
+            self.graspcvae.load_state_dict(torch.load(self._graspCVAE_model_pth)['model_ckpt'])
             print(
                 colorize(
                     f"-> Loading ContactNet from {self._contactnet_model_pth}",
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            self.contactnet.load_state_dict(torch.load(self._contactnet_model_pth))
+            self.contactnet.load_state_dict(torch.load(self._contactnet_model_pth)['model_ckpt'])
             self._graspCVAE_model_pth = None
             self._contactnet_model_pth = None
 
