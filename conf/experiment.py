@@ -39,11 +39,18 @@ from model.diffusion_model import (
     KPContactsDiffusionModel,
     KPDiffusionModel,
 )
+from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
+from model.graspTTA.ContactNet import pointnet_reg
+from model.graspTTA.grasptta_wrapper import GraspTTA
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
+from src.grasptta_contactnet_trainer import ContactNetTrainer
+from src.grasptta_graspcvae_trainer import GraspCVAETrainer
+from src.grasptta_tester import GraspTTATester
 from src.losses.diffusion import DDPMLoss
+from src.losses.graspTTA import GraspCVAELoss
 from src.losses.hoi import CHOIRLoss
 from src.multiview_ddpm_baseline_tester import MultiViewDDPMBaselineTester
 from src.multiview_ddpm_baseline_trainer import MultiViewDDPMBaselineTrainer
@@ -107,6 +114,7 @@ dataset_store(
         use_improved_contactopt_splits=False,
         eval_observations_plateau=False,
         eval_anchor_assignment=False,
+        compute_pointclouds=False,
         model_contacts=False,
     ),
     name="contactpose",
@@ -288,9 +296,43 @@ model_store(
         y_input_keypoints=MISSING,
         object_in_encoder=False,
         skip_connections=True,
+        single_modality="noisy_pair",
     ),
     name="kp_coddpm",
 )
+
+model_store(
+    pbuilds(
+        affordanceNet,
+        mano_params_dim=MISSING,
+    ),
+    name="grasp_tta_cvae",
+)
+
+model_store(
+    pbuilds(
+        pointnet_reg,
+        num_class=1,
+        with_rgb=False,
+        n_pts=3000,
+    ),
+    name="grasp_tta_contactnet",
+)
+
+model_store(
+    pbuilds(
+        GraspTTA,
+        mano_params_dim=MISSING,
+        num_class=1,
+        with_rgb=False,
+        n_pts=3000,
+        tto_steps=300,
+        graspCVAE_model_pth=None,
+        contactnet_model_pth=None,
+    ),
+    name="grasp_tta_wrapper",
+)
+
 " ================== Losses ================== "
 
 
@@ -334,6 +376,13 @@ training_loss_store(
     name="diffusion",
 )
 
+training_loss_store(
+    pbuilds(
+        GraspCVAELoss,
+        hand_weights_path="src/losses/rhand_weights.npy",
+    ),
+    name="grasp_tta_cvae",
+)
 " ================== Optimizer ================== "
 
 
@@ -426,6 +475,7 @@ class RunConfig:
     compile_test_model: bool = False
     compute_contact_scores: bool = True
     debug_tto: bool = False
+    dump_videos: bool = False
     # RunConfig was never meant to be soiled like this :'(
 
 
@@ -443,6 +493,14 @@ trainer_store(
     pbuilds(MultiViewDDPMBaselineTrainer, populate_full_signature=True),
     name="ddpm_baseline_multiview",
 )
+trainer_store(
+    pbuilds(GraspCVAETrainer, populate_full_signature=True),
+    name="grasp_tta_cvae",
+)
+trainer_store(
+    pbuilds(ContactNetTrainer, populate_full_signature=True),
+    name="grasp_tta_contactnet",
+)
 
 tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
@@ -454,6 +512,10 @@ tester_store(
 tester_store(
     pbuilds(MultiViewDDPMBaselineTester, populate_full_signature=True),
     name="ddpm_baseline_multiview",
+)
+tester_store(
+    pbuilds(GraspTTATester, populate_full_signature=True),
+    name="grasp_tta",
 )
 
 Experiment = builds(
@@ -657,13 +719,14 @@ experiment_store(
         ),
         data_loader=dict(batch_size=64),
         model=dict(
-            n_obj_keypoints=4096,  # 1024 points taken from the object point cloud's target points of the BPS representation
+            n_obj_keypoints=4096,  # 4096 points taken from the object point cloud's target points of the BPS representation
             y_input_keypoints=4096
             + 21
             + 32,  # 1024 points + 21 MANO joints + 32 contact anchors
             y_embed_dim=256,
             object_in_encoder=False,
             skip_connections=True,
+            single_modality="noisy_pair",
         ),
         run=dict(
             conditional=True,
@@ -672,7 +735,48 @@ experiment_store(
         ),  # We can reuse the "full_choir" flag for "hand_object_pair"
         bases=(Experiment,),
     ),
-    name="baseline_coddpm_3d_multiview_contactopt",
+    name="baseline_coddpm_3d_multiview_contactopt_noisy_pair",
+)
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "kp_coddpm"},
+            {"override /dataset": "contactpose"},
+            {"override /trainer": "ddpm_baseline_multiview"},
+            {"override /tester": "ddpm_baseline_multiview"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_contactopt_splits=False,
+            use_improved_contactopt_splits=True,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,  # We won't exploit it but then it's a fairer comparison
+            bps_dim=16**3,  # 4096 points, as used in the PointNet++ paper
+            augment=True,
+            n_augs=20,
+            model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            n_obj_keypoints=4096,  # 4096 points taken from the object point cloud's target points of the BPS representation
+            y_input_keypoints=4096,
+            y_embed_dim=256,
+            object_in_encoder=False,
+            skip_connections=True,
+            single_modality="object",
+        ),
+        run=dict(
+            conditional=True,
+            full_choir=False,
+            model_contacts=True,  # Must be equal to object_in_encoder!
+        ),  # We can reuse the "full_choir" flag for "hand_object_pair"
+        bases=(Experiment,),
+    ),
+    name="baseline_coddpm_3d_multiview_contactopt_object",
 )
 experiment_store(
     make_config(
@@ -1145,4 +1249,78 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="multiview_grab",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "grasp_tta_cvae"},
+            {"override /trainer": "grasp_tta_cvae"},
+            {"override /tester": "grasp_tta"},
+            {"override /dataset": "contactpose"},
+            {"override /training_loss": "grasp_tta_cvae"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_improved_contactopt_splits=True,
+            augment=False,
+            compute_pointclouds=True,
+        ),
+        model=dict(mano_params_dim=37),
+        data_loader=dict(batch_size=128),
+        bases=(Experiment,),
+    ),
+    name="grasp_tta_cvae_contactpose",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "grasp_tta_contactnet"},
+            {"override /trainer": "grasp_tta_contactnet"},
+            {"override /tester": "grasp_tta"},
+            {"override /dataset": "contactpose"},
+            {"override /training_loss": "grasp_tta_cvae"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_improved_contactopt_splits=True,
+            augment=False,
+            compute_pointclouds=True,
+        ),
+        data_loader=dict(batch_size=64),
+        bases=(Experiment,),
+    ),
+    name="grasp_tta_contactnet_contactpose",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "grasp_tta_wrapper"},
+            {"override /trainer": "grasp_tta_contactnet"},
+            {"override /tester": "grasp_tta"},
+            {"override /dataset": "contactpose"},
+            {"override /training_loss": "grasp_tta_cvae"},
+        ],
+        dataset=dict(
+            perturbation_level=2,
+            max_views_per_grasp=1,
+            use_improved_contactopt_splits=True,
+            augment=False,
+            compute_pointclouds=True,
+        ),
+        model=dict(mano_params_dim=37),
+        data_loader=dict(batch_size=64),
+        bases=(Experiment,),
+    ),
+    name="grasp_tta_wrapped_contactpose",
 )

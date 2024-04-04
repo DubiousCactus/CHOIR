@@ -179,6 +179,7 @@ def process_object(
         )
     obj_data = {
         "mesh": t_obj_mesh,
+        "mesh_name": os.path.basename(path),
         "obj_contacts": gt_obj_contacts,
         "points": obj_points,
         "normals": obj_normals,
@@ -417,41 +418,89 @@ def compute_contacts_fscore(
     hand_gt_bin_threshold: float = 0.4,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     pred_hand_mesh, gt_hand_mesh, obj_mesh, obj_pts, gt_obj_contacts = data
-    pred_hand_pts = (
-        torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0])
-        .float()
-        .cpu()
-    )
-    # 1. Compute a binary *object* contact map by computing a boolean mask where object points are
-    # within 2mm of hand points (sample points on meshes).
-    assert (
-        obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
-    ), f"Object mesh has {obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
-    obj_verts = (
-        torch.from_numpy(np.asarray(obj_mesh.vertices)).float().to(pred_hand_pts.device)
-    )
-    pred_obj_contacts = torch.zeros(obj_verts.shape[0]).to(pred_hand_pts.device)
-    dists = torch.cdist(obj_verts, pred_hand_pts)
-    min_dists = torch.min(dists, dim=1)[0]
-    pred_obj_contacts[min_dists < (thresh_mm / base_unit_mm)] = 1
-    pred_obj_contacts = pred_obj_contacts.unsqueeze(-1)
-    assert (
-        pred_obj_contacts.shape == gt_obj_contacts.shape
-    ), f"Predicted object contacts have shape {pred_obj_contacts.shape} and ground-truth object contacts have shape {gt_obj_contacts.shape}."
-    # 2. Take the GT thermal contact map, threshold it at 0.4 to make it binary.
-    gt_obj_contacts = (
-        (gt_obj_contacts > obj_gt_bin_threshold).int().to(pred_hand_pts.device)
-    )
-    """ End of code taken from ContactOpt """
-    assert gt_obj_contacts.sum() > 0, "The ground-truth contact map is empty!"
-    # 3. Call calculate_fscore on the two binary maps!
+    # pred_hand_pts = (
+    #    torch.from_numpy(trimesh.sample.sample_surface(pred_hand_mesh, 5000)[0])
+    #    .float()
+    #    .cpu()
+    # )
+    ## 1. Compute a binary *object* contact map by computing a boolean mask where object points are
+    ## within 2mm of hand points (sample points on meshes).
+    # assert (
+    #    obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]
+    # ), f"Object mesh has {obj_mesh.vertices.shape[0]} vertices and ground-truth object contacts have shape {gt_obj_contacts.shape}."
+    # obj_verts = (
+    #    torch.from_numpy(np.asarray(obj_mesh.vertices)).float().to(pred_hand_pts.device)
+    # )
+    # pred_obj_contacts = torch.zeros(obj_verts.shape[0]).to(pred_hand_pts.device)
+    # dists = torch.cdist(obj_verts, pred_hand_pts)
+    # min_dists = torch.min(dists, dim=1)[0]
+    # pred_obj_contacts[min_dists < (thresh_mm / base_unit_mm)] = 1
+    # pred_obj_contacts = pred_obj_contacts.unsqueeze(-1)
+    # assert (
+    #    pred_obj_contacts.shape == gt_obj_contacts.shape
+    # ), f"Predicted object contacts have shape {pred_obj_contacts.shape} and ground-truth object contacts have shape {gt_obj_contacts.shape}."
+    ## 2. Take the GT thermal contact map, threshold it at 0.4 to make it binary.
+    # gt_obj_contacts = (
+    #    (gt_obj_contacts > obj_gt_bin_threshold).int().to(pred_hand_pts.device)
+    # )
+    # """ End of code taken from ContactOpt """
+    # assert gt_obj_contacts.sum() > 0, "The ground-truth contact map is empty!"
+    ## 3. Call calculate_fscore on the two binary maps!
+    ## Compute precision
+    # true_positives = (pred_obj_contacts * gt_obj_contacts).sum().cpu().float()
+    # predicted_positives = pred_obj_contacts.sum().cpu().float()
+    # precision = true_positives / predicted_positives if predicted_positives > 0 else 0
+
+    ## Compute recall
+    # actual_positives = gt_obj_contacts.sum().cpu().float()
+    # recall = true_positives / actual_positives if actual_positives > 0 else 0
+    ## Compute F1 score
+    # f1_score = (
+    #    2 * (precision * recall) / (precision + recall)
+    #    if (precision + recall) > 0
+    #    else 0
+    # )
+
+    # f1_obj, prec_obj, rec_obj = f1_score * 100.0, precision * 100.0, recall * 100.0
+    f1_obj, prec_obj, rec_obj = torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
+
+    # =============== Now for the hand ===============
+    pred_hand_verts, gt_hand_verts = torch.from_numpy(
+        pred_hand_mesh.vertices
+    ), torch.from_numpy(gt_hand_mesh.vertices)
+    # compute_binary_contacts upscales the hand mesh in a deterministic way so that we can get more
+    # accurate contact maps. This is important because the hand mesh is very low-res and the object
+    # mesh is very high-res. It's not ideal because the upscaling is only interpolation-based,
+    # which leaves gaps in low-poly parts of the hand mesh, but it's better than nothing. Ideally
+    # we would sample on the mesh with a seed and be able to obtain the exact same points every
+    # time, under different shape/pose parameters. But that sounds very hard to achieve and we
+    # don't have time.
+    gt_hand_contacts = compute_binary_contacts(
+        gt_hand_verts,
+        torch.from_numpy(gt_hand_mesh.faces),
+        obj_pts,
+        thresh_mm,
+        base_unit_mm,
+        n_mesh_upsamples=2,
+        return_upsampled_verts=False,
+    )[0]
+    pred_hand_contacts = compute_binary_contacts(
+        pred_hand_verts,
+        torch.from_numpy(pred_hand_mesh.faces),
+        obj_pts,
+        thresh_mm,
+        base_unit_mm,
+        n_mesh_upsamples=2,
+        return_upsampled_verts=False,
+    )[0]
+    # assert gt_hand_contacts.sum() > 0, "The ground-truth contact map is empty!"
     # Compute precision
-    true_positives = (pred_obj_contacts * gt_obj_contacts).sum().cpu().float()
-    predicted_positives = pred_obj_contacts.sum().cpu().float()
+    true_positives = (pred_hand_contacts * gt_hand_contacts).sum().cpu().float()
+    predicted_positives = pred_hand_contacts.sum().cpu().float()
     precision = true_positives / predicted_positives if predicted_positives > 0 else 0
 
     # Compute recall
-    actual_positives = gt_obj_contacts.sum().cpu().float()
+    actual_positives = gt_hand_contacts.sum().cpu().float()
     recall = true_positives / actual_positives if actual_positives > 0 else 0
     # Compute F1 score
     f1_score = (
@@ -459,8 +508,9 @@ def compute_contacts_fscore(
         if (precision + recall) > 0
         else 0
     )
+    f1_hand, prec_hand, rec_hand = f1_score * 100.0, precision * 100.0, recall * 100.0
 
-    f1_obj, prec_obj, rec_obj = f1_score * 100.0, precision * 100.0, recall * 100.0
+    return f1_obj, prec_obj, rec_obj, f1_hand, prec_hand, rec_hand
 
     # =============== Now for the hand ===============
     pred_hand_verts, gt_hand_verts = torch.from_numpy(

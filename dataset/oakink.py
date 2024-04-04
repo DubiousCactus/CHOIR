@@ -44,7 +44,6 @@ from utils.dataset import (
 )
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
-    visualize_CHOIR_prediction,
     visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
 )
@@ -146,14 +145,14 @@ class OakInkDataset(BaseDataset):
             {"trans": 0.02, "rot": 0.05, "axisangle": 0.3},  # Level 1
             {
                 "trans": 0.05,
-                "rot": 0.15,
-                "axisangle": 0.5,
-            },  # Level 2 (0.05m, 0.15rad, 0.5 axis-angle degrees)
+                "rot": 0.15,  # wrist
+                "axisangle": 0.3,  # fingers
+            },  # Level 2 (0.05m, 0.15 axis-angle in radians, 0.2 axis-angle in radians)
             {
                 "trans": 0.005,
                 "rot": 0.05,
-                "axisangle": 0.5,
-            },  # Level 3 (0.005m, 0.15rad, 0.5 axis-angle degrees), for tests with TTO
+                "axisangle": 0.3,
+            },  # Level 3 (0.005m, 0.15 axis-angle in radians, 0.3 axis-angle in radians), for tests with TTO
         ]
 
         if eval_anchor_assignment:
@@ -219,12 +218,14 @@ class OakInkDataset(BaseDataset):
             f"{split}_{n_samples}-samples" + f"{'_tiny' if tiny else ''}",
         )
         os.makedirs(obj_and_grasps_path, exist_ok=True)
-        objects, grasps = [], []
+        object_ids, objects, grasps = [], [], []
         print(f"[*] Loading OakInk{' (tiny)' if tiny else ''}...")
         if osp.isfile(dataset_path):
             with open(dataset_path, "rb") as f:
                 compressed_pkl = f.read()
-                objects, grasps = pickle.loads(blosc2.decompress(compressed_pkl))
+                object_ids, objects, grasps = pickle.loads(
+                    blosc2.decompress(compressed_pkl)
+                )
             # new_objects, new_grasps = [], []
             # for obj_path, grasp_path in zip(objects, grasps):
             # obj_path = obj_path.replace("/media/data2/moralest/", "/Users/cactus/Code/")
@@ -313,14 +314,15 @@ class OakInkDataset(BaseDataset):
                         )
 
                 objects.append(obj_path)
+                object_ids.append(shape["obj_id"])
                 grasps.append(grasp_path)
                 idx += 1
                 pbar.update()
             with open(dataset_path, "wb") as f:
-                pkl = pickle.dumps((objects, grasps))
+                pkl = pickle.dumps((object_ids, objects, grasps))
                 compressed_pkl = blosc2.compress(pkl)
                 f.write(compressed_pkl)
-        print(f"[*] Loaded {len(objects)} objects and {len(grasps)} grasps.")
+        print(f"[*] Loaded {len(set(object_ids))} objects and {len(grasps)} grasps.")
         assert len(objects) == len(grasps)
         return (
             objects,
@@ -430,7 +432,7 @@ class OakInkDataset(BaseDataset):
                         hTm[:, :3, :3] = axis_angle_to_matrix(root_rot_quat)
                         hTm[:, :3, 3] = gt_trans
                         obj_mesh, hTm = augment_hand_object_pose(
-                            obj_mesh, hTm, around_z=True
+                            obj_mesh, hTm, around_z=False
                         )
                         gt_pose[:, :3] = matrix_to_axis_angle(hTm[:, :3, :3])
                         gt_trans = hTm[:, :3, 3]
@@ -688,7 +690,6 @@ class OakInkDataset(BaseDataset):
                                 f"[*] Plotting CHOIR for {grasp_name} ... (please be patient)"
                             )
                             # visualize_CHOIR(
-                            # # choir.squeeze(0),
                             # gt_choir.squeeze(0),
                             # self._bps,
                             # self._anchor_indices,
@@ -698,6 +699,20 @@ class OakInkDataset(BaseDataset):
                             # obj_mesh,
                             # obj_ptcld,
                             # gt_rescaled_ref_pts.squeeze(0),
+                            # affine_mano,
+                            # use_deltas=self._use_deltas,
+                            # )
+
+                            # visualize_CHOIR(
+                            # choir.squeeze(0),
+                            # self._bps,
+                            # self._anchor_indices,
+                            # scalar,
+                            # verts.squeeze(0),
+                            # anchors.squeeze(0),
+                            # obj_mesh,
+                            # obj_ptcld,
+                            # rescaled_ref_pts.squeeze(0),
                             # affine_mano,
                             # use_deltas=self._use_deltas,
                             # )
@@ -711,6 +726,7 @@ class OakInkDataset(BaseDataset):
                             visualize_MANO(
                                 pred_MANO_mesh, obj_mesh=obj_mesh, gt_hand=gt_MANO_mesh
                             )
+                            continue
                             # visualize_CHOIR_prediction(
                             # gt_choir,
                             # gt_choir,
@@ -890,29 +906,29 @@ class OakInkDataset(BaseDataset):
                             # plot_choir=False,
                             # )
 
-                            visualize_CHOIR_prediction(
-                                choir,
-                                gt_choir,
-                                self._bps,
-                                self._anchor_indices,
-                                gt_scalar,
-                                gt_scalar,
-                                gt_rescaled_ref_pts,
-                                gt_rescaled_ref_pts,
-                                gt_verts,
-                                gt_joints,
-                                gt_anchors,
-                                contact_gaussians=choleksy_gaussian_params,
-                                obj_pts=obj_ptcld.float(),
-                                obj_normals=obj_vert_normals,
-                                is_rhand=(hand_idx == "right"),
-                                use_smplx=False,
-                                dataset="ContactPose",
-                                remap_bps_distances=self._remap_bps_distances,
-                                exponential_map_w=self._exponential_map_w,
-                                use_deltas=self._use_deltas,
-                                plot_choir=False,
-                            )
+                            # visualize_CHOIR_prediction(
+                            # choir,
+                            # gt_choir,
+                            # self._bps,
+                            # self._anchor_indices,
+                            # gt_scalar,
+                            # gt_scalar,
+                            # gt_rescaled_ref_pts,
+                            # gt_rescaled_ref_pts,
+                            # gt_verts,
+                            # gt_joints,
+                            # gt_anchors,
+                            # contact_gaussians=choleksy_gaussian_params,
+                            # obj_pts=obj_ptcld.float(),
+                            # obj_normals=obj_vert_normals,
+                            # is_rhand=(hand_idx == "right"),
+                            # use_smplx=False,
+                            # dataset="ContactPose",
+                            # remap_bps_distances=self._remap_bps_distances,
+                            # exponential_map_w=self._exponential_map_w,
+                            # use_deltas=self._use_deltas,
+                            # plot_choir=False,
+                            # )
                             # ==============================
                             # ==============================
                             has_visualized = True

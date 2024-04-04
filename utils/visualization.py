@@ -957,6 +957,11 @@ def visualize_CHOIR(
 
     pl.link_views()
     pl.set_background("white")  # type: ignore
+    pl.add_arrows(
+        cent=np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]]),
+        direction=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        mag=0.1,
+    )
     pl.add_camera_orientation_widget()
     pl.show(interactive=True)
 
@@ -987,7 +992,7 @@ def visualize_MANO(
             gt_hand = pv.wrap(gt_hand)
         pl.add_mesh(
             gt_hand,
-            opacity=0.2,
+            opacity=0.8,
             name="gt_hand",
             label="Ground-truth Hand",
             smooth_shading=True,
@@ -999,7 +1004,7 @@ def visualize_MANO(
         obj_mesh_pv = pv.wrap(obj_mesh)
         pl.add_mesh(
             obj_mesh_pv,
-            opacity=opacity,
+            # opacity=opacity,
             name="obj_mesh",
             label="Object mesh",
             smooth_shading=True,
@@ -1013,10 +1018,10 @@ def visualize_MANO(
             label="Object pointcloud",
             opacity=0.2,
         )
-    pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
+    # pl.add_title("Fitted MANO vs ground-truth MANO", font_size=30)
     pl.set_background("white")  # type: ignore
     # pl.add_camera_orientation_widget()
-    pl.add_legend(loc="upper left", size=(0.1, 0.1))
+    # pl.add_legend(loc="upper left", size=(0.1, 0.1))
     if cam_pose is not None:
         pl.camera.model_transform_matrix = cam_pose[1]
         pl.camera.position = cam_pose[0]
@@ -1026,7 +1031,13 @@ def visualize_MANO(
         # pl.save_graphic(save_as)
         pl.export_html(save_as)
     else:
-        pl.add_axes_at_origin()
+        # pl.add_axes_at_origin()
+        # We need smaller axes, so let's do it manually:
+        pl.add_arrows(
+            cent=np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]]),
+            direction=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+            mag=0.1,
+        )
         pl.show(interactive=True)
     if return_cam_pose:
         return (pl.camera.position, pl.camera.model_transform_matrix)
@@ -1108,7 +1119,7 @@ def visualize_3D_gaussians_on_hand_mesh(
         covariance = gaussian_params[i, 3:].reshape(3, 3)
         # print(covariance)
         # Sample points from the Gaussian
-        num_points = 5000
+        num_points = 10000
         points = np.random.multivariate_normal(mean, covariance, num_points)
 
         # Create a point cloud from the sampled points
@@ -1118,10 +1129,10 @@ def visualize_3D_gaussians_on_hand_mesh(
         pcd.paint_uniform_color(
             np.array(
                 [
-                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 0,
+                    (int((i * 16) % 255) / 255.0) if i < 32 / 3 else 1,
                     (int((i * 16) % 255) / 255.0)
                     if (i >= 32 / 3 and i < 64 / 3)
-                    else 0,
+                    else 5,
                     (int((i * 16) % 255) / 255.0) if i >= 64 / 3 else 0,
                 ]
             )
@@ -1168,6 +1179,7 @@ def visualize_hand_contacts_from_3D_gaussians(
     gaussian_params: torch.Tensor,
     anchors: torch.Tensor,
     gt_contacts: Optional[torch.Tensor] = None,
+    return_trimesh: bool = False,
 ):
     geometries = []
     vertex_contacts = torch.zeros(np.asarray(hand_mesh.vertices).shape[0])
@@ -1178,9 +1190,15 @@ def visualize_hand_contacts_from_3D_gaussians(
     anchor_distances, anchor_indices = torch.topk(
         anchor_distances, 1, dim=-1, largest=False, sorted=False
     )
+    scale_tril_norm_activation_threshold = 1e-3
     for i in range(gaussian_params.shape[0]):
         if torch.allclose(
             gaussian_params[i], torch.zeros_like(gaussian_params[i]), atol=1e-6
+        ):
+            continue
+        if (
+            torch.norm(gaussian_params[i, 3:])
+            < scale_tril_norm_activation_threshold**2
         ):
             continue
         mean = gaussian_params[i, :3] + anchors[i]
@@ -1220,4 +1238,6 @@ def visualize_hand_contacts_from_3D_gaussians(
         gt_hand_mesh.vertex_colors = open3d.utility.Vector3dVector(gt_colours)
         gt_hand_mesh.translate([0.1, 0, 0])
         geometries.append(gt_hand_mesh)
+    if return_trimesh:
+        return Trimesh(hand_mesh.vertices, hand_mesh.faces, vertex_colors=colours)
     open3d.visualization.draw_geometries(geometries)

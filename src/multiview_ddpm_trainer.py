@@ -29,7 +29,7 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
             )
         self._model.set_dataset_stats(self._train_loader.dataset)
         self._ema = EMA(
-            self._model, beta=0.9999, update_after_step=10000, update_every=10
+            self._model, beta=0.9999, update_after_step=100, update_every=10
         )
         cilp_value = 1.0
         for p in self._model.parameters():
@@ -94,14 +94,15 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         if self._single_modality is not None:
             return self._single_modality
         # Linear interpolation function:  y = y1 + (x - x1) * (y2 - y1) / (x2 - x1)
-        if epoch >= max_epoch_to_equilibrium:
-            p_0 = target_p0
-        else:
-            p_0 = initial_p0 + (epoch - 0) * (target_p0 - initial_p0) / (
-                max_epoch_to_equilibrium - 0
-            )
+        # if epoch >= max_epoch_to_equilibrium:
+        # p_0 = target_p0
+        # else:
+        # p_0 = initial_p0 + (epoch - 0) * (target_p0 - initial_p0) / (
+        # max_epoch_to_equilibrium - 0
+        # )
         # p_1 is the probability of event 1 (object). We want to start with high p_1 (close to 1.0)
         # and ramp down to p_1 = 0.5.
+        p_0 = 0.5
         s = torch.bernoulli(1.0 - torch.tensor(p_0)).int().item()
         return ["noisy_pair", "object"][s]
 

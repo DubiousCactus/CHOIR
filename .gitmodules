@@ -19,3 +19,15 @@
 [submodule "vendor/OakInk"]
 	path = vendor/OakInk
 	url = https://github.com/oakink/OakInk
+[submodule "vendor/GraspTTA"]
+	path = vendor/GraspTTA
+	url = https://github.com/hwjiang1510/GraspTTA
+[submodule "vendor/emd"]
+	path = vendor/emd
+	url = https://github.com/vinits5/emd
+[submodule "vendor/PyTorchEMD"]
+	path = vendor/PyTorchEMD
+	url = https://github.com/daerduoCarey/PyTorchEMD
+[submodule "vendor/MSN-Point-Cloud-Completion"]
+	path = vendor/MSN-Point-Cloud-Completion
+	url = https://github.com/Colin97/MSN-Point-Cloud-Completion

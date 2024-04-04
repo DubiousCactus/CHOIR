@@ -120,7 +120,8 @@ class MultiViewDDPMTester(MultiViewTester):
         if self._single_modality is not None:
             modality = self._single_modality
         else:
-            modality = random.choice(["noisy_pair", "object"])
+            #modality = random.choice(["noisy_pair", "object"])
+            modality = "object"
         y = samples["choir"][:, :max_observations] if self.conditional else None
         print(f"[*] Using modality: {modality}")
         if modality == "object":

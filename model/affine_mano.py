@@ -30,6 +30,7 @@ class AffineMANO(torch.nn.Module):
         # MANO is shipped with 15 components but you can use less.
         self.for_oakink = for_oakink
         if for_oakink:
+            # rot_mode=axisang, side=right, use_pca=False, flat_hand_mean=True
             self.mano_layer = ManoLayer(
                 center_idx=9,
                 mano_assets_root="vendor/manotorch/assets/mano",
