@@ -14,7 +14,6 @@ transforming it may be extended through class inheritance in a specific dataset 
 
 
 import abc
-import functools
 import itertools
 import os
 import os.path as osp
@@ -28,25 +27,6 @@ import torch
 from bps_torch.tools import sample_grid_cube, sample_sphere_uniform
 from hydra.utils import get_original_cwd
 from metabatch import TaskSet
-from open3d import io as o3dio
-
-from utils.testing import fit_sigmoid
-
-
-@functools.cache
-def sample_obj_mesh(mesh_pth: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    mesh = o3dio.read_triangle_mesh(mesh_pth)
-    obj_pts = np.asarray(mesh.sample_points_uniformly(3000).points, dtype=np.float32)
-    vertex_colors = np.array(mesh.vertex_colors, dtype=np.float32)
-    obj_contacts = np.zeros((obj_pts.shape[0], 1))
-    # assign contact value using nearest neighbor search with vertex colors:
-    dists = torch.cdist(
-        torch.from_numpy(obj_pts),
-        torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32)),
-    )
-    nearest_vcolors = vertex_colors[dists.argmin(dim=-1)]
-    obj_contacts = np.expand_dims(fit_sigmoid(nearest_vcolors[:, 0]), axis=1)
-    return obj_pts, obj_contacts
 
 
 class BaseDataset(TaskSet, abc.ABC):
@@ -74,7 +54,7 @@ class BaseDataset(TaskSet, abc.ABC):
         dataset_name: str,
         use_deltas: bool,
         use_bps_grid: bool,
-        compute_pointclouds: bool = False,  # For GraspTTA, set to True
+        load_pointclouds: bool = False,  # For GraspTTA, set to True
         noisy_samples_per_grasp: Optional[int] = None,
     ) -> None:
         # For GRAB, noisy_samples_per_grasp is actually the number of frames in the sequence. At
@@ -102,7 +82,7 @@ class BaseDataset(TaskSet, abc.ABC):
             predict_full_target=False,
             predict_full_target_during_eval=False,
         )
-        self._compute_pointclouds = compute_pointclouds
+        self._load_pointclouds = load_pointclouds
         self._mm_unit = 1.0
         self._split = split
         self._validation_objects = validation_objects
@@ -461,13 +441,9 @@ class BaseDataset(TaskSet, abc.ABC):
                     success = True
             choir.append(sample[0])
             gt_choir.append(label[0])
-            if (
-                self._dataset_name.lower() == "contactpose"
-                and self._compute_pointclouds
-            ):
-                obj_pts, obj_contacts = sample_obj_mesh(mesh_pth)
-                gt_obj_pts.append(obj_pts)
-                gt_obj_contacts.append(obj_contacts)
+            if self._dataset_name.lower() == "contactpose" and self._load_pointclouds:
+                gt_obj_pts.append(label[-2])
+                gt_obj_contacts.append(label[-1])
             elif self._dataset_name.lower() == "contactpose":
                 gt_obj_pts.append(np.zeros(1))
                 gt_obj_contacts.append(np.zeros(1))
@@ -479,6 +455,7 @@ class BaseDataset(TaskSet, abc.ABC):
             gt_beta.append(label[6])
             gt_rot_6d.append(label[7])
             gt_trans.append(label[8])
+            mesh_pths.append(mesh_pth)
             if self._eval_mode:
                 rescaled_ref_pts.append(sample[1])
                 scalar.append(sample[2])
@@ -493,7 +470,6 @@ class BaseDataset(TaskSet, abc.ABC):
                 gt_joints.append(label[3])
                 gt_anchors.append(label[4])
                 gt_contact_gaussians.append(label[9] if len(label) > 9 else np.zeros(1))
-                mesh_pths.append(mesh_pth)
 
         if self._eval_mode:
             # Some people claim that torch.from_numpy is faster than torch.stack in most cases...

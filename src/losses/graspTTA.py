@@ -158,9 +158,7 @@ class GraspCVAELoss(torch.nn.Module):
         hand_weights_path: str = "rhand_weights.npy",
     ):
         super().__init__()
-        self.emd_module = importlib.import_module(
-            "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
-        )
+        self.emd_module = None
         self.a = a
         self.b = b
         self.c = c
@@ -308,6 +306,11 @@ class GraspCVAELoss(torch.nn.Module):
                 recon_x, x, point_reduction="sum", batch_reduction="mean"
             )
         elif loss_tpye == "EMD":
+            if self.emd_module is None:
+                # I can't install it on MacOS so importing here to avoid errors
+                self.emd_module = importlib.import_module(
+                    "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
+                )
             emd = self.emd_module.emdModule()
             # recon_loss = earth_mover_distance(
             #    recon_x, x, transpose=False

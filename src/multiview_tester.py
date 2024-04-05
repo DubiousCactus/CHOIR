@@ -19,7 +19,6 @@ import open3d.io as o3dio
 import pyvista as pv
 import torch
 import trimesh
-from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
@@ -73,9 +72,10 @@ class MultiViewTester(MultiViewTrainer):
         self._is_grasptta = False
         self._run_name = run_name
         self._model = model
-        self._ema = EMA(
-            self._model, beta=0.9999, update_after_step=100, update_every=10
-        )
+        # self._ema = EMA(
+        # self._model, beta=0.9999, update_after_step=100, update_every=10
+        # )
+        self._ema = None
         assert "max_observations" in kwargs, "max_observations must be provided."
         assert "save_predictions" in kwargs, "save_predictions must be provided."
         self._max_observations = kwargs["max_observations"]
@@ -574,6 +574,16 @@ class MultiViewTester(MultiViewTrainer):
                         y_hat["verts"],
                         y_hat["joints"],
                         y_hat["anchors"],
+                    )
+                    # Let's visualize what we have:
+                    pred_hand_mesh = trimesh.Trimesh(
+                        vertices=verts_pred[-1].detach().cpu().numpy(),
+                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
+                    )
+                    visualize_MANO(
+                        pred_hand_mesh,
+                        obj_mesh=batch_obj_data["mesh"][-1],
+                        opacity=1.0,
                     )
                     eval_metrics["GraspTTA"] = self._compute_eval_metrics(
                         anchors_pred,
