@@ -36,8 +36,45 @@ class ContactNetTrainer(BaseTrainer):
             batch: The batch to process.
             epoch: The current epoch.
         """
-        samples, labels, _ = batch
-        raise NotImplementedError("Implement the visualization method.")
+        _, labels, _ = batch
+        gt_verts, _ = self.affine_mano(
+            labels["theta"][:, -1],
+            labels["beta"][:, -1],
+            labels["trans"][:, -1],
+            rot_6d=labels["rot"][:, -1],
+        )
+
+        obj_pts = labels["obj_pts"][:, -1].permute(0, 2, 1)
+        obj_contacts = labels["obj_contacts"][:, -1].squeeze(dim=-1)
+        recon_cmap = self._model(obj_pts, gt_verts.permute(0, 2, 1))
+
+        # Let's visualize the object contacts:
+        print(f"Object contacts: {obj_contacts.shape}")
+        print(f"Object pts: {obj_pts.shape}")
+        import pyvista as pv
+        from trimesh import Trimesh
+
+        pl = pv.Plotter(off_screen=False)
+        pl.add_points(obj_pts.permute(0, 2, 1)[0].cpu().numpy(), color="red")
+        pl.add_points(
+            obj_pts.permute(0, 2, 1)[0]
+            .cpu()
+            .numpy()[obj_contacts[0].cpu().numpy() > 0.5],
+            color="blue",
+        )
+        pl.add_points(
+            obj_pts.permute(0, 2, 1)[0]
+            .detach()
+            .cpu()
+            .numpy()[recon_cmap[0].detach().cpu().numpy() > 0.5],
+            color="yellow",
+        )
+        pl.add_mesh(
+            Trimesh(vertices=gt_verts[0].cpu().numpy(), faces=self.affine_mano.faces),
+            color="green",
+            opacity=0.5,
+        )
+        pl.show()
 
     @to_cuda
     def _train_val_iteration(
@@ -63,8 +100,8 @@ class ContactNetTrainer(BaseTrainer):
 
         obj_pts = labels["obj_pts"][:, -1].permute(0, 2, 1)
         obj_contacts = labels["obj_contacts"][:, -1].squeeze(dim=-1)
-
         recon_cmap = self._model(obj_pts, gt_verts.permute(0, 2, 1))
+
         # but why not use MSE mean reduction directly???? I'm just copying the code from the original implementation.
         loss = torch.nn.functional.mse_loss(
             recon_cmap, obj_contacts, reduction="none"

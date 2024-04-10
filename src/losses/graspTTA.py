@@ -19,6 +19,8 @@ from pytorch3d.loss import chamfer_distance
 from pytorch3d.ops.knn import knn_points
 from pytorch3d.structures import Meshes
 
+from utils import to_cuda_
+
 
 def get_pseudo_cmap(nn_dists):
     """
@@ -461,7 +463,7 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
     B = hand_xyz.size(0)
 
     # inter-penetration loss
-    mesh = Meshes(verts=hand_xyz.cuda(), faces=hand_face.cuda())
+    mesh = Meshes(verts=to_cuda_(hand_xyz), faces=to_cuda_(hand_face))
     hand_normal = mesh.verts_normals_packed().view(-1, 778, 3)
     nn_dist, nn_idx = get_NN(obj_xyz, hand_xyz)
     interior = get_interior(hand_normal, hand_xyz, obj_xyz, nn_idx).type(torch.bool)

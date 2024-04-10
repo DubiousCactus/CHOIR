@@ -70,8 +70,9 @@ class GraspTTA(torch.nn.Module):
                     project_conf.ANSI_COLORS["green"],
                 )
             )
+            device = next(self.graspcvae.parameters()).device
             self.graspcvae.load_state_dict(
-                torch.load(self._graspCVAE_model_pth)["model_ckpt"]
+                torch.load(self._graspCVAE_model_pth, map_location=device)["model_ckpt"]
             )
             print(
                 colorize(
@@ -80,7 +81,9 @@ class GraspTTA(torch.nn.Module):
                 )
             )
             self.contactnet.load_state_dict(
-                torch.load(self._contactnet_model_pth)["model_ckpt"]
+                torch.load(self._contactnet_model_pth, map_location=device)[
+                    "model_ckpt"
+                ]
             )
             self.graspcvae.eval()
             self.contactnet.eval()
