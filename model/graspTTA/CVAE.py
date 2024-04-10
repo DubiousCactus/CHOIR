@@ -42,9 +42,10 @@ class VAE(nn.Module):
 
         return recon_x, means, log_var, z
 
-    def inference(self, n=1, c=None):
+    def inference(self, n=1, c=None, z=None):
         batch_size = n
-        z = torch.randn([batch_size, self.latent_size], device=c.device)
+        if z is None:
+            z = torch.randn([batch_size, self.latent_size], device=c.device)
         recon_x = self.decoder(z, c)
 
         return recon_x
