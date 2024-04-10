@@ -93,17 +93,21 @@ class GraspTTA(torch.nn.Module):
             for param in self.contactnet.parameters():
                 param.requires_grad = False
             # Enable grads for GraspCVAE's decoder:
-            for param in self.graspcvae.decoder.parameters():
+            for param in self.graspcvae.parameters():
+                param.requires_grad = False
+            for param in self.graspcvae.cvae.decoder.parameters():
                 param.requires_grad = True
 
         B = obj_pts.size(0)
-        z = torch.randn([1, self.graspcvae.latent_size], device=obj_pts.device)
-        recon_param = (
-            self.graspcvae.inference(c=obj_pts.permute(0, 2, 1), z=z).clone().detach()
-        )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
-        recon_param.requires_grad = True
+        with torch.no_grad():
+            z = torch.randn(
+                [obj_pts.size(0), self.graspcvae.cvae.latent_size],
+                device=obj_pts.device,
+            )
+            obj_features, _, _ = self.graspcvae.obj_encoder(obj_pts.permute(0, 2, 1))
+        # recon_param.requires_grad = True
         # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
-        optimizer = torch.optim.Adam([recon_param], lr=1e-5)
+        optimizer = torch.optim.Adam(self.graspcvae.cvae.decoder.parameters(), lr=1e-5)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
         # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
@@ -116,6 +120,14 @@ class GraspTTA(torch.nn.Module):
         with torch.enable_grad():
             for _ in pbar:  # non-learning based optimization steps
                 optimizer.zero_grad()
+
+                recon_param = (
+                    self.graspcvae.cvae.inference(
+                        n=obj_pts.size(0), c=obj_features, z=z
+                    )
+                    .clone()
+                    .detach()
+                )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
 
                 recon_xyz, recon_joints = self.affine_mano(
                     recon_param[:, :18],
