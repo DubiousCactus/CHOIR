@@ -1250,7 +1250,7 @@ class MultiViewTester(MultiViewTrainer):
                             joints_pred,
                         ) = optimize_pose_pca_from_choir(  # TODO: make a partial
                             y_hat["choir"],
-                            contact_gaussians=contacts_pred,
+                            contact_gaussians=contacts_pred if self._enable_contacts_tto else None,
                             obj_pts=obj_points,
                             obj_normals=obj_normals,
                             bps=self._bps,

@@ -93,9 +93,11 @@ class GraspTTA(torch.nn.Module):
         B = obj_pts.size(0)
         recon_param = self.graspcvae.inference(
             obj_pts.permute(0, 2, 1)
-        ).detach()  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
-        recon_param = torch.autograd.Variable(recon_param, requires_grad=True)
-        optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        ).clone().detach()  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
+        recon_param.requires_grad = True
+        #optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        optimizer = torch.optim.Adam([recon_param], lr=1e-5)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
         # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
         # If we need to sample more grasps, we can just call this function multiple times. But in
@@ -103,6 +105,7 @@ class GraspTTA(torch.nn.Module):
         # needed?
 
         pbar = tqdm(range(self.tto_steps), desc="TTO")
+        initial_loss = None
         with torch.enable_grad():
             for _ in pbar:  # non-learning based optimization steps
                 optimizer.zero_grad()
@@ -129,9 +132,7 @@ class GraspTTA(torch.nn.Module):
                     recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]
                 ).detach()
 
-                faces = torch.tensor(
-                    self.affine_mano.faces, dtype=torch.int, device=recon_xyz.device
-                ).expand(B, -1, -1)
+                faces = self.affine_mano.faces.expand(B, -1, -1)
                 penetr_loss, consistency_loss, contact_loss = TTT_loss(
                     recon_xyz,
                     faces,
@@ -139,10 +140,26 @@ class GraspTTA(torch.nn.Module):
                     cmap_affordance,
                     recon_cmap,
                 )
-                loss = 1 * contact_loss + 1 * consistency_loss + 7 * penetr_loss
+                loss = 1 * contact_loss + 1 * consistency_loss + 5 * penetr_loss
+                if initial_loss is None:
+                    initial_loss = f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 pbar.set_description(
                     f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 )
                 loss.backward()
-                optimizer.step()
+
+                #print(f"recon_param.grad: {recon_param.grad} / requires_grad: {recon_param.requires_grad}") #if recon_param.grad is not None: #print(f"params grads norms: {torch.norm(recon_param.grad[:, :18]).mean(0)}, {torch.norm(recon_param.grad[:, 18:28]).mean(0)}, {torch.norm(recon_param.grad[:, 28:31]).mean(0)}, {torch.norm(recon_param.grad[:, 31]).mean(0)}") optimizer.step()
+                scheduler.step()
+        
+        print("========INITIAL=========")
+        print(initial_loss)
+        print("========================")
+        # Final verts/joints:
+        recon_xyz, recon_joints = self.affine_mano(
+            recon_param[:, :18],
+            recon_param[:, 18:28],
+            recon_param[:, 28:31],
+            rot_6d=recon_param[:, 31:37],
+        )
+        recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
         return recon_xyz, recon_joints, recon_anchors, recon_param

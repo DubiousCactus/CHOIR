@@ -479,5 +479,5 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
     )
 
     # hand-centric loss
-    cl = 2.5 * contact_loss(obj_xyz, hand_xyz, cmap=nn_dist < 0.02**2)
+    cl = 2.5 * contact_loss(obj_xyz, hand_xyz, cmap=nn_dist < 0.01**2)
     return penetr_dist, consistency_loss, cl

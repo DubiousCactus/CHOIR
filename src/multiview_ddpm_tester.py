@@ -31,17 +31,19 @@ class MultiViewDDPMTester(MultiViewTester):
                 self._data_loader.dataset.anchor_indices
             )
             self._model.set_dataset_stats(self._data_loader.dataset)
-            self._ema.ema_model.backbone.set_anchor_indices(
-                self._data_loader.dataset.anchor_indices
-            )
-            self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
+            if self._ema is not None:
+                self._ema.ema_model.backbone.set_anchor_indices(
+                    self._data_loader.dataset.anchor_indices
+                )
+                self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
         self._single_modality = self._model.single_modality
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         if kwargs.get("compile_test_model", False):
             print("[*] Compiling the model...")
             self._model = torch.compile(self._model)
-            self._ema.ema_model = torch.compile(self._ema.ema_model)
+            if self._ema is not None:
+                self._ema.ema_model = torch.compile(self._ema.ema_model)
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
@@ -70,7 +72,8 @@ class MultiViewDDPMTester(MultiViewTester):
             elif modality == "noisy_pair":
                 pass  # Already comes in noisy_pair modality
             self._model(x, y, y_modality=modality)
-            self._ema.ema_model(x, y, y_modality=modality)
+            if self._ema is not None:
+                self._ema.ema_model(x, y, y_modality=modality)
         print("[+] Done!")
 
     @to_cuda
@@ -121,7 +124,7 @@ class MultiViewDDPMTester(MultiViewTester):
             modality = self._single_modality
         else:
             #modality = random.choice(["noisy_pair", "object"])
-            modality = "object"
+            modality = "noisy_pair"
         y = samples["choir"][:, :max_observations] if self.conditional else None
         print(f"[*] Using modality: {modality}")
         if modality == "object":
