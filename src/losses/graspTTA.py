@@ -16,7 +16,6 @@ import chamfer_distance as chd
 import numpy as np
 import torch
 from pytorch3d.loss import chamfer_distance
-from pytorch3d.ops.knn import knn_points
 from pytorch3d.structures import Meshes
 
 from utils import to_cuda_
@@ -80,17 +79,22 @@ def get_NN(src_xyz, trg_xyz, k=1):
     :return: nn_dists, nn_dix: all [B, 3000] tensor for NN distance and index in N2
     """
     B = src_xyz.size(0)
-    src_lengths = torch.full(
-        (src_xyz.shape[0],), src_xyz.shape[1], dtype=torch.int64, device=src_xyz.device
-    )  # [B], N for each num
-    trg_lengths = torch.full(
-        (trg_xyz.shape[0],), trg_xyz.shape[1], dtype=torch.int64, device=trg_xyz.device
-    )
-    src_nn = knn_points(
-        src_xyz, trg_xyz, lengths1=src_lengths, lengths2=trg_lengths, K=k
-    )  # [dists, idx]
-    nn_dists = src_nn.dists[..., 0]
-    nn_idx = src_nn.idx[..., 0]
+    # src_lengths = torch.full(
+    # (src_xyz.shape[0],), src_xyz.shape[1], dtype=torch.int64, device=src_xyz.device
+    # )  # [B], N for each num
+    # trg_lengths = torch.full(
+    # (trg_xyz.shape[0],), trg_xyz.shape[1], dtype=torch.int64, device=trg_xyz.device
+    # )
+    # src_nn = knn_points(
+    # src_xyz, trg_xyz, lengths1=src_lengths, lengths2=trg_lengths, K=k
+    # )  # [dists, idx]
+    # nn_dists = src_nn.dists[..., 0]
+    # nn_idx = src_nn.idx[..., 0]
+    # Can just do that with pytorch!
+    src_nn = torch.cdist(src_xyz, trg_xyz)
+    src_nn = src_nn.topk(k=k, largest=False)
+    nn_dists = src_nn.values[..., 0] ** 2  # knn_points returns squared distances
+    nn_idx = src_nn.indices[..., 0]
     return nn_dists, nn_idx
 
 
@@ -479,5 +483,5 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
     )
 
     # hand-centric loss
-    cl = 2.5 * contact_loss(obj_xyz, hand_xyz, cmap=nn_dist < 0.01**2)
+    cl = 2.5 * contact_loss(obj_xyz, hand_xyz, cmap=nn_dist < 0.02**2)
     return penetr_dist, consistency_loss, cl

@@ -12,6 +12,7 @@ GraspTTA wrapper aroung GraspCVAE and ContactNet.
 from typing import Optional
 
 import torch
+import trimesh
 from tqdm import tqdm
 
 import conf.project as project_conf
@@ -20,6 +21,7 @@ from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
 from model.graspTTA.ContactNet import pointnet_reg
 from src.losses.graspTTA import TTT_loss, get_NN, get_pseudo_cmap
 from utils import colorize
+from utils.visualization import ScenePicAnim
 
 
 class GraspTTA(torch.nn.Module):
@@ -64,16 +66,16 @@ class GraspTTA(torch.nn.Module):
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            print(
-                colorize(
-                    f"-> Loading GraspCVAE from {self._graspCVAE_model_pth}",
-                    project_conf.ANSI_COLORS["green"],
-                )
-            )
+            # print(
+            # colorize(
+            # f"-> Loading GraspCVAE from {self._graspCVAE_model_pth}",
+            # project_conf.ANSI_COLORS["green"],
+            # )
+            # )
             device = next(self.graspcvae.parameters()).device
-            self.graspcvae.load_state_dict(
-                torch.load(self._graspCVAE_model_pth, map_location=device)["model_ckpt"]
-            )
+            # self.graspcvae.load_state_dict(
+            # torch.load(self._graspCVAE_model_pth, map_location=device)["model_ckpt"]
+            # )
             print(
                 colorize(
                     f"-> Loading ContactNet from {self._contactnet_model_pth}",
@@ -91,13 +93,13 @@ class GraspTTA(torch.nn.Module):
             self._contactnet_model_pth = None
 
         B = obj_pts.size(0)
-        recon_param = self.graspcvae.inference(
-            obj_pts.permute(0, 2, 1)
-        ).clone().detach()  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
+        recon_param = (
+            self.graspcvae.inference(obj_pts.permute(0, 2, 1)).clone().detach()
+        )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
         recon_param.requires_grad = True
-        #optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
         optimizer = torch.optim.Adam([recon_param], lr=1e-5)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.8)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
         # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
         # If we need to sample more grasps, we can just call this function multiple times. But in
@@ -106,6 +108,7 @@ class GraspTTA(torch.nn.Module):
 
         pbar = tqdm(range(self.tto_steps), desc="TTO")
         initial_loss = None
+        anim = ScenePicAnim()
         with torch.enable_grad():
             for _ in pbar:  # non-learning based optimization steps
                 optimizer.zero_grad()
@@ -116,7 +119,6 @@ class GraspTTA(torch.nn.Module):
                     recon_param[:, 28:31],
                     rot_6d=recon_param[:, 31:37],
                 )
-                recon_anchors = self.affine_mano.get_anchors(recon_xyz)  # [B,32,3]
 
                 # calculate cmap from current hand
                 obj_nn_dist_affordance, _ = get_NN(
@@ -131,6 +133,17 @@ class GraspTTA(torch.nn.Module):
                 recon_cmap = (
                     recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]
                 ).detach()
+                anim.add_frame(
+                    {
+                        "obj_pts": trimesh.PointCloud(
+                            obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
+                        ),
+                        "hand_mesh": trimesh.Trimesh(
+                            vertices=recon_xyz[0].cpu().detach().numpy(),
+                            faces=self.affine_mano.faces.cpu(),
+                        ),
+                    }
+                )
 
                 faces = self.affine_mano.faces.expand(B, -1, -1)
                 penetr_loss, consistency_loss, contact_loss = TTT_loss(
@@ -147,13 +160,10 @@ class GraspTTA(torch.nn.Module):
                     f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 )
                 loss.backward()
-
-                #print(f"recon_param.grad: {recon_param.grad} / requires_grad: {recon_param.requires_grad}") #if recon_param.grad is not None: #print(f"params grads norms: {torch.norm(recon_param.grad[:, :18]).mean(0)}, {torch.norm(recon_param.grad[:, 18:28]).mean(0)}, {torch.norm(recon_param.grad[:, 28:31]).mean(0)}, {torch.norm(recon_param.grad[:, 31]).mean(0)}") optimizer.step()
+                optimizer.step()
                 scheduler.step()
-        
-        print("========INITIAL=========")
-        print(initial_loss)
-        print("========================")
+
+        anim.save_animation("tto.html")
         # Final verts/joints:
         recon_xyz, recon_joints = self.affine_mano(
             recon_param[:, :18],
