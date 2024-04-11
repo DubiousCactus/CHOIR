@@ -89,20 +89,13 @@ class GraspTTA(torch.nn.Module):
             self.contactnet.eval()
             self._graspCVAE_model_pth = None
             self._contactnet_model_pth = None
-            # Freeze ContactNet:
-            for param in self.contactnet.parameters():
-                param.requires_grad = False
-            # Enable grads for GraspCVAE's decoder:
-            for param in self.graspcvae.decoder.parameters():
-                param.requires_grad = True
 
         B = obj_pts.size(0)
-        z = torch.randn([1, self.graspcvae.latent_size], device=obj_pts.device)
-        recon_param = (
-            self.graspcvae.inference(c=obj_pts.permute(0, 2, 1), z=z).clone().detach()
-        )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
+        recon_param = self.graspcvae.inference(
+            obj_pts.permute(0, 2, 1)
+        ).clone().detach()  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
         recon_param.requires_grad = True
-        # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        #optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
         optimizer = torch.optim.Adam([recon_param], lr=1e-5)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
@@ -155,9 +148,9 @@ class GraspTTA(torch.nn.Module):
                 )
                 loss.backward()
 
-                # print(f"recon_param.grad: {recon_param.grad} / requires_grad: {recon_param.requires_grad}") #if recon_param.grad is not None: #print(f"params grads norms: {torch.norm(recon_param.grad[:, :18]).mean(0)}, {torch.norm(recon_param.grad[:, 18:28]).mean(0)}, {torch.norm(recon_param.grad[:, 28:31]).mean(0)}, {torch.norm(recon_param.grad[:, 31]).mean(0)}") optimizer.step()
+                #print(f"recon_param.grad: {recon_param.grad} / requires_grad: {recon_param.requires_grad}") #if recon_param.grad is not None: #print(f"params grads norms: {torch.norm(recon_param.grad[:, :18]).mean(0)}, {torch.norm(recon_param.grad[:, 18:28]).mean(0)}, {torch.norm(recon_param.grad[:, 28:31]).mean(0)}, {torch.norm(recon_param.grad[:, 31]).mean(0)}") optimizer.step()
                 scheduler.step()
-
+        
         print("========INITIAL=========")
         print(initial_loss)
         print("========================")
