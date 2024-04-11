@@ -475,7 +475,8 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
 
     # cmap consistency loss
     consistency_loss = (
-        0.0001
+            #0.0001
+       0.001
         * torch.nn.functional.mse_loss(
             cmap_affordance, cmap_pointnet, reduction="none"
         ).sum()

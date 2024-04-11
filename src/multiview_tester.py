@@ -575,16 +575,6 @@ class MultiViewTester(MultiViewTrainer):
                         y_hat["joints"],
                         y_hat["anchors"],
                     )
-                    # Let's visualize what we have:
-                    pred_hand_mesh = trimesh.Trimesh(
-                        vertices=verts_pred[-1].detach().cpu().numpy(),
-                        faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
-                    )
-                    visualize_MANO(
-                        pred_hand_mesh,
-                        obj_mesh=batch_obj_data["mesh"][-1],
-                        opacity=1.0,
-                    )
                     eval_metrics["GraspTTA"] = self._compute_eval_metrics(
                         anchors_pred,
                         verts_pred,

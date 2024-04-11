@@ -66,16 +66,16 @@ class GraspTTA(torch.nn.Module):
                     project_conf.ANSI_COLORS["green"],
                 )
             )
-            # print(
-            # colorize(
-            # f"-> Loading GraspCVAE from {self._graspCVAE_model_pth}",
-            # project_conf.ANSI_COLORS["green"],
-            # )
-            # )
+            print(
+                colorize(
+                    f"-> Loading GraspCVAE from {self._graspCVAE_model_pth}",
+                    project_conf.ANSI_COLORS["green"],
+                )
+            )
             device = next(self.graspcvae.parameters()).device
-            # self.graspcvae.load_state_dict(
-            # torch.load(self._graspCVAE_model_pth, map_location=device)["model_ckpt"]
-            # )
+            self.graspcvae.load_state_dict(
+                torch.load(self._graspCVAE_model_pth, map_location=device)["model_ckpt"]
+            )
             print(
                 colorize(
                     f"-> Loading ContactNet from {self._contactnet_model_pth}",
@@ -97,9 +97,9 @@ class GraspTTA(torch.nn.Module):
             self.graspcvae.inference(obj_pts.permute(0, 2, 1)).clone().detach()
         )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
         recon_param.requires_grad = True
-        # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
-        optimizer = torch.optim.Adam([recon_param], lr=1e-5)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.8)
+        #optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        optimizer = torch.optim.Adam([recon_param], lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
         # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
         # If we need to sample more grasps, we can just call this function multiple times. But in
@@ -135,9 +135,9 @@ class GraspTTA(torch.nn.Module):
                 ).detach()
                 anim.add_frame(
                     {
-                        "obj_pts": trimesh.PointCloud(
+                        "obj_pts": trimesh.points.PointCloud(
                             obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
-                        ),
+                        ).convex_hull,
                         "hand_mesh": trimesh.Trimesh(
                             vertices=recon_xyz[0].cpu().detach().numpy(),
                             faces=self.affine_mano.faces.cpu(),
@@ -153,13 +153,16 @@ class GraspTTA(torch.nn.Module):
                     cmap_affordance,
                     recon_cmap,
                 )
-                loss = 1 * contact_loss + 1 * consistency_loss + 5 * penetr_loss
+                loss = 1 * contact_loss + 1 * consistency_loss + 3 * penetr_loss
                 if initial_loss is None:
                     initial_loss = f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 pbar.set_description(
                     f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 )
                 loss.backward()
+                with torch.no_grad():
+                    recon_param.grad[:, 28:] *= 0.0001 # Scale down the grads for 3D transl. so that the scale of PCA components is roughly the same
+                    #recon_param.grad[:, 31:] = 0.0 # Disable grads for 6D rot (we have wrist rot already)
                 optimizer.step()
                 scheduler.step()
 
