@@ -66,4 +66,4 @@ class affordanceNet(nn.Module):
         obj_glb_feature, _, _ = self.obj_encoder(obj_pc)
         recon = self.cvae.inference(B, obj_glb_feature)
         recon = recon.contiguous().view(B, self.mano_params_dim)
-        return recon, obj_glb_feature
+        return recon
