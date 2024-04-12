@@ -12,6 +12,7 @@ Eval utils.
 import multiprocessing
 import os
 import pickle
+from contextlib import redirect_stdout
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,9 +24,11 @@ import torch
 import trimesh
 import trimesh.voxel.creation as voxel_create
 from manotorch.upsamplelayer import UpSampleLayer
+from pytorch3d.transforms import Transform3d
 from tqdm import tqdm
 
 from utils import to_cuda_
+from utils.graspTTA_metrics.simulate import run_simulation
 
 
 def compute_mpjpe(
@@ -70,14 +73,68 @@ def compute_iv_sample(
     return np.count_nonzero((obj_voxel & hand_voxel)) * (pitch**3) * 1000000
 
 
+def compute_sim_displacement_sample(
+    obj_mesh_w_hand_verts: Tuple[trimesh.Trimesh, torch.Tensor, int],
+    hand_faces: torch.Tensor,
+) -> torch.Tensor:
+    obj_mesh, hand_verts, i = obj_mesh_w_hand_verts
+    try:
+        with redirect_stdout(None):
+            simu_disp = (
+                run_simulation(
+                    hand_verts.numpy(),
+                    hand_faces,
+                    obj_mesh[0],  # Vertices
+                    obj_mesh[1],  # Faces
+                    vhacd_exe="/Users/cactus/Code/v-hacd/bin",
+                    sample_idx=i,
+                    object_friction=1.2,
+                    hand_friction=1.2,
+                )
+                * 100
+            )  # Meters to cm
+    except:
+        # Idk, they do this in GraspTTA. I guess the thing can break for *very* bad grasps?
+        simu_disp = 10
+    return simu_disp
+
+
 def mp_compute_solid_intersection_volume(
     batch_obj_voxels: List,
     hand_verts: torch.Tensor,
     mesh_faces: torch.Tensor,
     pitch: float,
     radius: float,
-) -> Tuple[torch.Tensor, Dict]:
-    with multiprocessing.Pool(min(os.cpu_count() - 2, len(batch_obj_voxels))) as pool:
+    rotations: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    # If we have a list of rotations, we should apply them to the batch_obj_voxels. Otherwise the
+    # assert below should fail.
+    # Actually, we'll rotate the hands because that is MUCH easier to do than rotating the
+    # voxels (for which we'd need to do interpolation and finding the coordinate system and yeah
+    # whatever I don't actually know how to do it...).
+
+    if rotations is not None:
+        N_rot = rotations.shape[0] // len(batch_obj_voxels)
+        new_batch_obj_voxels, new_hand_verts = [], []
+        for i in range(hand_verts.shape[0]):
+            these_hand_verts = (
+                Transform3d(device=hand_verts.device, dtype=hand_verts.dtype)
+                .rotate(rotations[i])
+                .transform_points(hand_verts[i])
+            )
+            new_batch_obj_voxels.append(batch_obj_voxels[i // N_rot])
+            new_hand_verts.append(these_hand_verts)
+        new_hand_verts = torch.stack(new_hand_verts, dim=0)
+    else:
+        new_batch_obj_voxels = batch_obj_voxels
+        new_hand_verts = hand_verts
+
+    assert (
+        len(new_batch_obj_voxels) == new_hand_verts.shape[0]
+    ), "Batch sizes between object voxels and hand vertices don't match!"
+    with multiprocessing.Pool(
+        min(os.cpu_count() - 2, len(new_batch_obj_voxels))
+    ) as pool:
         results = tqdm(
             pool.imap(
                 partial(
@@ -87,12 +144,73 @@ def mp_compute_solid_intersection_volume(
                     mesh_faces=mesh_faces,
                 ),
                 zip(
-                    batch_obj_voxels,
-                    [hand_verts[i].cpu() for i in range(len(batch_obj_voxels))],
+                    new_batch_obj_voxels,
+                    [new_hand_verts[i].cpu() for i in range(len(new_batch_obj_voxels))],
                 ),
             ),
-            total=len(batch_obj_voxels),
+            total=len(new_batch_obj_voxels),
             desc="Computing SIV",
+        )
+
+        # Collate the results as one tensor:
+        return torch.tensor(list(results)).float().mean()
+
+
+def mp_compute_sim_displacement(
+    batch_obj_meshes: List,
+    hand_verts: torch.Tensor,
+    hand_faces: torch.Tensor,
+    rotations: torch.Tensor,
+) -> torch.Tensor:
+    assert (
+        rotations is not None
+    ), "Rotations must be provided to compute sim. displacement."
+    obj_data = []
+    if rotations is not None:
+        N_rot = rotations.shape[0] // len(batch_obj_meshes)
+        for i in tqdm(
+            range(hand_verts.shape[0]), desc="Preprocessing for sim. displacement"
+        ):
+            # We may be able to use multiprocesing, but for now I'm just taking GraspTTA's
+            # code and will see later if it's possible.
+            R = rotations[i]
+            # Note that we have N * the original batch size (which applies for
+            # batch_obj_data["mesh"]) because we have N augmentations per batch
+            # element. So we need to divide by N to get the correct index.
+            obj_mesh = batch_obj_meshes[i // N_rot]
+            obj_mesh = o3dg.TriangleMesh(
+                o3du.Vector3dVector(obj_mesh.vertices),
+                o3du.Vector3iVector(obj_mesh.faces),
+            )
+            obj_mesh.translate(-obj_mesh.get_center())
+            obj_mesh.rotate(R.cpu().numpy(), np.array([0, 0, 0]))
+            obj_data.append(
+                (np.asarray(obj_mesh.vertices), np.asarray(obj_mesh.triangles))
+            )
+    else:
+        obj_data = [
+            (np.asarray(obj.vertices), np.asarray(obj.faces))
+            for obj in batch_obj_meshes
+        ]
+
+    assert (
+        len(obj_data) == hand_verts.shape[0]
+    ), "Batch sizes between object meshes and hand vertices don't match!"
+    with multiprocessing.Pool(min(os.cpu_count() - 2, len(obj_data))) as pool:
+        results = tqdm(
+            pool.imap(
+                partial(
+                    compute_sim_displacement_sample,
+                    hand_faces=hand_faces,
+                ),
+                zip(
+                    obj_data,
+                    [hand_verts[i].detach().cpu() for i in range(len(obj_data))],
+                    list(range(len(obj_data))),
+                ),
+            ),
+            total=len(obj_data),
+            desc="Computing sim. displacement",
         )
 
         # Collate the results as one tensor:

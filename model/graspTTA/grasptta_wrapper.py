@@ -12,7 +12,6 @@ GraspTTA wrapper aroung GraspCVAE and ContactNet.
 from typing import Optional
 
 import torch
-import trimesh
 from tqdm import tqdm
 
 import conf.project as project_conf
@@ -21,7 +20,6 @@ from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
 from model.graspTTA.ContactNet import pointnet_reg
 from src.losses.graspTTA import TTT_loss, get_NN, get_pseudo_cmap
 from utils import colorize
-from utils.visualization import ScenePicAnim
 
 
 class GraspTTA(torch.nn.Module):
@@ -97,7 +95,7 @@ class GraspTTA(torch.nn.Module):
             self.graspcvae.inference(obj_pts.permute(0, 2, 1)).clone().detach()
         )  # Input: (B, 3, N), Output: (B, N_MANO_PARAMS)
         recon_param.requires_grad = True
-        #optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
+        # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
         optimizer = torch.optim.Adam([recon_param], lr=1e-3)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
         # TODO: The original implementation applies 1e6 random rotations to the object to obtain
@@ -107,8 +105,7 @@ class GraspTTA(torch.nn.Module):
         # needed?
 
         pbar = tqdm(range(self.tto_steps), desc="TTO")
-        initial_loss = None
-        anim = ScenePicAnim()
+        # anim = ScenePicAnim()
         with torch.enable_grad():
             for _ in pbar:  # non-learning based optimization steps
                 optimizer.zero_grad()
@@ -133,17 +130,17 @@ class GraspTTA(torch.nn.Module):
                 recon_cmap = (
                     recon_cmap / torch.max(recon_cmap, dim=1, keepdim=True)[0]
                 ).detach()
-                anim.add_frame(
-                    {
-                        "obj_pts": trimesh.points.PointCloud(
-                            obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
-                        ).convex_hull,
-                        "hand_mesh": trimesh.Trimesh(
-                            vertices=recon_xyz[0].cpu().detach().numpy(),
-                            faces=self.affine_mano.faces.cpu(),
-                        ),
-                    }
-                )
+                # anim.add_frame(
+                # {
+                # "obj_pts": trimesh.points.PointCloud(
+                # obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
+                # ).convex_hull,
+                # "hand_mesh": trimesh.Trimesh(
+                # vertices=recon_xyz[0].cpu().detach().numpy(),
+                # faces=self.affine_mano.faces.cpu(),
+                # ),
+                # }
+                # )
 
                 faces = self.affine_mano.faces.expand(B, -1, -1)
                 penetr_loss, consistency_loss, contact_loss = TTT_loss(
@@ -154,19 +151,19 @@ class GraspTTA(torch.nn.Module):
                     recon_cmap,
                 )
                 loss = 1 * contact_loss + 1 * consistency_loss + 3 * penetr_loss
-                if initial_loss is None:
-                    initial_loss = f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 pbar.set_description(
                     f"Loss: {loss.item():.4f} Contact: {contact_loss.item():.4f} Consistency: {consistency_loss.item():.4f} Penetr: {penetr_loss.item():.4f}"
                 )
                 loss.backward()
                 with torch.no_grad():
-                    recon_param.grad[:, 28:] *= 0.0001 # Scale down the grads for 3D transl. so that the scale of PCA components is roughly the same
-                    #recon_param.grad[:, 31:] = 0.0 # Disable grads for 6D rot (we have wrist rot already)
+                    recon_param.grad[
+                        :, 28:
+                    ] *= 0.0001  # Scale down the grads for 3D transl. so that the scale of PCA components is roughly the same
+                    # recon_param.grad[:, 31:] = 0.0 # Disable grads for 6D rot (we have wrist rot already)
                 optimizer.step()
                 scheduler.step()
 
-        anim.save_animation("tto.html")
+        # anim.save_animation("tto.html")
         # Final verts/joints:
         recon_xyz, recon_joints = self.affine_mano(
             recon_param[:, :18],

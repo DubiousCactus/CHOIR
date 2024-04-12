@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import trimesh
+from pytorch3d.transforms import Transform3d, random_rotations
 
 from model.affine_mano import AffineMANO
 from src.multiview_tester import MultiViewTester
@@ -34,14 +35,37 @@ class GraspTTATester(MultiViewTester):
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
-        recon_xyz, recon_joints, recon_anchors, _ = self._model(
-            labels["obj_pts"][:, -1],
+        # TODO: Apply N random rotations to the object point cloud and aggregate the results
+        N = 3
+        obj = labels["obj_pts"][:, -1]
+        B = obj.shape[0]
+        batch_recon_xyz, batch_recon_joints, batch_recon_anchors, batch_rotations = (
+            [],
+            [],
+            [],
+            [],
         )
+        for _ in range(N):
+            R = random_rotations(B, device=obj.device, dtype=obj.dtype)
+            transform = Transform3d(device=obj.device, dtype=obj.dtype).rotate(R)
+            aug_obj = transform.transform_points(obj)
+            recon_xyz, recon_joints, recon_anchors, _ = self._model(
+                aug_obj,
+            )
+            batch_recon_xyz.append(recon_xyz)
+            batch_recon_joints.append(recon_joints)
+            batch_recon_anchors.append(recon_anchors)
+            batch_rotations.append(R)
+        recon_xyz = torch.stack(batch_recon_xyz).view(N * B, -1, 3)
+        recon_joints = torch.stack(batch_recon_joints).view(N * B, -1, 21, 3)
+        recon_anchors = torch.stack(batch_recon_anchors).view(N * B, -1, 32, 3)
+        rotations = torch.stack(batch_rotations).view(N * B, 3, 3)
         return {
             "verts": recon_xyz,
             "joints": recon_joints,
             "anchors": recon_anchors,
             "faces": self.affine_mano.faces,
+            "rotations": rotations,
         }
 
     @to_cuda

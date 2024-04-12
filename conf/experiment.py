@@ -473,8 +473,10 @@ class RunConfig:
     enable_contacts_tto: bool = True
     use_ema: bool = False
     compute_iv: bool = True
+    compute_sim_displacement: bool = True
     compile_test_model: bool = False
     compute_contact_scores: bool = True
+    compute_pose_error: bool = True
     debug_tto: bool = False
     dump_videos: bool = False
     # RunConfig was never meant to be soiled like this :'(
@@ -1332,6 +1334,12 @@ experiment_store(
         model=dict(mano_params_dim=37),
         data_loader=dict(batch_size=64),
         bases=(Experiment,),
+        run=dict(
+            compute_pose_error=False,
+            compute_contact_scores=False,
+            compute_iv=True,
+            compute_sim_displacement=True,
+        ),
     ),
     name="grasp_tta_wrapped_contactpose",
 )
