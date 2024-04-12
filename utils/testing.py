@@ -162,9 +162,6 @@ def mp_compute_sim_displacement(
     hand_faces: torch.Tensor,
     rotations: torch.Tensor,
 ) -> torch.Tensor:
-    assert (
-        rotations is not None
-    ), "Rotations must be provided to compute sim. displacement."
     obj_data = []
     if rotations is not None:
         N_rot = rotations.shape[0] // len(batch_obj_meshes)

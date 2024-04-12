@@ -479,6 +479,7 @@ class RunConfig:
     compute_pose_error: bool = True
     debug_tto: bool = False
     dump_videos: bool = False
+    inference_mode: str = "denoising"  # "denoising" or "generation"
     # RunConfig was never meant to be soiled like this :'(
 
 
@@ -1339,6 +1340,7 @@ experiment_store(
             compute_contact_scores=False,
             compute_iv=True,
             compute_sim_displacement=True,
+            inference_mode="generation",
         ),
     ),
     name="grasp_tta_wrapped_contactpose",

@@ -124,6 +124,7 @@ class MultiViewTester(MultiViewTrainer):
         self._debug_tto = kwargs.get("debug_tto", False)
         self._plot_contacts = kwargs.get("plot_contacts", False)
         self._dump_videos = kwargs.get("dump_videos", False)
+        self._inference_mode = kwargs.get("inference_mode", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -316,9 +317,10 @@ class MultiViewTester(MultiViewTrainer):
             batch_sim_displacement = torch.inf
             if self._compute_sim_displacement:
                 # ====== Simulation displacement ======
-                assert (
-                    rotations is not None
-                ), "Rotations must be provided to compute sim. displacement."
+                if self._is_grasptta:
+                    assert (
+                        rotations is not None
+                    ), "For GraspTTA, rotations must be provided to compute sim. displacement."
                 batch_sim_displacement = mp_compute_sim_displacement(
                     batch_obj_data["mesh"], verts_pred, mano_faces, rotations
                 )
@@ -706,6 +708,7 @@ class MultiViewTester(MultiViewTrainer):
                         gt_verts,
                         gt_joints,
                         batch_obj_data,
+                        rotations=y_hat.get("rotations", None),
                     )
                     if self._enable_contacts_tto:
                         # del anchors_pred, verts_pred, joints_pred
@@ -866,6 +869,7 @@ class MultiViewTester(MultiViewTrainer):
                             gt_verts,
                             gt_joints,
                             batch_obj_data,
+                            rotations=y_hat.get("rotations", None),
                         )
         return eval_metrics
 

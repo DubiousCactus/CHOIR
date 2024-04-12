@@ -6,7 +6,6 @@
 # Distributed under terms of the MIT license.
 
 
-import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -26,6 +25,7 @@ class MultiViewDDPMTester(MultiViewTester):
         self._model_contacts = kwargs.get("model_contacts", False)
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._use_ema = kwargs.get("use_ema", False)
+        self._n_augmentations = 10
         if self._model_contacts:
             self._model.backbone.set_anchor_indices(
                 self._data_loader.dataset.anchor_indices
@@ -60,10 +60,12 @@ class MultiViewDDPMTester(MultiViewTester):
                     )
                 )
             )
-            if self._single_modality is not None:
-                modality = self._single_modality
+            if self._single_modality is None:
+                modality = (
+                    "noisy_pair" if self._inference_mode == "denoising" else "object"
+                )
             else:
-                modality = random.choice(["noisy_pair", "object"])
+                modality = self._single_modality
 
             y = samples["choir"] if self.conditional else None
 
@@ -123,19 +125,23 @@ class MultiViewDDPMTester(MultiViewTester):
         if self._single_modality is not None:
             modality = self._single_modality
         else:
-            #modality = random.choice(["noisy_pair", "object"])
-            modality = "noisy_pair"
+            modality = "noisy_pair" if self._inference_mode == "denoising" else "object"
         y = samples["choir"][:, :max_observations] if self.conditional else None
         print(f"[*] Using modality: {modality}")
         if modality == "object":
             y = y[..., 0].unsqueeze(-1)
         elif modality == "noisy_pair":
-            pass  # Already comes in noisy_pair modality
+            # Already comes in noisy_pair modality
+            pass
         udf, contacts = model.generate(
             1,
             y=y,
             y_modality=modality,
         )
+        rotations = None
         # Only use 1 sample for now. TODO: use more samples and average?
+        # No, I will do what GraspTTA is doing: apply N random rotations to the object and draw one
+        # sample. It's the fairest way to compare since GraspTTA can't get any grasp variations
+        # from just sampling z (unlike ours hehehe).
         udf, contacts = udf.squeeze(1), contacts.squeeze(1)
-        return {"choir": udf, "contacts": contacts}
+        return {"choir": udf, "contacts": contacts, "rotations": rotations}
