@@ -27,6 +27,7 @@ class GraspTTATester(MultiViewTester):
         self._data_loader.dataset.set_observations_number(1)
         self.affine_mano: AffineMANO = to_cuda_(AffineMANO(for_contactpose=True))  # type: ignore
         self._is_grasptta = True
+        self._n_augmentations = 10
 
     def _inference(
         self,
@@ -35,8 +36,6 @@ class GraspTTATester(MultiViewTester):
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
-        # TODO: Apply N random rotations to the object point cloud and aggregate the results
-        N = 3
         obj = labels["obj_pts"][:, -1]
         B = obj.shape[0]
         batch_recon_xyz, batch_recon_joints, batch_recon_anchors, batch_rotations = (
@@ -45,7 +44,10 @@ class GraspTTATester(MultiViewTester):
             [],
             [],
         )
-        for _ in range(N):
+        # The original implementation relies on random object rotations to obtain grasp variations.
+        # Otherwise, the sampled latent in the CVAE doesn't change the output (a strong weakness of the
+        # method?).
+        for _ in range(self._n_augmentations):
             R = random_rotations(B, device=obj.device, dtype=obj.dtype)
             transform = Transform3d(device=obj.device, dtype=obj.dtype).rotate(R)
             aug_obj = transform.transform_points(obj)
@@ -56,10 +58,14 @@ class GraspTTATester(MultiViewTester):
             batch_recon_joints.append(recon_joints)
             batch_recon_anchors.append(recon_anchors)
             batch_rotations.append(R)
-        recon_xyz = torch.stack(batch_recon_xyz).view(N * B, -1, 3)
-        recon_joints = torch.stack(batch_recon_joints).view(N * B, -1, 21, 3)
-        recon_anchors = torch.stack(batch_recon_anchors).view(N * B, -1, 32, 3)
-        rotations = torch.stack(batch_rotations).view(N * B, 3, 3)
+        recon_xyz = torch.stack(batch_recon_xyz).view(self._n_augmentations * B, -1, 3)
+        recon_joints = torch.stack(batch_recon_joints).view(
+            self._n_augmentations * B, -1, 21, 3
+        )
+        recon_anchors = torch.stack(batch_recon_anchors).view(
+            self._n_augmentations * B, -1, 32, 3
+        )
+        rotations = torch.stack(batch_rotations).view(self._n_augmentations * B, 3, 3)
         return {
             "verts": recon_xyz,
             "joints": recon_joints,
