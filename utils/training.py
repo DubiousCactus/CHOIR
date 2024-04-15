@@ -33,6 +33,7 @@ def optimize_pose_pca_from_choir(
     is_rhand: bool,
     use_smplx: bool,
     dataset: str,
+    anchor_obj_udf: Optional[torch.Tensor] = None,
     contact_gaussians: Optional[torch.Tensor] = None,
     obj_pts: Optional[torch.Tensor] = None,
     obj_normals: Optional[torch.Tensor] = None,
@@ -144,6 +145,9 @@ def optimize_pose_pca_from_choir(
             bps[None, :] / scalar[:, None, :]
         )  # BPS should be scaled down to fit the MANO model in the same scale.
 
+    assert (
+        obj_pts is not None
+    ), "obj_pts must be provided no matter what (because of the new UDF term)."
     choir_loss = CHOIRFittingLoss().to(choir.device)
 
     plateau_cnt = 0
@@ -160,7 +164,12 @@ def optimize_pose_pca_from_choir(
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
-        anchor_loss = choir_w * choir_loss(anchors, choir, bps, anchor_indices)
+        anchor_loss, anchor_obj_loss = choir_loss(
+            anchors, choir, anchor_obj_udf, obj_pts, bps, anchor_indices
+        )
+        anchor_loss = choir_w * anchor_loss
+        anchor_obj_loss = choir_w * anchor_obj_loss
+        pose_loss = anchor_loss + anchor_obj_loss
         shape_regularizer = beta_w * torch.norm(
             beta
         )  # Encourage the shape parameters to remain close to 0
@@ -168,18 +177,15 @@ def optimize_pose_pca_from_choir(
             pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
 
         proc_bar.set_description(
-            f"Anchors loss: {anchor_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+            f"Anchors loss: {anchor_loss.item():.10f} / Anchor-Obj loss: {anchor_obj_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
         )
-        if (
-            torch.abs(prev_loss - anchor_loss.detach().type(torch.float32))
-            <= loss_thresh
-        ):
+        if torch.abs(prev_loss - pose_loss.detach().type(torch.float32)) <= loss_thresh:
             plateau_cnt += 1
         else:
             plateau_cnt = 0
-        prev_loss = anchor_loss.detach().type(torch.float32)
-        anchor_loss = anchor_loss + shape_regularizer + pose_regularizer
-        anchor_loss.backward()
+        prev_loss = pose_loss.detach().type(torch.float32)
+        pose_loss = pose_loss + shape_regularizer + pose_regularizer
+        pose_loss.backward()
         optimizer.step()
         scheduler.step()
         if plateau_cnt >= 10:
@@ -473,8 +479,7 @@ def optimize_mesh_from_joints_and_anchors(
         )  # Encourage the shape parameters to remain close to 0
         pose_regularizer = theta_w * torch.norm(theta)
         abs_pose_regularizer = 0.3 * (
-            1e-1 * torch.norm(trans - trans_base)
-            + 1e-2 * torch.norm(rot - rot_base)
+            1e-1 * torch.norm(trans - trans_base) + 1e-2 * torch.norm(rot - rot_base)
         )
         proc_bar.set_description(
             f"Contacts: {contact_loss.item():.8f} / Penetration: {penetration_loss.item():.8f}  / Shape reg: {shape_regularizer.item():.8f} "

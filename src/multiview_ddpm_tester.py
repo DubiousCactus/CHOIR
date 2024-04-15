@@ -73,7 +73,10 @@ class MultiViewDDPMTester(MultiViewTester):
                 y = y[..., 0].unsqueeze(-1)
             elif modality == "noisy_pair":
                 pass  # Already comes in noisy_pair modality
-            self._model(x, y, y_modality=modality)
+
+            x_anchor_obj_udf = labels["anchor_obj_dists"][:, -1]
+            y_anchor_obj_udf = samples["anchor_obj_dists"]
+            self._model(x, y, x_anchor_obj_udf, y_anchor_obj_udf, y_modality=modality)
             if self._ema is not None:
                 self._ema.ema_model(x, y, y_modality=modality)
         print("[+] Done!")
@@ -133,7 +136,7 @@ class MultiViewDDPMTester(MultiViewTester):
         elif modality == "noisy_pair":
             # Already comes in noisy_pair modality
             pass
-        udf, contacts = model.generate(
+        udf, contacts, anchor_obj_udf = model.generate(
             1,
             y=y,
             y_modality=modality,
@@ -143,5 +146,14 @@ class MultiViewDDPMTester(MultiViewTester):
         # No, I will do what GraspTTA is doing: apply N random rotations to the object and draw one
         # sample. It's the fairest way to compare since GraspTTA can't get any grasp variations
         # from just sampling z (unlike ours hehehe).
-        udf, contacts = udf.squeeze(1), contacts.squeeze(1)
-        return {"choir": udf, "contacts": contacts, "rotations": rotations}
+        udf, contacts, anchor_obj_udf = (
+            udf.squeeze(1),
+            contacts.squeeze(1),
+            anchor_obj_udf.squeeze(1),
+        )
+        return {
+            "choir": udf,
+            "contacts": contacts,
+            "rotations": rotations,
+            "anchor_obj_udf": anchor_obj_udf,
+        }

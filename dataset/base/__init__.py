@@ -420,6 +420,8 @@ class BaseDataset(TaskSet, abc.ABC):
             [],
             [],
             [],
+            [],
+            [],
         )
 
         for sample_path in samples_paths:

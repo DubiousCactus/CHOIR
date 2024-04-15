@@ -862,7 +862,11 @@ class ContactUNetBackboneModel(torch.nn.Module):
         y: Optional[torch.tensor] = None,
         debug: bool = False,
     ) -> torch.Tensor:
-        udf_input_shape, contacts_input_shape = x_udf.shape, x_contacts.shape
+        udf_input_shape, contacts_input_shape, anchor_obj_udf_input_shape = (
+            x_udf.shape,
+            x_contacts.shape,
+            x_anchor_obj_udf.shape,
+        )
         bs, ctx_len = x_udf.shape[0], (x_udf.shape[1] if len(x_udf.shape) == 4 else 1)
         if ctx_len > 1:
             if self.multi_scale_encoder:
@@ -968,7 +972,9 @@ class ContactUNetBackboneModel(torch.nn.Module):
         contact_gaussians = c5[
             ..., : (self.n_gaussian_params - 1) * self.n_anchors
         ].view(contacts_input_shape)
-        anchor_obj_udf = c5[..., (self.n_gaussian_params - 1) * self.n_anchors :]
+        anchor_obj_udf = c5[..., (self.n_gaussian_params - 1) * self.n_anchors :].view(
+            anchor_obj_udf_input_shape
+        )
         return output, contact_gaussians, anchor_obj_udf
 
 
