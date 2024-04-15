@@ -6,7 +6,6 @@
 # Distributed under terms of the MIT license.
 
 
-import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -26,22 +25,25 @@ class MultiViewDDPMTester(MultiViewTester):
         self._model_contacts = kwargs.get("model_contacts", False)
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._use_ema = kwargs.get("use_ema", False)
+        self._n_augmentations = 10
         if self._model_contacts:
             self._model.backbone.set_anchor_indices(
                 self._data_loader.dataset.anchor_indices
             )
             self._model.set_dataset_stats(self._data_loader.dataset)
-            self._ema.ema_model.backbone.set_anchor_indices(
-                self._data_loader.dataset.anchor_indices
-            )
-            self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
+            if self._ema is not None:
+                self._ema.ema_model.backbone.set_anchor_indices(
+                    self._data_loader.dataset.anchor_indices
+                )
+                self._ema.ema_model.set_dataset_stats(self._data_loader.dataset)
         self._single_modality = self._model.single_modality
         # Because I infer the shape of the model from the data, I need to
         # run the model's forward pass once before calling .generate()
         if kwargs.get("compile_test_model", False):
             print("[*] Compiling the model...")
             self._model = torch.compile(self._model)
-            self._ema.ema_model = torch.compile(self._ema.ema_model)
+            if self._ema is not None:
+                self._ema.ema_model = torch.compile(self._ema.ema_model)
         print("[*] Running the model's forward pass once...")
         with torch.no_grad():
             samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
@@ -58,10 +60,12 @@ class MultiViewDDPMTester(MultiViewTester):
                     )
                 )
             )
-            if self._single_modality is not None:
-                modality = self._single_modality
+            if self._single_modality is None:
+                modality = (
+                    "noisy_pair" if self._inference_mode == "denoising" else "object"
+                )
             else:
-                modality = random.choice(["noisy_pair", "object"])
+                modality = self._single_modality
 
             y = samples["choir"] if self.conditional else None
 
@@ -70,7 +74,8 @@ class MultiViewDDPMTester(MultiViewTester):
             elif modality == "noisy_pair":
                 pass  # Already comes in noisy_pair modality
             self._model(x, y, y_modality=modality)
-            self._ema.ema_model(x, y, y_modality=modality)
+            if self._ema is not None:
+                self._ema.ema_model(x, y, y_modality=modality)
         print("[+] Done!")
 
     @to_cuda
@@ -120,19 +125,23 @@ class MultiViewDDPMTester(MultiViewTester):
         if self._single_modality is not None:
             modality = self._single_modality
         else:
-            #modality = random.choice(["noisy_pair", "object"])
-            modality = "object"
+            modality = "noisy_pair" if self._inference_mode == "denoising" else "object"
         y = samples["choir"][:, :max_observations] if self.conditional else None
         print(f"[*] Using modality: {modality}")
         if modality == "object":
             y = y[..., 0].unsqueeze(-1)
         elif modality == "noisy_pair":
-            pass  # Already comes in noisy_pair modality
+            # Already comes in noisy_pair modality
+            pass
         udf, contacts = model.generate(
             1,
             y=y,
             y_modality=modality,
         )
+        rotations = None
         # Only use 1 sample for now. TODO: use more samples and average?
+        # No, I will do what GraspTTA is doing: apply N random rotations to the object and draw one
+        # sample. It's the fairest way to compare since GraspTTA can't get any grasp variations
+        # from just sampling z (unlike ours hehehe).
         udf, contacts = udf.squeeze(1), contacts.squeeze(1)
-        return {"choir": udf, "contacts": contacts}
+        return {"choir": udf, "contacts": contacts, "rotations": rotations}

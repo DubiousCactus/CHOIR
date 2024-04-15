@@ -41,6 +41,7 @@ from utils.dataset import (
     get_contact_counts_by_neighbourhoods,
     get_scalar,
 )
+from utils.testing import fit_sigmoid
 from utils.visualization import (
     visualize_3D_gaussians_on_hand_mesh,
     visualize_CHOIR,
@@ -142,7 +143,7 @@ class ContactPoseDataset(BaseDataset):
         eval_anchor_assignment: bool = False,
         use_deltas: bool = False,
         use_bps_grid: bool = False,
-        compute_pointclouds: bool = False,
+        load_pointclouds: bool = False,
     ) -> None:
         assert max_views_per_grasp <= noisy_samples_per_grasp
         assert max_views_per_grasp > 0
@@ -202,7 +203,7 @@ class ContactPoseDataset(BaseDataset):
             random_anchor_assignment=random_anchor_assignment,
             use_deltas=use_deltas,
             use_bps_grid=use_bps_grid,
-            compute_pointclouds=compute_pointclouds,
+            load_pointclouds=load_pointclouds,
             augment=augment,
             n_augs=n_augs,
             split=split,
@@ -531,7 +532,7 @@ class ContactPoseDataset(BaseDataset):
                         np.asarray(
                             obj_mesh.sample_points_uniformly(self._obj_ptcld_size).points  # type: ignore
                         )
-                    )
+                    ).float()
                     # ============ Shift the pair to the object's center ============
                     # When we augment we necessarily recenter on the object, so we don't need to do
                     # it here (except for k=0).
@@ -563,6 +564,22 @@ class ContactPoseDataset(BaseDataset):
                         use_deltas=self._use_deltas,
                     )
                     # ========== Compute ground-truth contact points ================
+                    # =============== Object contact map for GraspTTA ===============
+                    vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
+                    obj_contacts = np.zeros((obj_ptcld.shape[0], 1))
+                    # assign contact value using nearest neighbor search with vertex colors:
+                    dists = torch.cdist(
+                        obj_ptcld,
+                        torch.from_numpy(
+                            np.asarray(obj_mesh.vertices, dtype=np.float32)
+                        ),
+                    )
+                    nearest_vcolors = vertex_colors[dists.argmin(dim=-1)]
+                    obj_contacts = torch.from_numpy(
+                        np.expand_dims(fit_sigmoid(nearest_vcolors[:, 0]), axis=1)
+                    )
+                    # ============================================================
+                    # =================== Contact Gaussians =======================
                     gt_hand_mesh = o3dg.TriangleMesh()
                     gt_hand_mesh.vertices = o3du.Vector3dVector(
                         gt_verts[0].detach().cpu().numpy()
@@ -714,6 +731,8 @@ class ContactPoseDataset(BaseDataset):
                         scalar = get_scalar(anchors, obj_ptcld, self._rescale)
                         # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                         # workers, but bps_torch is forcing my hand here so I might as well help it.
+                        # EDIT: Anyways, this method isn't called in the dataloader so it's
+                        # totally fine.
                         choir, rescaled_ref_pts = compute_choir(
                             obj_ptcld.unsqueeze(0),
                             anchors,
@@ -750,6 +769,8 @@ class ContactPoseDataset(BaseDataset):
                             gt_contact_gaussian_params.squeeze().cpu().numpy()
                             if self._model_contacts
                             else torch.zeros(1).cpu().numpy(),
+                            obj_ptcld.squeeze().cpu().numpy(),
+                            obj_contacts.squeeze().cpu().numpy(),
                         )
                         # =================================================================
 

@@ -47,6 +47,7 @@ from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
 from src.ddpm_trainer import DDPMTrainer
 from src.grasptta_contactnet_trainer import ContactNetTrainer
+from src.grasptta_graspcvae_tester import GraspCVAETester
 from src.grasptta_graspcvae_trainer import GraspCVAETrainer
 from src.grasptta_tester import GraspTTATester
 from src.losses.diffusion import DDPMLoss
@@ -114,7 +115,7 @@ dataset_store(
         use_improved_contactopt_splits=False,
         eval_observations_plateau=False,
         eval_anchor_assignment=False,
-        compute_pointclouds=False,
+        load_pointclouds=False,
         model_contacts=False,
     ),
     name="contactpose",
@@ -472,10 +473,13 @@ class RunConfig:
     enable_contacts_tto: bool = True
     use_ema: bool = False
     compute_iv: bool = True
+    compute_sim_displacement: bool = True
     compile_test_model: bool = False
     compute_contact_scores: bool = True
+    compute_pose_error: bool = True
     debug_tto: bool = False
     dump_videos: bool = False
+    inference_mode: str = "denoising"  # "denoising" or "generation"
     # RunConfig was never meant to be soiled like this :'(
 
 
@@ -516,6 +520,10 @@ tester_store(
 tester_store(
     pbuilds(GraspTTATester, populate_full_signature=True),
     name="grasp_tta",
+)
+tester_store(
+    pbuilds(GraspCVAETester, populate_full_signature=True),
+    name="grasp_tta_cvae",
 )
 
 Experiment = builds(
@@ -1258,7 +1266,7 @@ experiment_store(
             "_self_",
             {"override /model": "grasp_tta_cvae"},
             {"override /trainer": "grasp_tta_cvae"},
-            {"override /tester": "grasp_tta"},
+            {"override /tester": "grasp_tta_cvae"},
             {"override /dataset": "contactpose"},
             {"override /training_loss": "grasp_tta_cvae"},
         ],
@@ -1266,8 +1274,10 @@ experiment_store(
             perturbation_level=2,
             max_views_per_grasp=1,
             use_improved_contactopt_splits=True,
-            augment=False,
-            compute_pointclouds=True,
+            augment=True,
+            n_augs=20,
+            obj_ptcld_size=3000,
+            load_pointclouds=True,
         ),
         model=dict(mano_params_dim=37),
         data_loader=dict(batch_size=128),
@@ -1291,8 +1301,10 @@ experiment_store(
             perturbation_level=2,
             max_views_per_grasp=1,
             use_improved_contactopt_splits=True,
-            augment=False,
-            compute_pointclouds=True,
+            augment=True,
+            n_augs=20,
+            obj_ptcld_size=3000,
+            load_pointclouds=True,
         ),
         data_loader=dict(batch_size=64),
         bases=(Experiment,),
@@ -1315,12 +1327,21 @@ experiment_store(
             perturbation_level=2,
             max_views_per_grasp=1,
             use_improved_contactopt_splits=True,
-            augment=False,
-            compute_pointclouds=True,
+            obj_ptcld_size=3000,
+            augment=True,
+            n_augs=20,
+            load_pointclouds=True,
         ),
         model=dict(mano_params_dim=37),
         data_loader=dict(batch_size=64),
         bases=(Experiment,),
+        run=dict(
+            compute_pose_error=False,
+            compute_contact_scores=False,
+            compute_iv=True,
+            compute_sim_displacement=True,
+            inference_mode="generation",
+        ),
     ),
     name="grasp_tta_wrapped_contactpose",
 )

@@ -16,8 +16,9 @@ import chamfer_distance as chd
 import numpy as np
 import torch
 from pytorch3d.loss import chamfer_distance
-from pytorch3d.ops.knn import knn_points
 from pytorch3d.structures import Meshes
+
+from utils import to_cuda_
 
 
 def get_pseudo_cmap(nn_dists):
@@ -78,17 +79,22 @@ def get_NN(src_xyz, trg_xyz, k=1):
     :return: nn_dists, nn_dix: all [B, 3000] tensor for NN distance and index in N2
     """
     B = src_xyz.size(0)
-    src_lengths = torch.full(
-        (src_xyz.shape[0],), src_xyz.shape[1], dtype=torch.int64, device=src_xyz.device
-    )  # [B], N for each num
-    trg_lengths = torch.full(
-        (trg_xyz.shape[0],), trg_xyz.shape[1], dtype=torch.int64, device=trg_xyz.device
-    )
-    src_nn = knn_points(
-        src_xyz, trg_xyz, lengths1=src_lengths, lengths2=trg_lengths, K=k
-    )  # [dists, idx]
-    nn_dists = src_nn.dists[..., 0]
-    nn_idx = src_nn.idx[..., 0]
+    # src_lengths = torch.full(
+    # (src_xyz.shape[0],), src_xyz.shape[1], dtype=torch.int64, device=src_xyz.device
+    # )  # [B], N for each num
+    # trg_lengths = torch.full(
+    # (trg_xyz.shape[0],), trg_xyz.shape[1], dtype=torch.int64, device=trg_xyz.device
+    # )
+    # src_nn = knn_points(
+    # src_xyz, trg_xyz, lengths1=src_lengths, lengths2=trg_lengths, K=k
+    # )  # [dists, idx]
+    # nn_dists = src_nn.dists[..., 0]
+    # nn_idx = src_nn.idx[..., 0]
+    # Can just do that with pytorch!
+    src_nn = torch.cdist(src_xyz, trg_xyz)
+    src_nn = src_nn.topk(k=k, largest=False)
+    nn_dists = src_nn.values[..., 0] ** 2  # knn_points returns squared distances
+    nn_idx = src_nn.indices[..., 0]
     return nn_dists, nn_idx
 
 
@@ -158,9 +164,7 @@ class GraspCVAELoss(torch.nn.Module):
         hand_weights_path: str = "rhand_weights.npy",
     ):
         super().__init__()
-        self.emd_module = importlib.import_module(
-            "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
-        )
+        self.emd_module = None
         self.a = a
         self.b = b
         self.c = c
@@ -308,6 +312,11 @@ class GraspCVAELoss(torch.nn.Module):
                 recon_x, x, point_reduction="sum", batch_reduction="mean"
             )
         elif loss_tpye == "EMD":
+            if self.emd_module is None:
+                # I can't install it on MacOS so importing here to avoid errors
+                self.emd_module = importlib.import_module(
+                    "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
+                )
             emd = self.emd_module.emdModule()
             # recon_loss = earth_mover_distance(
             #    recon_x, x, transpose=False
@@ -458,7 +467,7 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
     B = hand_xyz.size(0)
 
     # inter-penetration loss
-    mesh = Meshes(verts=hand_xyz.cuda(), faces=hand_face.cuda())
+    mesh = Meshes(verts=to_cuda_(hand_xyz), faces=to_cuda_(hand_face))
     hand_normal = mesh.verts_normals_packed().view(-1, 778, 3)
     nn_dist, nn_idx = get_NN(obj_xyz, hand_xyz)
     interior = get_interior(hand_normal, hand_xyz, obj_xyz, nn_idx).type(torch.bool)
@@ -466,7 +475,8 @@ def TTT_loss(hand_xyz, hand_face, obj_xyz, cmap_affordance, cmap_pointnet):
 
     # cmap consistency loss
     consistency_loss = (
-        0.0001
+            #0.0001
+       0.001
         * torch.nn.functional.mse_loss(
             cmap_affordance, cmap_pointnet, reduction="none"
         ).sum()

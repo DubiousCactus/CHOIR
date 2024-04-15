@@ -19,7 +19,6 @@ import open3d.io as o3dio
 import pyvista as pv
 import torch
 import trimesh
-from ema_pytorch import EMA
 from hydra.core.hydra_config import HydraConfig
 from pytorch3d.transforms.rotation_conversions import rotation_6d_to_matrix
 from torch.utils.data import DataLoader
@@ -36,6 +35,7 @@ from utils.testing import (
     compute_mpjpe,
     make_batch_of_obj_data,
     mp_compute_contacts_fscore,
+    mp_compute_sim_displacement,
     mp_compute_solid_intersection_volume,
     mp_process_obj_meshes,
 )
@@ -70,11 +70,13 @@ class MultiViewTester(MultiViewTrainer):
             val_loader (torch.utils.data.DataLoader): Validation dataloader.
         """
         self._is_baseline = False
+        self._is_grasptta = False
         self._run_name = run_name
         self._model = model
-        self._ema = EMA(
-            self._model, beta=0.9999, update_after_step=100, update_every=10
-        )
+        # self._ema = EMA(
+        # self._model, beta=0.9999, update_after_step=100, update_every=10
+        # )
+        self._ema = None
         assert "max_observations" in kwargs, "max_observations must be provided."
         assert "save_predictions" in kwargs, "save_predictions must be provided."
         self._max_observations = kwargs["max_observations"]
@@ -108,6 +110,8 @@ class MultiViewTester(MultiViewTrainer):
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._compute_iv = kwargs.get("compute_iv", False)
         self._compute_contact_scores = kwargs.get("compute_contact_scores", False)
+        self._compute_sim_displacement = kwargs.get("compute_sim_displacement", False)
+        self._compute_pose_error = kwargs.get("compute_pose_error", False)
         self._object_cache = {}
         self._pitch_mm = 2
         self._pitch = self._pitch_mm / self._data_loader.dataset.base_unit
@@ -120,6 +124,7 @@ class MultiViewTester(MultiViewTrainer):
         self._debug_tto = kwargs.get("debug_tto", False)
         self._plot_contacts = kwargs.get("plot_contacts", False)
         self._dump_videos = kwargs.get("dump_videos", False)
+        self._inference_mode = kwargs.get("inference_mode", False)
         signal.signal(signal.SIGINT, self._terminator)
 
     @to_cuda
@@ -174,53 +179,69 @@ class MultiViewTester(MultiViewTrainer):
         gt_verts: torch.Tensor,
         gt_joints: torch.Tensor,
         batch_obj_data: Dict,
+        rotations: Optional[torch.Tensor] = None,
     ):
         with torch.no_grad():
-            # === Anchor error ===
-            anchor_error = (
-                torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2)
-                .mean(dim=1)
-                .mean(dim=0)
-                .item()
-                * self._data_loader.dataset.base_unit
+            mano_faces = self._affine_mano.closed_faces.detach().cpu().numpy()
+            anchor_error, mpvpe, mpjpe, root_aligned_mpjpe = (
+                torch.inf,
+                torch.inf,
+                torch.inf,
+                torch.inf,
             )
-            # === MPJPE ===
-            mpjpe, root_aligned_mpjpe = (
-                x.item() for x in compute_mpjpe(gt_joints, joints_pred)
-            )
-            mpjpe *= self._data_loader.dataset.base_unit
-            root_aligned_mpjpe *= self._data_loader.dataset.base_unit
-            if self._data_loader.dataset.eval_observation_plateau:
-                return (
-                    anchor_error,
-                    mpjpe,
-                    root_aligned_mpjpe,
-                    torch.zeros(1),
-                    torch.zeros(1),
-                    torch.zeros(1),
+            if self._compute_pose_error:
+                # === Anchor error ===
+                anchor_error = (
+                    torch.norm(anchors_pred - gt_anchors.to(anchors_pred.device), dim=2)
+                    .mean(dim=1)
+                    .mean(dim=0)
+                    .item()
+                    * self._data_loader.dataset.base_unit
                 )
-            # ====== MPVPE ======
-            # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
-            # hand meshes.
-            pvpe = torch.linalg.vector_norm(
-                gt_verts - verts_pred, ord=2, dim=-1
-            )  # Per-vertex position error (B, 778, 3)
-            mpvpe = torch.mean(pvpe, dim=-1)  # Mean per-vertex position error (B, 1)
-            mpvpe = torch.mean(
-                mpvpe, dim=0
-            ).item()  # Mean per-vertex position error avgd across batch (1)
-            mpvpe *= self._data_loader.dataset.base_unit
+                # === MPJPE ===
+                mpjpe, root_aligned_mpjpe = (
+                    x.item() for x in compute_mpjpe(gt_joints, joints_pred)
+                )
+                mpjpe *= self._data_loader.dataset.base_unit
+                root_aligned_mpjpe *= self._data_loader.dataset.base_unit
+                if self._data_loader.dataset.eval_observation_plateau:
+                    return (
+                        anchor_error,
+                        mpjpe,
+                        root_aligned_mpjpe,
+                        torch.zeros(1),
+                        torch.zeros(1),
+                        torch.zeros(1),
+                    )
+                # ====== MPVPE ======
+                # Compute the mean per-vertex position error (MPVPE) between the predicted and ground truth
+                # hand meshes.
+                pvpe = torch.linalg.vector_norm(
+                    gt_verts - verts_pred, ord=2, dim=-1
+                )  # Per-vertex position error (B, 778, 3)
+                mpvpe = torch.mean(
+                    pvpe, dim=-1
+                )  # Mean per-vertex position error (B, 1)
+                mpvpe = torch.mean(
+                    mpvpe, dim=0
+                ).item()  # Mean per-vertex position error avgd across batch (1)
+                mpvpe *= self._data_loader.dataset.base_unit
             # ====== Intersection volume ======
             # Let's now try by voxelizing the meshes and reporting the volume of voxels occupied by
             # both meshes:
             # TODO: WARNING!! For GRAB and approaching hands I can end up with empty hand voxels
             # with this radius!!! I overwrite it to 0.4 when evaluating on GRAB for now. Obviously
             # the thing to do is to skip empty voxels. I'll try to implement it.
+            # UPDATE: Yes this is implemented, if the hand voxel is empty I return an intersection
+            # volume of 0.0. TODO: This is wrong. We should just remove the sample so that it
+            # doesn't lower the mean in a wrong way. But anyway I'm not benchmarking on GRAB
+            # anymore.
             batch_intersection_volume = torch.inf
             if self._compute_iv:
                 batch_intersection_volume = mp_compute_solid_intersection_volume(
                     batch_obj_data["voxel"],
                     hand_verts=verts_pred,
+                    rotations=rotations,
                     # Careful to use the closed faces as they should count for the hand volume!
                     mesh_faces=self._affine_mano.closed_faces.cpu().numpy(),
                     pitch=self._pitch,
@@ -229,14 +250,20 @@ class MultiViewTester(MultiViewTrainer):
 
             (
                 batch_contact_coverage,
-                batch_contact_f1,
-                batch_contact_precision,
-                batch_contact_recall,
+                batch_hand_contact_f1,
+                batch_hand_contact_precision,
+                batch_hand_contact_recall,
+                batch_obj_contact_f1,
+                batch_obj_contact_precision,
+                batch_obj_contact_recall,
             ) = (
-                torch.tensor(0),
-                torch.tensor(0),
-                torch.tensor(0),
-                torch.tensor(0),
+                -torch.inf,
+                -torch.inf,
+                -torch.inf,
+                -torch.inf,
+                -torch.inf,
+                -torch.inf,
+                -torch.inf,
             )
             if self._compute_contact_scores:
                 # ======= Contact Coverage =======
@@ -253,7 +280,6 @@ class MultiViewTester(MultiViewTrainer):
                 # n_samples=self._n_pts_on_mesh,
                 # )
                 # ============ Contact F1/Precision/Recall against ContactPose's object contact maps ============
-                mano_faces = self._affine_mano.closed_faces.detach().cpu().numpy()
                 pred_hand_meshes = [
                     Trimesh(
                         verts_pred[i].detach().cpu().numpy(),
@@ -288,6 +314,16 @@ class MultiViewTester(MultiViewTrainer):
                     thresh_mm=2,
                     base_unit_mm=self._data_loader.dataset.base_unit,
                 )
+            batch_sim_displacement = torch.inf
+            if self._compute_sim_displacement:
+                # ====== Simulation displacement ======
+                if self._is_grasptta:
+                    assert (
+                        rotations is not None
+                    ), "For GraspTTA, rotations must be provided to compute sim. displacement."
+                batch_sim_displacement = mp_compute_sim_displacement(
+                    batch_obj_data["mesh"], verts_pred, mano_faces, rotations
+                )
 
         return {
             "Anchor error [mm] (↓)": anchor_error,
@@ -295,6 +331,7 @@ class MultiViewTester(MultiViewTrainer):
             "Root-aligned MPJPE [mm] (↓)": root_aligned_mpjpe,
             "MPVPE [mm] (↓)": mpvpe,
             "Intersection volume [cm3] (↓)": batch_intersection_volume,
+            "Simulation displacement [cm] (↓)": batch_sim_displacement,
             "Contact coverage [%] (↑)": batch_contact_coverage,
             "[Object] Contact F1 score [%] (↑)": batch_obj_contact_f1,
             "[Object] Contact precision score [%] (↑)": batch_obj_contact_precision,
@@ -383,8 +420,13 @@ class MultiViewTester(MultiViewTrainer):
                     self._n_pts_on_mesh,
                     self._n_normals_on_mesh,
                     dataset=self._data_loader.dataset.name,
+                    keep_mesh_contact_identity=self._compute_contact_scores,
                 )
-                batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+                batch_obj_data = make_batch_of_obj_data(
+                    self._object_cache,
+                    mesh_pths,
+                    keep_mesh_contact_identity=self._compute_contact_scores,
+                )
                 with open(cached_obj_path, "wb") as f:
                     torch.save(batch_obj_data, f)
         else:
@@ -399,8 +441,13 @@ class MultiViewTester(MultiViewTrainer):
                 self._n_pts_on_mesh,
                 self._n_normals_on_mesh,
                 dataset=self._data_loader.dataset.name,
+                keep_mesh_contact_identity=self._compute_contact_scores,
             )
-            batch_obj_data = make_batch_of_obj_data(self._object_cache, mesh_pths)
+            batch_obj_data = make_batch_of_obj_data(
+                self._object_cache,
+                mesh_pths,
+                keep_mesh_contact_identity=self._compute_contact_scores,
+            )
         # ==============================================
         eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
         if use_input:
@@ -582,6 +629,7 @@ class MultiViewTester(MultiViewTrainer):
                         gt_verts,
                         gt_joints,
                         batch_obj_data,
+                        rotations=y_hat["rotations"],
                     )
                 else:
                     sample_to_viz = 3
@@ -660,6 +708,7 @@ class MultiViewTester(MultiViewTrainer):
                         gt_verts,
                         gt_joints,
                         batch_obj_data,
+                        rotations=y_hat.get("rotations", None),
                     )
                     if self._enable_contacts_tto:
                         # del anchors_pred, verts_pred, joints_pred
@@ -820,6 +869,7 @@ class MultiViewTester(MultiViewTrainer):
                             gt_verts,
                             gt_joints,
                             batch_obj_data,
+                            rotations=y_hat.get("rotations", None),
                         )
         return eval_metrics
 
@@ -1119,51 +1169,78 @@ class MultiViewTester(MultiViewTrainer):
             )
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
+
             multiple_obs = len(samples["theta"].shape) > 2
-            use_smplx = False  # TODO: I don't use it for now
-            contacts_pred, obj_points, obj_normals = (
-                y_hat.get("contacts", None),
-                None,
-                None,
-            )
-            if self._enable_contacts_tto and contacts_pred is not None:
-                obj_points, obj_normals = (
-                    batch_obj_data["points"],
-                    batch_obj_data["normals"],
+            if self._is_baseline:
+                joints_pred, anchors_pred = (
+                    y_hat["hand_keypoints"][:, :21],
+                    y_hat["hand_keypoints"][:, 21:],
                 )
-            cache_fitted = f"cache_fitted_{batch_idx}.pkl"
-            if self._debug_tto and os.path.exists(cache_fitted):
-                with open(cache_fitted, "rb") as f:
-                    anchors_pred, verts_pred, joints_pred = pickle.load(f)
-            else:
-                with torch.set_grad_enabled(True):
+                contacts_pred, obj_points, obj_normals = (
+                    None,
+                    None,
+                    None,
+                )
+                (
+                    verts_pred,
+                    anchors_pred,
+                    joints_pred,
+                ) = optimize_mesh_from_joints_and_anchors(
+                    y_hat["hand_keypoints"],
+                    scalar=torch.mean(input_scalar)
+                    .unsqueeze(0)
+                    .to(input_scalar.device),  # TODO: What should I do here?
+                    is_rhand=samples["is_rhand"][0],
+                    max_iterations=1000,
+                    loss_thresh=1e-6,
+                    lr=8e-2,
+                    dataset=self._data_loader.dataset.name,
+                    use_smplx=use_smplx,
+                    initial_params={
+                        k: (
+                            v[:, -1] if multiple_obs else v
+                        )  # Initial pose is the last observation
+                        for k, v in samples.items()
+                        if k
+                        in [
+                            "theta",
+                            ("vtemp" if use_smplx else "beta"),
+                            "rot",
+                            "trans",
+                        ]
+                    },
+                    beta_w=1e-4,
+                    theta_w=1e-8,
+                )
+
+                if self._enable_contacts_tto:
+                    # del anchors_pred, verts_pred, joints_pred
+                    contacts_pred, obj_points, obj_normals = (
+                        y_hat.get("contacts", None),
+                        batch_obj_data["points"],
+                        batch_obj_data["normals"],
+                    )
                     (
-                        _,
-                        _,
-                        _,
-                        _,
-                        anchors_pred,
                         verts_pred,
+                        anchors_pred,
                         joints_pred,
-                    ) = optimize_pose_pca_from_choir(  # TODO: make a partial
-                        y_hat["choir"],
+                    ) = optimize_mesh_from_joints_and_anchors(
+                        y_hat["hand_keypoints"],
                         contact_gaussians=contacts_pred,
                         obj_pts=obj_points,
                         obj_normals=obj_normals,
-                        bps=self._bps,
-                        anchor_indices=self._anchor_indices,
-                        scalar=input_scalar,
+                        scalar=torch.mean(input_scalar)
+                        .unsqueeze(0)
+                        .to(input_scalar.device),  # TODO: What should I do here?
+                        is_rhand=samples["is_rhand"][0],
                         max_iterations=1000,
                         loss_thresh=1e-7,
                         lr=8e-2,
-                        is_rhand=samples["is_rhand"],
-                        use_smplx=use_smplx,
                         dataset=self._data_loader.dataset.name,
-                        remap_bps_distances=self._remap_bps_distances,
-                        exponential_map_w=self._exponential_map_w,
+                        use_smplx=use_smplx,
                         initial_params={
                             k: (
-                                v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                                v[:, -1] if multiple_obs else v
                             )  # Initial pose is the last observation
                             for k, v in samples.items()
                             if k
@@ -1175,15 +1252,82 @@ class MultiViewTester(MultiViewTrainer):
                             ]
                         },
                         beta_w=1e-4,
-                        theta_w=1e-7,
-                        choir_w=1000,
+                        theta_w=1e-8,
                     )
-                    if self._debug_tto:
-                        with open(cache_fitted, "wb") as f:
-                            anchors_pred = anchors_pred.cpu()
-                            verts_pred = verts_pred.cpu()
-                            joints_pred = joints_pred.cpu()
-                            pickle.dump((anchors_pred, verts_pred, joints_pred), f)
+
+            elif self._is_grasptta:
+                verts_pred, joints_pred, anchors_pred = (
+                    y_hat["verts"],
+                    y_hat["joints"],
+                    y_hat["anchors"],
+                )
+            else:
+                use_smplx = False  # TODO: I don't use it for now
+                contacts_pred, obj_points, obj_normals = (
+                    y_hat.get("contacts", None),
+                    None,
+                    None,
+                )
+                if self._enable_contacts_tto and contacts_pred is not None:
+                    obj_points, obj_normals = (
+                        batch_obj_data["points"],
+                        batch_obj_data["normals"],
+                    )
+                cache_fitted = f"cache_fitted_{batch_idx}.pkl"
+                if self._debug_tto and os.path.exists(cache_fitted):
+                    with open(cache_fitted, "rb") as f:
+                        anchors_pred, verts_pred, joints_pred = pickle.load(f)
+                else:
+                    with torch.set_grad_enabled(True):
+                        (
+                            _,
+                            _,
+                            _,
+                            _,
+                            anchors_pred,
+                            verts_pred,
+                            joints_pred,
+                        ) = optimize_pose_pca_from_choir(  # TODO: make a partial
+                            y_hat["choir"],
+                            contact_gaussians=contacts_pred
+                            if self._enable_contacts_tto
+                            else None,
+                            obj_pts=obj_points,
+                            obj_normals=obj_normals,
+                            bps=self._bps,
+                            anchor_indices=self._anchor_indices,
+                            scalar=input_scalar,
+                            max_iterations=1000,
+                            loss_thresh=1e-7,
+                            lr=8e-2,
+                            is_rhand=samples["is_rhand"],
+                            use_smplx=use_smplx,
+                            dataset=self._data_loader.dataset.name,
+                            remap_bps_distances=self._remap_bps_distances,
+                            exponential_map_w=self._exponential_map_w,
+                            initial_params={
+                                k: (
+                                    v[:, :n][:, -1] if multiple_obs else v[:, :n]
+                                )  # Initial pose is the last observation
+                                for k, v in samples.items()
+                                if k
+                                in [
+                                    "theta",
+                                    ("vtemp" if use_smplx else "beta"),
+                                    "rot",
+                                    "trans",
+                                ]
+                            },
+                            beta_w=1e-4,
+                            theta_w=1e-7,
+                            choir_w=1000,
+                        )
+                        if self._debug_tto:
+                            with open(cache_fitted, "wb") as f:
+                                anchors_pred = anchors_pred.cpu()
+                                verts_pred = verts_pred.cpu()
+                                joints_pred = joints_pred.cpu()
+                                pickle.dump((anchors_pred, verts_pred, joints_pred), f)
             image_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
                 "tto_images",

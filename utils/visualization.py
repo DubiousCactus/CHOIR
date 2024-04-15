@@ -1012,7 +1012,9 @@ def visualize_MANO(
         )
     elif obj_ptcld is not None:
         pl.add_points(
-            obj_ptcld.detach().cpu().numpy(),
+            obj_ptcld.detach().cpu().numpy()
+            if torch.is_tensor(obj_ptcld)
+            else obj_ptcld,
             color="red",
             name="obj_ptcld",
             label="Object pointcloud",
