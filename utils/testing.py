@@ -14,6 +14,7 @@ import os
 import pickle
 from contextlib import redirect_stdout
 from functools import partial
+from os.path import abspath
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -78,6 +79,8 @@ def compute_sim_displacement_sample(
     hand_faces: torch.Tensor,
 ) -> torch.Tensor:
     obj_mesh, hand_verts, i = obj_mesh_w_hand_verts
+    vhacd_exe = os.path.join(abspath(os.getcwd()), "../v-hacd/bin")
+    assert os.path.exists(vhacd_exe), f"V-HACD executable not found at {vhacd_exe}"
     try:
         with redirect_stdout(None):
             simu_disp = (
@@ -86,7 +89,7 @@ def compute_sim_displacement_sample(
                     hand_faces,
                     obj_mesh[0],  # Vertices
                     obj_mesh[1],  # Faces
-                    vhacd_exe="/Users/cactus/Code/v-hacd/bin",
+                    vhacd_exe=vhacd_exe,
                     sample_idx=i,
                     object_friction=1.2,
                     hand_friction=1.2,
