@@ -30,6 +30,7 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
+from utils.anim import ScenePicAnim
 from utils.dataset import lower_tril_cholesky_to_covmat
 from utils.testing import (
     compute_mpjpe,
@@ -44,7 +45,6 @@ from utils.training import (
     optimize_pose_pca_from_choir,
 )
 from utils.visualization import (
-    ScenePicAnim,
     visualize_3D_gaussians_on_hand_mesh,
     visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
@@ -680,6 +680,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                        save_tto_anim=self._debug_tto or self._save_predictions,
                     )
                     if self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(

@@ -16,11 +16,13 @@ from typing import Dict, Optional, Tuple
 import smplx
 import torch
 import tqdm
+import trimesh
 
 import conf.project as project_conf
 from model.affine_mano import AffineMANO
 from src.losses.hoi import CHOIRFittingLoss, ContactsFittingLoss
 from utils import to_cuda, to_cuda_
+from utils.anim import ScenePicAnim
 
 
 @to_cuda
@@ -45,6 +47,7 @@ def optimize_pose_pca_from_choir(
     beta_w: float = 0.05,
     theta_w: float = 0.01,
     choir_w: float = 1.0,
+    save_tto_anim: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     /!\ Important /!\: when computing the CHOIR field, the scalar is applied to the pointclouds
@@ -145,6 +148,7 @@ def optimize_pose_pca_from_choir(
         )  # BPS should be scaled down to fit the MANO model in the same scale.
 
     choir_loss = CHOIRFittingLoss().to(choir.device)
+    anim = ScenePicAnim() if save_tto_anim else None
 
     plateau_cnt = 0
     pose_regularizer = to_cuda_(torch.tensor(0.0))
@@ -157,6 +161,20 @@ def optimize_pose_pca_from_choir(
             verts, joints = output.vertices, output.joints
         else:
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
+
+        if save_tto_anim:
+            anim.add_frame(
+                {
+                    "obj_pts": trimesh.points.PointCloud(
+                        obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
+                    ).convex_hull,
+                    "hand_mesh": trimesh.Trimesh(
+                        vertices=verts[0].cpu().detach().numpy(),
+                        faces=affine_mano.faces.cpu(),
+                    ),
+                }
+            )
+
         anchors = affine_mano.get_anchors(verts)
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
@@ -184,6 +202,9 @@ def optimize_pose_pca_from_choir(
         scheduler.step()
         if plateau_cnt >= 10:
             break
+
+    if save_tto_anim:
+        anim.save_animation("tto_stage1.html")
 
     if contact_gaussians is None:
         return (
@@ -216,6 +237,8 @@ def optimize_pose_pca_from_choir(
         median_filter_len=10,
         update_knn_each_step=True,
     ).to(contact_gaussians.device)
+    anim = ScenePicAnim() if save_tto_anim else None
+
     for i in proc_bar:
         enable_contact_fitting = i > 0
         optimizer.zero_grad()
@@ -226,6 +249,20 @@ def optimize_pose_pca_from_choir(
             verts, joints = output.vertices, output.joints
         else:
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
+
+        if save_tto_anim:
+            anim.add_frame(
+                {
+                    "obj_pts": trimesh.points.PointCloud(
+                        obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
+                    ).convex_hull,
+                    "hand_mesh": trimesh.Trimesh(
+                        vertices=verts[0].cpu().detach().numpy(),
+                        faces=affine_mano.faces.cpu(),
+                    ),
+                }
+            )
+
         anchors = affine_mano.get_anchors(verts)
         contact_loss, penetration_loss = contacts_loss(
             verts,
@@ -274,6 +311,9 @@ def optimize_pose_pca_from_choir(
         scheduler.step()
         if plateau_cnt >= 10:
             break
+
+    if save_tto_anim:
+        anim.save_animation("tto_stage2.html")
 
     return (
         theta.detach(),
@@ -473,8 +513,7 @@ def optimize_mesh_from_joints_and_anchors(
         )  # Encourage the shape parameters to remain close to 0
         pose_regularizer = theta_w * torch.norm(theta)
         abs_pose_regularizer = 0.3 * (
-            1e-1 * torch.norm(trans - trans_base)
-            + 1e-2 * torch.norm(rot - rot_base)
+            1e-1 * torch.norm(trans - trans_base) + 1e-2 * torch.norm(rot - rot_base)
         )
         proc_bar.set_description(
             f"Contacts: {contact_loss.item():.8f} / Penetration: {penetration_loss.item():.8f}  / Shape reg: {shape_regularizer.item():.8f} "
