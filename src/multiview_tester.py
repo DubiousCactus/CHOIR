@@ -363,7 +363,10 @@ class MultiViewTester(MultiViewTrainer):
             else:
                 y_hat = self._inference(samples, labels, use_prior=use_prior)
                 with open(cached_pred_path, "wb") as f:
-                    y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                    y_hat = {
+                        k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v)
+                        for k, v in y_hat.items()
+                    }
                     pickle.dump(y_hat, f)
         else:
             y_hat = self._inference(samples, labels, use_prior=use_prior)
@@ -402,7 +405,7 @@ class MultiViewTester(MultiViewTrainer):
             # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
             print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
-            cached_obj_path = "batch_obj_data.pkl"
+            cached_obj_path = "batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(cached_obj_path):
                 with open(cached_obj_path, "rb") as f:
                     batch_obj_data = to_cuda_(
@@ -635,7 +638,7 @@ class MultiViewTester(MultiViewTrainer):
                     sample_to_viz = 3
                     contacts_pred, obj_points, obj_normals = (
                         None,
-                        None,
+                        batch_obj_data["points"],
                         None,
                     )
                     (
@@ -680,6 +683,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                        obj_mesh=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
                     if self._debug_tto:
@@ -836,6 +840,8 @@ class MultiViewTester(MultiViewTrainer):
                             beta_w=1e-4,
                             theta_w=1e-7,
                             choir_w=1000,
+                            obj_mesh=batch_obj_data["mesh"],
+                            save_tto_anim=self._debug_tto or self._save_predictions,
                         )
                         if self._debug_tto:
                             pred_hand_mesh = trimesh.Trimesh(
