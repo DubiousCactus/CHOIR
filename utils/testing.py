@@ -247,15 +247,29 @@ def process_object(
     obj_points = torch.from_numpy(
         np.asarray(obj_mesh.sample_points_uniformly(n_samples).points)
     ).float()
+    t_obj_mesh = trimesh.Trimesh(
+        vertices=obj_mesh.vertices,
+        faces=obj_mesh.triangles,
+        process=False,  # Don't remove my precious vertices you filthy animal!!!
+        validate=False,
+    ).copy()
+    assert (
+        t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0]
+    ), "Trimesh changed the vert count!"
     obj_normals = None
     if enable_contacts_tto:
-        obj_mesh.compute_vertex_normals()
+        # Initially we used Open3D to compute the vertex normals, but this gave
+        # us bad inward normals and horrible results on OakInk:
+        # obj_mesh.compute_vertex_normals()
+        # So instead we use Trimesh. This fixes face normals, later used to
+        # compute vertex normals:
+        t_obj_mesh.fix_normals()
         normals_w_roots = torch.cat(
             (
-                torch.from_numpy(np.asarray(obj_mesh.vertices)).type(
+                torch.from_numpy(np.asarray(t_obj_mesh.vertices).copy()).type(
                     dtype=torch.float32
                 ),
-                torch.from_numpy(np.asarray(obj_mesh.vertex_normals)).type(
+                torch.from_numpy(np.asarray(t_obj_mesh.vertex_normals).copy()).type(
                     dtype=torch.float32
                 ),
             ),
@@ -273,15 +287,6 @@ def process_object(
                 )
         random_indices = torch.randperm(normals_w_roots.shape[0])[:n_normals]
         obj_normals = normals_w_roots[random_indices]
-    t_obj_mesh = trimesh.Trimesh(
-        vertices=obj_mesh.vertices,
-        faces=obj_mesh.triangles,
-        process=False,
-        validate=False,
-    ).copy()  # Don't remove my precious vertices you filthy animal!!!
-    assert (
-        t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0]
-    ), "Trimesh changed the vert count!"
     if gt_obj_contacts is not None:
         assert (
             t_obj_mesh.vertices.shape[0] == gt_obj_contacts.shape[0]

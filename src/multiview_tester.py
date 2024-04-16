@@ -30,6 +30,7 @@ from conf import project as project_conf
 from model.affine_mano import AffineMANO
 from src.multiview_trainer import MultiViewTrainer
 from utils import colorize, to_cuda, to_cuda_
+from utils.anim import ScenePicAnim
 from utils.dataset import lower_tril_cholesky_to_covmat
 from utils.testing import (
     compute_mpjpe,
@@ -44,7 +45,6 @@ from utils.training import (
     optimize_pose_pca_from_choir,
 )
 from utils.visualization import (
-    ScenePicAnim,
     visualize_3D_gaussians_on_hand_mesh,
     visualize_hand_contacts_from_3D_gaussians,
     visualize_MANO,
@@ -363,7 +363,10 @@ class MultiViewTester(MultiViewTrainer):
             else:
                 y_hat = self._inference(samples, labels, use_prior=use_prior)
                 with open(cached_pred_path, "wb") as f:
-                    y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                    y_hat = {
+                        k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v)
+                        for k, v in y_hat.items()
+                    }
                     pickle.dump(y_hat, f)
         else:
             y_hat = self._inference(samples, labels, use_prior=use_prior)
@@ -402,7 +405,7 @@ class MultiViewTester(MultiViewTrainer):
             # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
             print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
-            cached_obj_path = "batch_obj_data.pkl"
+            cached_obj_path = f"batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(cached_obj_path):
                 with open(cached_obj_path, "rb") as f:
                     batch_obj_data = to_cuda_(
@@ -632,7 +635,7 @@ class MultiViewTester(MultiViewTrainer):
                         rotations=y_hat["rotations"],
                     )
                 else:
-                    sample_to_viz = 3
+                    sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         batch_obj_data["points"],
@@ -658,7 +661,7 @@ class MultiViewTester(MultiViewTrainer):
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
                         max_iterations=1000,
-                        loss_thresh=1e-7,
+                        loss_thresh=1e-6,
                         lr=8e-2,
                         is_rhand=samples["is_rhand"],
                         use_smplx=use_smplx,
@@ -681,8 +684,10 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                        obj_meshes=batch_obj_data["mesh"],
+                        save_tto_anim=self._debug_tto or self._save_predictions,
                     )
-                    if self._debug_tto:
+                    if False and self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(
                             vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
                             faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -718,7 +723,7 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data["points"],
                             batch_obj_data["normals"],
                         )
-                        if self._debug_tto:
+                        if False and self._debug_tto:
                             # Visualize the Gaussian parameters
                             print(
                                 "====== Reconstructing contacts from GT 3D Gaussians ======"
@@ -813,7 +818,8 @@ class MultiViewTester(MultiViewTrainer):
                             anchor_indices=self._anchor_indices,
                             scalar=input_scalar,
                             max_iterations=1000,
-                            loss_thresh=1e-7,
+                            loss_thresh=1e-6,
+                            contact_loss_thresh=1e-6,
                             lr=8e-2,
                             is_rhand=samples["is_rhand"],
                             use_smplx=use_smplx,
@@ -836,8 +842,10 @@ class MultiViewTester(MultiViewTrainer):
                             beta_w=1e-4,
                             theta_w=1e-7,
                             choir_w=1000,
+                            obj_meshes=batch_obj_data["mesh"],
+                            save_tto_anim=self._debug_tto or self._save_predictions,
                         )
-                        if self._debug_tto:
+                        if False and self._debug_tto:
                             pred_hand_mesh = trimesh.Trimesh(
                                 vertices=verts_pred[-1].detach().cpu().numpy(),
                                 faces=self._affine_mano.closed_faces.detach()
@@ -1069,7 +1077,7 @@ class MultiViewTester(MultiViewTrainer):
         gt_is_plotted = False
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
-            batch_obj_path = "batch_obj_data.pkl"
+            batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(batch_obj_path):
                 with open(batch_obj_path, "rb") as f:
                     batch_obj_data = to_cuda_(

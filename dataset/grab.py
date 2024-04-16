@@ -36,8 +36,9 @@ from trimesh import Trimesh
 from conf.project import ANSI_COLORS, Theme
 from model.affine_mano import AffineMANO
 from utils import colorize, to_cuda, to_cuda_
+from utils.anim import ScenePicAnim
 from utils.dataset import augment_hand_object_pose_grab, compute_choir, get_scalar
-from utils.visualization import ScenePicAnim, visualize_MANO
+from utils.visualization import visualize_MANO
 
 from .base import BaseDataset
 
