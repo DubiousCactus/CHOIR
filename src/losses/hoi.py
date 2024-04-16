@@ -493,6 +493,7 @@ class ContactsFittingLoss(torch.nn.Module):
         #assert (
         #    torch.norm(nearest_normals) == 1
         #), "The object normals must be unit vectors"
+        #nearest_normals = torch.nn.functional.normalize(nearest_normals) # Trimesh already gives me normalized vectors
         nearest_normal_roots = nearest_normal_roots - 0.002 * nearest_normals
         dot_products = torch.einsum(
             "bvi,bvi->bv", (nearest_normals, verts - nearest_normal_roots)

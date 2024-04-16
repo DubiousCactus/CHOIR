@@ -6,7 +6,7 @@
 # Distributed under terms of the MIT license.
 
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 from trimesh import Trimesh
@@ -42,8 +42,9 @@ class ScenePicAnim:
             shading=sp.Shading(bg_color=np.array([255 / 255, 252 / 255, 251 / 255])),
         )
         self.colors = sp.Colors
+        self.positions = dict()
 
-    def meshes_to_sp(self, meshes: Dict[str, Trimesh]):
+    def meshes_to_sp(self, meshes: Dict[str, Trimesh], reuse: Optional[str] = None):
         sp_meshes = []
         for mesh_name, mesh in meshes.items():
             params = {
@@ -60,23 +61,28 @@ class ScenePicAnim:
             }
             # params = {'vertices' : m.v.astype(np.float32), 'triangles' : m.f, 'colors' : m.vc.astype(np.float32)}
             # sp_m = sp.Mesh()
-            sp_m = self.scene.create_mesh(layer_id=mesh_name)
-            sp_m.add_mesh_without_normals(**params)
+            if reuse is not None and reuse == mesh_name and mesh_name in self.positions:
+                sp_m = self.scene.update_mesh_positions(self.positions[mesh_name][0], self.positions[mesh_name][1].copy())
+            else:
+                sp_m = self.scene.create_mesh(layer_id=mesh_name)
+                sp_m.add_mesh_without_normals(**params)
+                self.positions[mesh_name] = (sp_m.mesh_id, mesh.vertices.astype(np.float32))
             if mesh_name == "ground_mesh":
                 sp_m.double_sided = True
             sp_meshes.append(sp_m)
         return sp_meshes
 
-    def add_frame(self, meshes: Dict[str, Trimesh]):
-        meshes_list = self.meshes_to_sp(meshes)
+    def add_frame(self, meshes: Dict[str, Trimesh], reuse: Optional[str] = None):
+        meshes_list = self.meshes_to_sp(meshes, reuse)
         if not hasattr(self, "focus_point"):
-            self.focus_point = list(meshes.values())[0].centroid
+            self.focus_point = np.array([0, 0, 0]) # list(meshes.values())[0].center_mass
             # center = self.focus_point
             # center[2] = 4
             # rotation = sp.Transforms.rotation_about_z(0)
             # self.camera = sp.Camera(center=center, rotation=rotation, fov_y_degrees=30.0)
 
-        main_frame = self.main.create_frame(focus_point=self.focus_point)
+        #main_frame = self.main.create_frame(focus_point=self.focus_point)
+        main_frame = self.main.create_frame()
         for i, m in enumerate(meshes_list):
             # self.main.set_layer_settings({layer_names[i]:{}})
             main_frame.add_mesh(m)

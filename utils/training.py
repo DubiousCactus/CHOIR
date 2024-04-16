@@ -156,6 +156,10 @@ def optimize_pose_pca_from_choir(
 
     plateau_cnt = 0
     pose_regularizer = to_cuda_(torch.tensor(0.0))
+    processed_obj_mesh = obj_meshes[0]
+    processed_obj_mesh.merge_vertices()
+    processed_obj_mesh.update_faces(processed_obj_mesh.unique_faces())
+    processed_obj_mesh = processed_obj_mesh.simplify_quadric_decimation(processed_obj_mesh.faces.shape[0] // 3)
     for _ in proc_bar:
         optimizer.zero_grad()
         if use_smplx:
@@ -169,12 +173,12 @@ def optimize_pose_pca_from_choir(
         if save_tto_anim:
             anim.add_frame(
                 {
-                    "object": obj_meshes[0],
+                    "object": processed_obj_mesh,
                     "hand": trimesh.Trimesh(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),
-                }
+                }, reuse="object"
             )
 
         anchors = affine_mano.get_anchors(verts)
@@ -186,6 +190,7 @@ def optimize_pose_pca_from_choir(
         )  # Encourage the shape parameters to remain close to 0
         if initial_params is not None:
             pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
+        pose_regularizer += 1e-2 * torch.norm(theta) # Regularizer
 
         proc_bar.set_description(
             f"Anchors loss: {anchor_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
@@ -226,8 +231,9 @@ def optimize_pose_pca_from_choir(
     trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
     trans_base.requires_grad = False
     rot_base.requires_grad = False
-    optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=3e-3)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
+    #optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=3e-3)
+    optimizer = torch.optim.Adam([theta, beta], lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
     assert obj_pts is not None, "obj_pts must be provided if contact_gaussians is."
     assert (
         obj_normals is not None
@@ -235,7 +241,7 @@ def optimize_pose_pca_from_choir(
     contacts_loss = ContactsFittingLoss(
         verts.detach()[0],
         anchors.detach()[0],
-        use_median_filter=True,
+        use_median_filter=False,
         median_filter_len=10,
         update_knn_each_step=True,
     ).to(contact_gaussians.device)
@@ -256,12 +262,12 @@ def optimize_pose_pca_from_choir(
         if save_tto_anim:
             anim.add_frame(
                 {
-                    "object": obj_meshes[0],
+                    "object": processed_obj_mesh,
                     "hand": trimesh.Trimesh(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),
-                }
+                }, reuse="object"
             )
 
         anchors = affine_mano.get_anchors(verts)
@@ -272,16 +278,16 @@ def optimize_pose_pca_from_choir(
             contact_gaussians,
             obj_normals=obj_normals,
             K=5,
-            weights_threshold=0.0,
+            weights_threshold=0.001,
             scale_tril_norm_activation_threshold=1e-3,
             only_penetration_loss=not enable_contact_fitting,
         )
-        contact_loss = 100 * contact_loss
-        penetration_loss = 1000 * penetration_loss
+        contact_loss = 300 * contact_loss
+        penetration_loss = 100 * penetration_loss
         shape_regularizer = beta_w * torch.norm(
             beta
         )  # Encourage the shape parameters to remain close to 0
-        pose_regularizer = theta_w * torch.norm(theta)
+        pose_regularizer = 1e-2 * torch.norm(theta)
         abs_pose_regularizer = 0.3 * (
             1e-1 * (torch.norm(trans - trans_base) ** 2)
             + 1e-2 * (torch.norm(rot - rot_base) ** 2)
@@ -300,7 +306,7 @@ def optimize_pose_pca_from_choir(
             plateau_cnt = 0
         loss = (
             penetration_loss
-            + abs_pose_regularizer
+            #+ abs_pose_regularizer
             + pose_regularizer
             + shape_regularizer
         )

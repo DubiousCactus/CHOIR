@@ -405,7 +405,7 @@ class MultiViewTester(MultiViewTrainer):
             # mesh_pths[i] = mesh_pths[i].replace("test_1000", "test_2000")
             print(f"Meshes: {mesh_pths}: len={len(mesh_pths)}. bs={gt_verts.shape[0]}")
 
-            cached_obj_path = "batch_obj_data_{batch_idx}.pkl"
+            cached_obj_path = f"batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(cached_obj_path):
                 with open(cached_obj_path, "rb") as f:
                     batch_obj_data = to_cuda_(
@@ -660,7 +660,7 @@ class MultiViewTester(MultiViewTrainer):
                         anchor_indices=self._anchor_indices,
                         scalar=input_scalar,
                         max_iterations=1000,
-                        loss_thresh=1e-7,
+                        loss_thresh=1e-6,
                         lr=8e-2,
                         is_rhand=samples["is_rhand"],
                         use_smplx=use_smplx,
@@ -817,7 +817,8 @@ class MultiViewTester(MultiViewTrainer):
                             anchor_indices=self._anchor_indices,
                             scalar=input_scalar,
                             max_iterations=1000,
-                            loss_thresh=1e-7,
+                            loss_thresh=1e-6,
+                            contact_loss_thresh=1e-6,
                             lr=8e-2,
                             is_rhand=samples["is_rhand"],
                             use_smplx=use_smplx,
@@ -843,7 +844,7 @@ class MultiViewTester(MultiViewTrainer):
                             obj_meshes=batch_obj_data["mesh"],
                             save_tto_anim=self._debug_tto or self._save_predictions,
                         )
-                        if self._debug_tto:
+                        if False and self._debug_tto:
                             pred_hand_mesh = trimesh.Trimesh(
                                 vertices=verts_pred[-1].detach().cpu().numpy(),
                                 faces=self._affine_mano.closed_faces.detach()
@@ -1901,8 +1902,6 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            if i < 300:
-                continue
             batch_metrics = self._test_iteration(batch, n_observations, i)
             for k, v in batch_metrics.items():
                 metrics[k].update(v)
