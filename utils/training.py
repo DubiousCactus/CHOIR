@@ -48,6 +48,7 @@ def optimize_pose_pca_from_choir(
     theta_w: float = 0.01,
     choir_w: float = 1.0,
     save_tto_anim: bool = False,
+    obj_meshes: Optional[trimesh.Trimesh] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     /!\ Important /!\: when computing the CHOIR field, the scalar is applied to the pointclouds
@@ -165,10 +166,8 @@ def optimize_pose_pca_from_choir(
         if save_tto_anim:
             anim.add_frame(
                 {
-                    "obj_pts": trimesh.points.PointCloud(
-                        obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
-                    ).convex_hull,
-                    "hand_mesh": trimesh.Trimesh(
+                    "object": obj_meshes[0],
+                    "hand": trimesh.Trimesh(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),
@@ -253,10 +252,8 @@ def optimize_pose_pca_from_choir(
         if save_tto_anim:
             anim.add_frame(
                 {
-                    "obj_pts": trimesh.points.PointCloud(
-                        obj_pts[0].cpu().numpy(), colors=[1, 0, 0]
-                    ).convex_hull,
-                    "hand_mesh": trimesh.Trimesh(
+                    "object": obj_meshes[0],
+                    "hand": trimesh.Trimesh(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),

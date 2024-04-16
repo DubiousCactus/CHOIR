@@ -683,7 +683,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
-                        obj_mesh=batch_obj_data["mesh"],
+                        obj_meshes=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
                     if self._debug_tto:
@@ -840,7 +840,7 @@ class MultiViewTester(MultiViewTrainer):
                             beta_w=1e-4,
                             theta_w=1e-7,
                             choir_w=1000,
-                            obj_mesh=batch_obj_data["mesh"],
+                            obj_meshes=batch_obj_data["mesh"],
                             save_tto_anim=self._debug_tto or self._save_predictions,
                         )
                         if self._debug_tto:
