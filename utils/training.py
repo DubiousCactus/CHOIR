@@ -199,10 +199,10 @@ def optimize_pose_pca_from_choir(
             obj_pts,
             bps,
             anchor_indices,
-            enable_anchor_obj_loss=enable_hand_obj_fitting,
+            enable_anchor_obj_udf=enable_hand_obj_fitting,
         )
         anchor_loss = choir_w * anchor_loss
-        anchor_obj_loss = choir_w * anchor_obj_loss
+        anchor_obj_loss = 0 * anchor_obj_loss
         pose_loss = anchor_loss + anchor_obj_loss
         shape_regularizer = beta_w * torch.norm(
             beta
@@ -228,6 +228,78 @@ def optimize_pose_pca_from_choir(
 
     if save_tto_anim:
         anim.save_animation("tto_stage1.html")
+
+    # ============ Stage 1.5 ============================
+    proc_bar = tqdm.tqdm(range(max_iterations))
+    prev_loss = float("inf")
+    optimizer = torch.optim.Adam([rot, trans, theta, beta], lr=1e-4)
+
+    if initial_params is not None:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+    else:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
+    anim = ScenePicAnim()
+    for _ in proc_bar:
+        optimizer.zero_grad()
+        if use_smplx:
+            output = smplx_model(
+                hand_pose=theta, betas=beta, global_orient=rot, transl=trans
+            )
+            verts, joints = output.vertices, output.joints
+        else:
+            verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
+
+        if save_tto_anim:
+            anim.add_frame(
+                {
+                    "object": processed_obj_mesh,
+                    "hand": trimesh.Trimesh(
+                        vertices=verts[0].cpu().detach().numpy(),
+                        faces=affine_mano.faces.cpu(),
+                    ),
+                },
+                reuse="object",
+            )
+
+        anchors = affine_mano.get_anchors(verts)
+        if anchors.isnan().any():
+            raise ValueError("NaNs in anchors.")
+        anchor_loss, anchor_obj_loss = choir_loss(
+            anchors,
+            choir,
+            anchor_obj_udf,
+            obj_pts,
+            bps,
+            anchor_indices,
+            enable_anchor_obj_udf=enable_hand_obj_fitting,
+        )
+        anchor_loss = 0 * anchor_loss
+        anchor_obj_loss = choir_w * anchor_obj_loss
+        pose_loss = anchor_loss + anchor_obj_loss
+        shape_regularizer = beta_w * torch.norm(
+            beta
+        )  # Encourage the shape parameters to remain close to 0
+        if initial_params is not None:
+            pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
+        pose_regularizer += 1e-2 * torch.norm(theta)  # Regularizer
+
+        proc_bar.set_description(
+            f"Anchors loss: {anchor_loss.item():.10f} / Anchor-Obj loss: {anchor_obj_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
+        )
+        if torch.abs(prev_loss - pose_loss.detach().type(torch.float32)) <= loss_thresh:
+            plateau_cnt += 1
+        else:
+            plateau_cnt = 0
+        prev_loss = pose_loss.detach().type(torch.float32)
+        pose_loss = pose_loss + shape_regularizer + pose_regularizer
+        pose_loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if plateau_cnt >= 10:
+            break
+
+    if save_tto_anim:
+        anim.save_animation("tto_stage1_5.html")
 
     if contact_gaussians is None:
         return (
@@ -288,6 +360,15 @@ def optimize_pose_pca_from_choir(
             )
 
         anchors = affine_mano.get_anchors(verts)
+        _, anchor_obj_loss = choir_loss(
+            anchors,
+            choir,
+            anchor_obj_udf,
+            obj_pts,
+            bps,
+            anchor_indices,
+            enable_anchor_obj_udf=True,
+        )
         contact_loss, penetration_loss = contacts_loss(
             verts,
             anchors,
