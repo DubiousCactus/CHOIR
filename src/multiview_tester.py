@@ -635,7 +635,7 @@ class MultiViewTester(MultiViewTrainer):
                         rotations=y_hat["rotations"],
                     )
                 else:
-                    sample_to_viz = 3
+                    sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
                         None,
                         batch_obj_data["points"],
@@ -686,7 +686,7 @@ class MultiViewTester(MultiViewTrainer):
                         obj_meshes=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
-                    if self._debug_tto:
+                    if False and self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(
                             vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
                             faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -722,7 +722,7 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data["points"],
                             batch_obj_data["normals"],
                         )
-                        if self._debug_tto:
+                        if False and self._debug_tto:
                             # Visualize the Gaussian parameters
                             print(
                                 "====== Reconstructing contacts from GT 3D Gaussians ======"
@@ -1075,7 +1075,7 @@ class MultiViewTester(MultiViewTrainer):
         gt_is_plotted = False
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
-            batch_obj_path = "batch_obj_data.pkl"
+            batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(batch_obj_path):
                 with open(batch_obj_path, "rb") as f:
                     batch_obj_data = to_cuda_(
@@ -1901,6 +1901,8 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
+            if i < 300:
+                continue
             batch_metrics = self._test_iteration(batch, n_observations, i)
             for k, v in batch_metrics.items():
                 metrics[k].update(v)

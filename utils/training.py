@@ -149,7 +149,10 @@ def optimize_pose_pca_from_choir(
         )  # BPS should be scaled down to fit the MANO model in the same scale.
 
     choir_loss = CHOIRFittingLoss().to(choir.device)
-    anim = ScenePicAnim() if save_tto_anim else None
+    anim = None
+    if save_tto_anim:
+        assert obj_meshes is not None, "Must pass obj meshes if saving TTO anim!"
+        anim = ScenePicAnim()
 
     plateau_cnt = 0
     pose_regularizer = to_cuda_(torch.tensor(0.0))
@@ -236,6 +239,7 @@ def optimize_pose_pca_from_choir(
         median_filter_len=10,
         update_knn_each_step=True,
     ).to(contact_gaussians.device)
+    del anim
     anim = ScenePicAnim() if save_tto_anim else None
 
     for i in proc_bar:
