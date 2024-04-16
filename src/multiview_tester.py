@@ -107,6 +107,7 @@ class MultiViewTester(MultiViewTrainer):
         self._remap_bps_distances = data_loader.dataset.remap_bps_distances
         self._exponential_map_w = data_loader.dataset.exponential_map_w
         self._n_ctrl_c = 0
+        self._enable_hand_obj_fitting = kwargs.get("enable_hand_obj_fitting", False)
         self._enable_contacts_tto = kwargs.get("enable_contacts_tto", False)
         self._compute_iv = kwargs.get("compute_iv", False)
         self._compute_contact_scores = kwargs.get("compute_contact_scores", False)
@@ -500,6 +501,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                        enable_hand_obj_fitting=self._enable_hand_obj_fitting,
                     )
                     eval_metrics["input_udf"] = self._compute_eval_metrics(
                         anchors_pred,
@@ -686,6 +688,7 @@ class MultiViewTester(MultiViewTrainer):
                         choir_w=1000,
                         obj_meshes=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
+                        enable_hand_obj_fitting=self._enable_hand_obj_fitting,
                     )
                     if False and self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(
@@ -844,6 +847,7 @@ class MultiViewTester(MultiViewTrainer):
                             choir_w=1000,
                             obj_meshes=batch_obj_data["mesh"],
                             save_tto_anim=self._debug_tto or self._save_predictions,
+                            enable_hand_obj_fitting=self._enable_hand_obj_fitting,
                         )
                         if False and self._debug_tto:
                             pred_hand_mesh = trimesh.Trimesh(
@@ -1004,6 +1008,7 @@ class MultiViewTester(MultiViewTrainer):
                 beta_w=1e-4,
                 theta_w=1e-7,
                 choir_w=1000,
+                enable_hand_obj_fitting=self._enable_hand_obj_fitting,
             )
             image_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
@@ -1330,6 +1335,7 @@ class MultiViewTester(MultiViewTrainer):
                             beta_w=1e-4,
                             theta_w=1e-7,
                             choir_w=1000,
+                            enable_hand_obj_fitting=self._enable_hand_obj_fitting,
                         )
                         if self._debug_tto:
                             with open(cache_fitted, "wb") as f:
@@ -1722,6 +1728,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
+                        enable_hand_obj_fitting=self._enable_hand_obj_fitting,
                     )
                     if self._debug_tto:
                         with open(cache_fitted, "wb") as f:

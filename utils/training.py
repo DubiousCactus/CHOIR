@@ -48,6 +48,7 @@ def optimize_pose_pca_from_choir(
     beta_w: float = 0.05,
     theta_w: float = 0.01,
     choir_w: float = 1.0,
+    enable_hand_obj_fitting: bool = True,
     save_tto_anim: bool = False,
     obj_meshes: Optional[trimesh.Trimesh] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -192,7 +193,13 @@ def optimize_pose_pca_from_choir(
         if anchors.isnan().any():
             raise ValueError("NaNs in anchors.")
         anchor_loss, anchor_obj_loss = choir_loss(
-            anchors, choir, anchor_obj_udf, obj_pts, bps, anchor_indices
+            anchors,
+            choir,
+            anchor_obj_udf,
+            obj_pts,
+            bps,
+            anchor_indices,
+            enable_anchor_obj_loss=enable_hand_obj_fitting,
         )
         anchor_loss = choir_w * anchor_loss
         anchor_obj_loss = choir_w * anchor_obj_loss

@@ -480,6 +480,7 @@ class RunConfig:
     debug_tto: bool = False
     dump_videos: bool = False
     inference_mode: str = "denoising"  # "denoising" or "generation"
+    enable_hand_obj_fitting: bool = True
     # RunConfig was never meant to be soiled like this :'(
 
 

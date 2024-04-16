@@ -264,6 +264,7 @@ class CHOIRFittingLoss(torch.nn.Module):
         obj_ptcld: torch.Tensor,
         bps: torch.Tensor,
         anchor_indices: torch.Tensor,
+        enable_anchor_obj_udf: bool = True,
         # bps_mean: torch.Tensor,
         # bps_scalar: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -318,11 +319,13 @@ class CHOIRFittingLoss(torch.nn.Module):
         # TODO: Unify it with CHOIR, because it is in fact part of CHOIR. Or rename the whole thing
         # as UDF fitting loss, since this doesn't include the contact gaussians which are also part
         # of CHOIR.
-        anchor_obj_distances = torch.cdist(anchors, obj_ptcld, p=2)
-        min_anchor_obj_distances = anchor_obj_distances.min(dim=-1).values
-        anchor_obj_udf_loss = torch.nn.functional.mse_loss(
-            min_anchor_obj_distances, anchor_obj_udf
-        )
+        anchor_obj_udf_loss = torch.tensor(0.0)
+        if enable_anchor_obj_udf:
+            anchor_obj_distances = torch.cdist(anchors, obj_ptcld, p=2)
+            min_anchor_obj_distances = anchor_obj_distances.min(dim=-1).values
+            anchor_obj_udf_loss = torch.nn.functional.mse_loss(
+                min_anchor_obj_distances, anchor_obj_udf
+            )
         return choir_loss, anchor_obj_udf_loss
 
 
