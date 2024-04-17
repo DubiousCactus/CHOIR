@@ -59,6 +59,7 @@ from src.multiview_ddpm_tester import MultiViewDDPMTester
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
+from src.seq_ddpm_tester import SeqDDPMTester
 
 # Set hydra.job.chdir=True using store():
 hydra_store = ZenStore(overwrite_ok=True)
@@ -134,7 +135,7 @@ dataset_store(
     pbuilds(
         GRABDataset,
         builds_bases=(GraspingDatasetConf,),
-        root_path="/home/cactus/Code/GRAB",
+        root_path="/Users/cactus/Code/GRAB",
         smplx_path=project_conf.SMPLX_MODEL_PATH,
         use_affine_mano=False,
         use_official_splits=True,
@@ -524,6 +525,10 @@ tester_store(
 tester_store(
     pbuilds(GraspCVAETester, populate_full_signature=True),
     name="grasp_tta_cvae",
+)
+tester_store(
+    pbuilds(SeqDDPMTester, populate_full_signature=True),
+    name="seq_ddpm",
 )
 
 Experiment = builds(
@@ -1063,6 +1068,48 @@ experiment_store(
     ),
     name="coddpm_3d_multiview_oakink_noisy_pair",
 )
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "contact_bps_ddpm"},
+            {"override /dataset": "grab"},
+            {"override /trainer": "ddpm_multiview"},
+            {"override /tester": "seq_ddpm"},
+            {"override /training_loss": "diffusion"},
+        ],
+        dataset=dict(
+            perturbation_level=1,
+            min_views_per_grasp=2,
+            max_views_per_grasp=15,
+            use_affine_mano=True,
+            static_grasps_only=False,
+            remap_bps_distances=True,
+            use_deltas=False,
+            use_bps_grid=True,
+            bps_dim=16**3,  # 4096 points
+            # model_contacts=True,
+        ),
+        data_loader=dict(batch_size=64),
+        model=dict(
+            y_embed_dim=128,
+            context_channels=MISSING,
+            use_encoder_self_attn=False,
+            use_backbone_self_attn=True,
+            object_in_encoder=True,
+            contacts_hidden_dim=2048,
+            contacts_skip_connections=True,
+            input_normalization="scale",
+            single_modality="noisy_pair",
+        ),
+        run=dict(conditional=True, full_choir=False, model_contacts=True),
+        bases=(Experiment,),
+    ),
+    name="coddpm_3d_multiview_grab_noisy_pair",
+)
+
+
 experiment_store(
     make_config(
         hydra_defaults=[

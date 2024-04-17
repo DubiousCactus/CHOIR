@@ -176,20 +176,17 @@ class GRABDataset(BaseDataset):
                 .unsqueeze(0)
                 .repeat(n_frames, 1)
                 .float()
-                .cuda()
             )
-            thetas = torch.from_numpy(seq[grasping_hand]["params"]["hand_pose"]).cuda()
-            rot_ax_ang = torch.from_numpy(
-                seq[grasping_hand]["params"]["global_orient"]
-            ).cuda()
+            thetas = torch.from_numpy(seq[grasping_hand]["params"]["hand_pose"])
+            rot_ax_ang = torch.from_numpy(seq[grasping_hand]["params"]["global_orient"])
             # rot_6d = matrix_to_rotation_6d(axis_angle_to_matrix(rot_ax_ang))
             # We'll use a dummy rotation because all the rotation we need is in the wrist, which
             # this MANO package process differently (as part of theta/hand_pose) than SMPL-X mano
             # (seprate from theta, as a global_orient vector).
             rot_6d = matrix_to_rotation_6d(
                 torch.eye(3).unsqueeze(0).repeat(n_frames, 1, 1)
-            ).cuda()
-            trans = torch.from_numpy(seq[grasping_hand]["params"]["transl"]).cuda()
+            )
+            trans = torch.from_numpy(seq[grasping_hand]["params"]["transl"])
             params.update(
                 {
                     "theta": torch.cat([rot_ax_ang, thetas], dim=1),
@@ -215,7 +212,7 @@ class GRABDataset(BaseDataset):
                     "vtemp": h_vtemp,
                 }
             )
-        return params
+        return to_cuda_(params)
 
     @to_cuda
     def _get_verts_and_joints(
@@ -234,8 +231,8 @@ class GRABDataset(BaseDataset):
             verts, joints = self._affine_mano(
                 noisy_params["theta"],
                 noisy_params["beta"],
-                noisy_params["rot"],
                 noisy_params["trans"],
+                rot_6d=noisy_params["rot"],
             )
             faces = self._affine_mano.faces.cpu().numpy()
         else:
@@ -280,12 +277,12 @@ class GRABDataset(BaseDataset):
             )
             .translate(torch.from_numpy(seq["object"]["params"]["transl"]))
         )
-        obj_transform = obj_transform.inverse().cuda()
+        obj_transform = obj_transform.inverse()
         # Apply the object transform to params so that the AffineMANO/SMPL-X parameters
         # are in the object's canonical coordinate system:
         if self._use_affine_mano:
-            transform = (Transform3d().translate(params["trans"])).cuda()
-            full_transform = Transform3d().compose(transform, obj_transform).cuda()
+            transform = Transform3d().translate(params["trans"])
+            full_transform = Transform3d().compose(transform, obj_transform)
             params["trans"] = full_transform.get_matrix()[:, 3, :3]
             params["rot"] = matrix_to_rotation_6d(
                 full_transform.get_matrix()[:, :3, :3]
@@ -299,8 +296,8 @@ class GRABDataset(BaseDataset):
                 Transform3d()
                 .rotate(axis_angle_to_matrix(params["rot"]))
                 .translate(params["trans"])
-            ).cuda()
-            full_transform = Transform3d().compose(transform, obj_transform).cuda()
+            )
+            full_transform = Transform3d().compose(transform, obj_transform)
             params["trans"] = full_transform.get_matrix()[:, 3, :3]
             params["rot"] = matrix_to_axis_angle(full_transform.get_matrix()[:, :3, :3])
             raise NotImplementedError("SMPL-X parameters canonicalization not working")
@@ -466,9 +463,10 @@ class GRABDataset(BaseDataset):
                     to_cuda_(gt_anchors),
                     scalar=gt_scalar,
                     bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                    anchor_indices=self._anchor_indices.cuda(),  # type: ignore
+                    anchor_indices=self._anchor_indices,  # type: ignore
                     remap_bps_distances=self._remap_bps_distances,
                     exponential_map_w=self._exponential_map_w,
+                    use_deltas=False,
                 )
                 if self._debug:
                     end = timeit.default_timer()
@@ -534,9 +532,10 @@ class GRABDataset(BaseDataset):
                         to_cuda_(anchors),
                         scalar=scalar,
                         bps=to_cuda_(self._bps).unsqueeze(0),  # type: ignore
-                        anchor_indices=self._anchor_indices.cuda(),  # type: ignore
+                        anchor_indices=self._anchor_indices,  # type: ignore
                         remap_bps_distances=self._remap_bps_distances,
                         exponential_map_w=self._exponential_map_w,
+                        use_deltas=False,
                     )
                     sample, label = (
                         choir.squeeze().cpu().numpy(),
@@ -811,8 +810,8 @@ class GRABDataset(BaseDataset):
                                 obj_mesh.sample_points_uniformly(300).points  # type: ignore
                             )
                         )
-                        .cuda()
-                        .float(),
+                        .float()
+                        .to(gt_joints.device),
                     )
                     dist = dist.min(dim=-1).values.min(dim=-1).values
                     # Filter the sequence frames to keep only those where the hand is within
