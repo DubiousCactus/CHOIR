@@ -157,9 +157,9 @@ def optimize_pose_pca_from_choir(
     plateau_cnt = 0
     pose_regularizer = to_cuda_(torch.tensor(0.0))
     processed_obj_mesh = obj_meshes[0]
-    processed_obj_mesh.merge_vertices()
-    processed_obj_mesh.update_faces(processed_obj_mesh.unique_faces())
-    processed_obj_mesh = processed_obj_mesh.simplify_quadric_decimation(processed_obj_mesh.faces.shape[0] // 3)
+    #processed_obj_mesh.merge_vertices()
+    #processed_obj_mesh.update_faces(processed_obj_mesh.unique_faces())
+    #processed_obj_mesh = processed_obj_mesh.simplify_quadric_decimation(processed_obj_mesh.faces.shape[0] // 2)
     for _ in proc_bar:
         optimizer.zero_grad()
         if use_smplx:
@@ -210,7 +210,7 @@ def optimize_pose_pca_from_choir(
         if plateau_cnt >= 10:
             break
 
-    if save_tto_anim:
+    if save_tto_anim and contact_gaussians is None: # if contact_gaussians is given, we don't want to override this stage 1
         anim.save_animation("tto_stage1.html")
 
     if contact_gaussians is None:
@@ -282,8 +282,8 @@ def optimize_pose_pca_from_choir(
             scale_tril_norm_activation_threshold=1e-3,
             only_penetration_loss=not enable_contact_fitting,
         )
-        contact_loss = 300 * contact_loss
-        penetration_loss = 100 * penetration_loss
+        contact_loss = 500 * contact_loss
+        penetration_loss = 1000 * penetration_loss
         shape_regularizer = beta_w * torch.norm(
             beta
         )  # Encourage the shape parameters to remain close to 0

@@ -253,12 +253,13 @@ def process_object(
     t_obj_mesh = trimesh.Trimesh(
         vertices=obj_mesh.vertices,
         faces=obj_mesh.triangles,
-        process=False,  # Don't remove my precious vertices you filthy animal!!!
-        validate=False,
+        process=gt_obj_contacts is None,  # Don't remove my precious vertices you filthy animal!!!
+        validate=gt_obj_contacts is None, # Don't remove my precious vertices you filthy animal!!!
     ).copy()
-    assert (
-        t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0]
-    ), "Trimesh changed the vert count!"
+    if gt_obj_contacts is not None:
+        assert (
+            t_obj_mesh.vertices.shape[0] == np.asarray(obj_mesh.vertices).shape[0]
+        ), "Trimesh changed the vert count!"
     obj_normals = None
     if enable_contacts_tto:
         # Initially we used Open3D to compute the vertex normals, but this gave

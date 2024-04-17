@@ -686,7 +686,7 @@ class MultiViewTester(MultiViewTrainer):
                         obj_meshes=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
-                    if self._debug_tto:
+                    if False and self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(
                             vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
                             faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -722,7 +722,7 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data["points"],
                             batch_obj_data["normals"],
                         )
-                        if self._debug_tto:
+                        if False and self._debug_tto:
                             # Visualize the Gaussian parameters
                             print(
                                 "====== Reconstructing contacts from GT 3D Gaussians ======"
