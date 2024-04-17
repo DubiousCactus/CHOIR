@@ -237,11 +237,14 @@ def process_object(
         gt_obj_contacts = None  # TODO
     else:
         obj_mesh = o3dio.read_triangle_mesh(path)
-        # From ContactOpt:
-        vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
-        gt_obj_contacts = torch.from_numpy(
-            np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
-        )  # Normalize with sigmoid, shape (V, 1)
+        if dataset == "contactpose":
+            # From ContactOpt:
+            vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
+            gt_obj_contacts = torch.from_numpy(
+                np.expand_dims(fit_sigmoid(vertex_colors[:, 0]), axis=1)
+            )  # Normalize with sigmoid, shape (V, 1)
+        elif dataset == "grab":
+            gt_obj_contacts = None  # TODO
     if center_on_obj_com:
         obj_mesh.translate(-obj_mesh.get_center())
     obj_points = torch.from_numpy(
@@ -250,7 +253,7 @@ def process_object(
     t_obj_mesh = trimesh.Trimesh(
         vertices=obj_mesh.vertices,
         faces=obj_mesh.triangles,
-        process=False, # Don't remove my precious vertices you filthy animal!!!
+        process=False,  # Don't remove my precious vertices you filthy animal!!!
         validate=False,
     ).copy()
     assert (
@@ -260,10 +263,10 @@ def process_object(
     if enable_contacts_tto:
         # Initially we used Open3D to compute the vertex normals, but this gave
         # us bad inward normals and horrible results on OakInk:
-        #obj_mesh.compute_vertex_normals()
+        # obj_mesh.compute_vertex_normals()
         # So instead we use Trimesh. This fixes face normals, later used to
         # compute vertex normals:
-        t_obj_mesh.fix_normals() 
+        t_obj_mesh.fix_normals()
         normals_w_roots = torch.cat(
             (
                 torch.from_numpy(np.asarray(t_obj_mesh.vertices).copy()).type(
