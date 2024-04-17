@@ -143,7 +143,9 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
         self.sigma = torch.nn.Parameter(torch.sqrt(self.beta), requires_grad=False)
         assert not torch.isnan(self.alpha).any(), "Alphas contains nan"
         assert not (self.alpha < 0).any(), "Alphas contain neg"
-        self._input_udf_shape, self._input_contacts_shape = None, None
+        # self._input_udf_shape, self._input_contacts_shape = None, None
+        self._input_udf_shape = (bps_dim, 1)  # hand UDF
+        self._input_contacts_shape = (32, 9)
         self.x_udf_mean, self.x_udf_std = None, None
         (
             self.x_contacts_mean,

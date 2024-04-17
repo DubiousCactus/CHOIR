@@ -15,7 +15,6 @@ from typing import Dict, Optional
 import torch
 
 from src.multiview_tester import MultiViewTester
-from utils import to_cuda_
 
 
 class SeqDDPMTester(MultiViewTester):
@@ -47,39 +46,6 @@ class SeqDDPMTester(MultiViewTester):
             self._model = torch.compile(self._model)
             if self._ema is not None:
                 self._ema.ema_model = torch.compile(self._ema.ema_model)
-        print("[*] Running the model's forward pass once...")
-        with torch.no_grad():
-            samples, labels, _ = to_cuda_(next(iter(self._data_loader)))
-            x = (
-                labels["choir"][:, -1]
-                if self._full_choir
-                else (
-                    labels["choir"][:, -1][..., -1].unsqueeze(-1)
-                    if not self._model_contacts
-                    else (
-                        labels["choir"][:, -1]
-                        if self._model.object_in_encoder
-                        else labels["choir"][:, -1][..., 1:]
-                    )
-                )
-            )
-            if self._single_modality is None:
-                modality = (
-                    "noisy_pair" if self._inference_mode == "denoising" else "object"
-                )
-            else:
-                modality = self._single_modality
-
-            y = samples["choir"] if self.conditional else None
-
-            if modality == "object":
-                y = y[..., 0].unsqueeze(-1)
-            elif modality == "noisy_pair":
-                pass  # Already comes in noisy_pair modality
-            self._model(x, y, y_modality=modality)
-            if self._ema is not None:
-                self._ema.ema_model(x, y, y_modality=modality)
-        print("[+] Done!")
 
     def _inference(
         self,
