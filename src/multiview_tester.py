@@ -918,7 +918,6 @@ class MultiViewTester(MultiViewTrainer):
         batch_idx: int,
         scenes: Dict,
     ):
-        print(f"For {n_observations} observations")
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
             batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
@@ -967,6 +966,16 @@ class MultiViewTester(MultiViewTrainer):
             batch_obj_data = make_batch_of_obj_data(
                 self._object_cache, mesh_pths, keep_mesh_contact_identity=False
             )
+        
+        found = False
+        for i in range(len(batch_obj_data["mesh_name"])):
+            mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
+            if mesh_name in ["wineglass"]:
+                found = True
+                break
+        if not found:
+            return scenes
+        print("Rendering: " + "".join([mesh_name.split(".")[0] for mesh_name in batch_obj_data["mesh_name"]]))
         hand_color = trimesh.visual.random_color()
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
@@ -982,7 +991,7 @@ class MultiViewTester(MultiViewTrainer):
             else:
                 y_hat = self._inference(samples, labels, use_prior=True)
                 with open(cached_pred_path, "wb") as f:
-                    y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                    y_hat = {k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v) for k, v in y_hat.items()}
                     pickle.dump(y_hat, f)
         else:
             y_hat = self._inference(samples, labels, use_prior=True)
@@ -1019,18 +1028,18 @@ class MultiViewTester(MultiViewTrainer):
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
-        mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
-        mesh = os.path.basename(mesh_pths_iter[0]).split(".")[0]
-        if mesh in [
-            "wineglass",
-            "binoculars",
-            "camera",
-            "mug",
-            "fryingpan",
-            "toothpaste",
-        ]:
-            return scenes
-        print(f"Rendering {mesh}")
+        #mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
+        #mesh = os.path.basename(mesh_pths_iter[0]).split(".")[0]
+        #if mesh in [
+        #    "wineglass",
+        #    "binoculars",
+        #    "camera",
+        #    "mug",
+        #    "fryingpan",
+        #    "toothpaste",
+        #]:
+        #    return scenes
+        #print(f"Rendering {mesh}")
         use_smplx = False  # TODO: I don't use it for now
 
         with torch.set_grad_enabled(True):
@@ -1080,8 +1089,11 @@ class MultiViewTester(MultiViewTrainer):
             if not os.path.exists(image_dir):
                 os.makedirs(image_dir)
             obj_meshes = {}
-            for i, mesh_pth in enumerate(mesh_pths_iter):
-                mesh_name = os.path.basename(mesh_pth)
+            for i, obj_mesh in enumerate(batch_obj_data["mesh"]):
+                mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
+                if mesh_name not in ["wineglass"]:
+                    continue
+                print(f"Rendering frame for {mesh_name}")
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts_pred[i].detach().cpu().numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -1108,13 +1120,13 @@ class MultiViewTester(MultiViewTrainer):
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
                 gt_hand_mesh.visual.vertex_colors = hand_color
-                if mesh_name not in obj_meshes:
-                    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                    if self._data_loader.dataset.center_on_object_com:
-                        obj_mesh.translate(-obj_mesh.get_center())
-                    obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
-                    obj_mesh.visual.vertex_colors = trimesh.visual.random_color()
-                    obj_meshes[mesh_name] = obj_mesh
+                #if mesh_name not in obj_meshes:
+                #    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
+                #    if self._data_loader.dataset.center_on_object_com:
+                #        obj_mesh.translate(-obj_mesh.get_center())
+                #    obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
+                #    obj_mesh.visual.vertex_colors = trimesh.visual.random_color()
+                #    obj_meshes[mesh_name] = obj_mesh
 
                 if mesh_name not in scenes:
                     scene_anim = ScenePicAnim()
@@ -1950,7 +1962,7 @@ class MultiViewTester(MultiViewTrainer):
                 break
             if (
                 len(list(scenes.keys())) > 0
-                and scenes[list(scenes.keys())[0]].n_frames > 130
+                and scenes[list(scenes.keys())[0]].n_frames > 30
             ):
                 break
             self._pbar.update()

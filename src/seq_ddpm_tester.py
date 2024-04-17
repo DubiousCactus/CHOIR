@@ -70,7 +70,7 @@ class SeqDDPMTester(MultiViewTester):
         print(
             f"y shape: {samples['choir'].shape}, max_observations: {max_observations}"
         )
-        y = samples["choir"][:, :max_observations] if self.conditional else None
+        y = samples["choir"][:, :1] if self.conditional else None
         print(f"[*] Using modality: {modality}")
         if modality == "object":
             y = y[..., 0].unsqueeze(-1)
