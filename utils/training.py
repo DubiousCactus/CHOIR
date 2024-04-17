@@ -149,17 +149,19 @@ def optimize_pose_pca_from_choir(
         )  # BPS should be scaled down to fit the MANO model in the same scale.
 
     choir_loss = CHOIRFittingLoss().to(choir.device)
-    anim = None
+    anim, processed_obj_mesh = None, None
     if save_tto_anim:
         assert obj_meshes is not None, "Must pass obj meshes if saving TTO anim!"
         anim = ScenePicAnim()
+        processed_obj_mesh = obj_meshes[0]
+        # processed_obj_mesh.merge_vertices()
+        # processed_obj_mesh.update_faces(processed_obj_mesh.unique_faces())
+        # processed_obj_mesh = processed_obj_mesh.simplify_quadric_decimation(
+        # processed_obj_mesh.faces.shape[0] // 2
+        # )
 
     plateau_cnt = 0
     pose_regularizer = to_cuda_(torch.tensor(0.0))
-    processed_obj_mesh = obj_meshes[0]
-    #processed_obj_mesh.merge_vertices()
-    #processed_obj_mesh.update_faces(processed_obj_mesh.unique_faces())
-    #processed_obj_mesh = processed_obj_mesh.simplify_quadric_decimation(processed_obj_mesh.faces.shape[0] // 2)
     for _ in proc_bar:
         optimizer.zero_grad()
         if use_smplx:
@@ -178,7 +180,8 @@ def optimize_pose_pca_from_choir(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),
-                }, reuse="object"
+                },
+                reuse="object",
             )
 
         anchors = affine_mano.get_anchors(verts)
@@ -190,7 +193,7 @@ def optimize_pose_pca_from_choir(
         )  # Encourage the shape parameters to remain close to 0
         if initial_params is not None:
             pose_regularizer = theta_w * torch.norm(theta - theta_reg)  # Shape prior
-        pose_regularizer += 1e-2 * torch.norm(theta) # Regularizer
+        pose_regularizer += 1e-2 * torch.norm(theta)  # Regularizer
 
         proc_bar.set_description(
             f"Anchors loss: {anchor_loss.item():.10f} / Shape reg: {shape_regularizer.item():.10f} / Pose reg: {pose_regularizer.item():.10f}"
@@ -210,7 +213,9 @@ def optimize_pose_pca_from_choir(
         if plateau_cnt >= 10:
             break
 
-    if save_tto_anim and contact_gaussians is None: # if contact_gaussians is given, we don't want to override this stage 1
+    if (
+        save_tto_anim and contact_gaussians is None
+    ):  # Don't override stage 1 when we want stage 2
         anim.save_animation("tto_stage1.html")
 
     if contact_gaussians is None:
@@ -231,7 +236,7 @@ def optimize_pose_pca_from_choir(
     trans_base, rot_base = trans.detach().clone(), rot.detach().clone()
     trans_base.requires_grad = False
     rot_base.requires_grad = False
-    #optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=3e-3)
+    # optimizer = torch.optim.Adam([theta, beta, trans, rot], lr=3e-3)
     optimizer = torch.optim.Adam([theta, beta], lr=1e-3)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
     assert obj_pts is not None, "obj_pts must be provided if contact_gaussians is."
@@ -267,7 +272,8 @@ def optimize_pose_pca_from_choir(
                         vertices=verts[0].cpu().detach().numpy(),
                         faces=affine_mano.faces.cpu(),
                     ),
-                }, reuse="object"
+                },
+                reuse="object",
             )
 
         anchors = affine_mano.get_anchors(verts)
@@ -306,7 +312,7 @@ def optimize_pose_pca_from_choir(
             plateau_cnt = 0
         loss = (
             penetration_loss
-            #+ abs_pose_regularizer
+            # + abs_pose_regularizer
             + pose_regularizer
             + shape_regularizer
         )

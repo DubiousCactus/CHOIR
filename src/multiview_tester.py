@@ -919,13 +919,73 @@ class MultiViewTester(MultiViewTrainer):
         scenes: Dict,
     ):
         print(f"For {n_observations} observations")
+        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        if self._debug_tto:
+            batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
+            if os.path.exists(batch_obj_path):
+                with open(batch_obj_path, "rb") as f:
+                    batch_obj_data = to_cuda_(
+                        torch.load(f, map_location=torch.device("cpu"))
+                    )
+            else:
+                mp_process_obj_meshes(
+                    mesh_pths,
+                    self._object_cache,
+                    self._data_loader.dataset.center_on_object_com,
+                    self._enable_contacts_tto,
+                    self._compute_iv,
+                    self._pitch,
+                    self._radius,
+                    self._n_pts_on_mesh,
+                    self._n_normals_on_mesh,
+                    dataset=self._data_loader.dataset.name,
+                    keep_mesh_contact_identity=False,
+                )
+                batch_obj_data = make_batch_of_obj_data(
+                    self._object_cache, mesh_pths, keep_mesh_contact_identity=False
+                )
+                with open(batch_obj_path, "wb") as f:
+                    batch_obj_data = {
+                        k: (v.cpu() if type(v) is torch.Tensor else v)
+                        for k, v in batch_obj_data.items()
+                    }
+                    torch.save(batch_obj_data, f)
+        else:
+            mp_process_obj_meshes(
+                mesh_pths,
+                self._object_cache,
+                self._data_loader.dataset.center_on_object_com,
+                self._enable_contacts_tto,
+                self._compute_iv,
+                self._pitch,
+                self._radius,
+                self._n_pts_on_mesh,
+                self._n_normals_on_mesh,
+                dataset=self._data_loader.dataset.name,
+                keep_mesh_contact_identity=False,
+            )
+            batch_obj_data = make_batch_of_obj_data(
+                self._object_cache, mesh_pths, keep_mesh_contact_identity=False
+            )
         hand_color = trimesh.visual.random_color()
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        y_hat = self._inference(samples, labels, use_prior=True)
+        if self._debug_tto:
+            cached_pred_path = f"cache_pred_{batch_idx}.pkl"
+            if os.path.exists(cached_pred_path):
+                with open(cached_pred_path, "rb") as f:
+                    y_hat = pickle.load(f)
+                    y_hat = to_cuda_(y_hat)
+            else:
+                y_hat = self._inference(samples, labels, use_prior=True)
+                with open(cached_pred_path, "wb") as f:
+                    y_hat = {k: v.detach().cpu() for k, v in y_hat.items()}
+                    pickle.dump(y_hat, f)
+        else:
+            y_hat = self._inference(samples, labels, use_prior=True)
         mano_params_gt = {
             "pose": labels["theta"].view(-1, *labels["theta"].shape[2:]),
             "beta": labels["beta"].view(-1, *labels["beta"].shape[2:]),
@@ -941,8 +1001,18 @@ class MultiViewTester(MultiViewTrainer):
         # Only use the last view for each batch element (they're all the same anyway for static
         # grasps, but for dynamic grasps we want to predict the LAST frame!).
         # mano_params_gt = {k: v for k, v in mano_params_gt.items()}
-        gt_verts, _ = self._affine_mano(*mano_params_gt.values())
-        sample_verts, sample_joints = self._affine_mano(*mano_params_input.values())
+        gt_verts, _ = self._affine_mano(
+            mano_params_gt["pose"],
+            mano_params_gt["beta"],
+            mano_params_gt["trans"],
+            rot_6d=mano_params_gt["rot_6d"],
+        )
+        sample_verts, sample_joints = self._affine_mano(
+            mano_params_input["pose"],
+            mano_params_input["beta"],
+            mano_params_input["trans"],
+            rot_6d=mano_params_input["rot_6d"],
+        )
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
@@ -974,10 +1044,14 @@ class MultiViewTester(MultiViewTrainer):
                 joints_pred,
             ) = optimize_pose_pca_from_choir(
                 y_hat["choir"],
+                # contact_gaussians=y_hat.get("contacts", None),
+                contact_gaussians=None,
                 bps=self._bps,
+                obj_pts=batch_obj_data["points"],
+                obj_normals=batch_obj_data["normals"],
                 anchor_indices=self._anchor_indices,
                 scalar=input_scalar,
-                max_iterations=2000,
+                max_iterations=1000,
                 loss_thresh=1e-6,
                 lr=8e-2,
                 is_rhand=samples["is_rhand"],
@@ -996,6 +1070,8 @@ class MultiViewTester(MultiViewTrainer):
                 beta_w=1e-4,
                 theta_w=1e-7,
                 choir_w=1000,
+                obj_meshes=None,
+                save_tto_anim=False,
             )
             image_dir = os.path.join(
                 HydraConfig.get().runtime.output_dir,
@@ -1003,7 +1079,6 @@ class MultiViewTester(MultiViewTrainer):
             )
             if not os.path.exists(image_dir):
                 os.makedirs(image_dir)
-            viewed_meshes = []
             obj_meshes = {}
             for i, mesh_pth in enumerate(mesh_pths_iter):
                 mesh_name = os.path.basename(mesh_pth)
@@ -1863,7 +1938,12 @@ class MultiViewTester(MultiViewTrainer):
                         "Grab dataset does not support video dumping."
                     )
                 scenes = self._save_batch_predictions_as_sequence(
-                    samples, labels, mesh_pths, n_observations, i, scenes
+                    samples,
+                    labels,
+                    mesh_pths,
+                    n_observations,
+                    i,
+                    scenes,
                 )
             if len(list(scenes.keys())) > 1:
                 del scenes[list(scenes.keys())[-1]]
