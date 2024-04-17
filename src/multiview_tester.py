@@ -642,10 +642,10 @@ class MultiViewTester(MultiViewTrainer):
                         None,
                     )
                     (
-                        _,
-                        _,
-                        _,
-                        _,
+                        theta_tto,
+                        beta_tto,
+                        rot_tto,
+                        trans_tto,
                         anchors_pred,
                         verts_pred,
                         joints_pred,
@@ -819,24 +819,17 @@ class MultiViewTester(MultiViewTrainer):
                             max_iterations=1000,
                             loss_thresh=1e-6,
                             contact_loss_thresh=1e-6,
-                            lr=8e-2,
+                            lr=1e-12, # We already converged stage 1. Stage 2 has a hardcoded lr (I know!!!)
                             is_rhand=samples["is_rhand"],
                             use_smplx=use_smplx,
                             dataset=self._data_loader.dataset.name,
                             remap_bps_distances=self._remap_bps_distances,
                             exponential_map_w=self._exponential_map_w,
                             initial_params={
-                                k: (
-                                    v[:, -1] if multiple_obs else v
-                                )  # Initial pose is the last observation
-                                for k, v in samples.items()
-                                if k
-                                in [
-                                    "theta",
-                                    ("vtemp" if use_smplx else "beta"),
-                                    "rot",
-                                    "trans",
-                                ]
+                                "theta": theta_tto,
+                                "beta": beta_tto,
+                                "rot": rot_tto,
+                                "trans": trans_tto,
                             },
                             beta_w=1e-4,
                             theta_w=1e-7,
