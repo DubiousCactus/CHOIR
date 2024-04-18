@@ -15,7 +15,6 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import blosc2
 import matplotlib.pyplot as plt
-import open3d.io as o3dio
 import pyvista as pv
 import torch
 import trimesh
@@ -919,54 +918,22 @@ class MultiViewTester(MultiViewTrainer):
         scenes: Dict,
     ):
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
-        if self._debug_tto:
-            batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
-            if os.path.exists(batch_obj_path):
-                with open(batch_obj_path, "rb") as f:
-                    batch_obj_data = to_cuda_(
-                        torch.load(f, map_location=torch.device("cpu"))
-                    )
-            else:
-                mp_process_obj_meshes(
-                    mesh_pths,
-                    self._object_cache,
-                    self._data_loader.dataset.center_on_object_com,
-                    self._enable_contacts_tto,
-                    self._compute_iv,
-                    self._pitch,
-                    self._radius,
-                    self._n_pts_on_mesh,
-                    self._n_normals_on_mesh,
-                    dataset=self._data_loader.dataset.name,
-                    keep_mesh_contact_identity=False,
-                )
-                batch_obj_data = make_batch_of_obj_data(
-                    self._object_cache, mesh_pths, keep_mesh_contact_identity=False
-                )
-                with open(batch_obj_path, "wb") as f:
-                    batch_obj_data = {
-                        k: (v.cpu() if type(v) is torch.Tensor else v)
-                        for k, v in batch_obj_data.items()
-                    }
-                    torch.save(batch_obj_data, f)
-        else:
-            mp_process_obj_meshes(
-                mesh_pths,
-                self._object_cache,
-                self._data_loader.dataset.center_on_object_com,
-                self._enable_contacts_tto,
-                self._compute_iv,
-                self._pitch,
-                self._radius,
-                self._n_pts_on_mesh,
-                self._n_normals_on_mesh,
-                dataset=self._data_loader.dataset.name,
-                keep_mesh_contact_identity=False,
-            )
-            batch_obj_data = make_batch_of_obj_data(
-                self._object_cache, mesh_pths, keep_mesh_contact_identity=False
-            )
-        
+        mp_process_obj_meshes(
+            mesh_pths,
+            self._object_cache,
+            self._data_loader.dataset.center_on_object_com,
+            self._enable_contacts_tto,
+            self._compute_iv,
+            self._pitch,
+            self._radius,
+            self._n_pts_on_mesh,
+            self._n_normals_on_mesh,
+            dataset=self._data_loader.dataset.name,
+            keep_mesh_contact_identity=False,
+        )
+        batch_obj_data = make_batch_of_obj_data(
+            self._object_cache, mesh_pths, keep_mesh_contact_identity=False
+        )
         found = False
         for i in range(len(batch_obj_data["mesh_name"])):
             mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
@@ -975,26 +942,19 @@ class MultiViewTester(MultiViewTrainer):
                 break
         if not found:
             return scenes
-        print("Rendering: " + "".join([mesh_name.split(".")[0] for mesh_name in batch_obj_data["mesh_name"]]))
+        print(
+            "Rendering: "
+            + ", ".join(
+                [mesh_name.split(".")[0] for mesh_name in batch_obj_data["mesh_name"]]
+            )
+        )
         hand_color = trimesh.visual.random_color()
         input_scalar = samples["scalar"]
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(
                 dim=1
             )  # TODO: Think of a better way for 'pair' scaling. Never mind we have object scaling which is better
-        if self._debug_tto:
-            cached_pred_path = f"cache_pred_{batch_idx}.pkl"
-            if os.path.exists(cached_pred_path):
-                with open(cached_pred_path, "rb") as f:
-                    y_hat = pickle.load(f)
-                    y_hat = to_cuda_(y_hat)
-            else:
-                y_hat = self._inference(samples, labels, use_prior=True)
-                with open(cached_pred_path, "wb") as f:
-                    y_hat = {k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v) for k, v in y_hat.items()}
-                    pickle.dump(y_hat, f)
-        else:
-            y_hat = self._inference(samples, labels, use_prior=True)
+        y_hat = self._inference(samples, labels, use_prior=True)
         mano_params_gt = {
             "pose": labels["theta"].view(-1, *labels["theta"].shape[2:]),
             "beta": labels["beta"].view(-1, *labels["beta"].shape[2:]),
@@ -1028,18 +988,6 @@ class MultiViewTester(MultiViewTrainer):
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
-        #mesh_pths_iter = mesh_pths[-1]  # Now we have a list of B entries.
-        #mesh = os.path.basename(mesh_pths_iter[0]).split(".")[0]
-        #if mesh in [
-        #    "wineglass",
-        #    "binoculars",
-        #    "camera",
-        #    "mug",
-        #    "fryingpan",
-        #    "toothpaste",
-        #]:
-        #    return scenes
-        #print(f"Rendering {mesh}")
         use_smplx = False  # TODO: I don't use it for now
 
         with torch.set_grad_enabled(True):
@@ -1093,7 +1041,6 @@ class MultiViewTester(MultiViewTrainer):
                 mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
                 if mesh_name not in ["wineglass"]:
                     continue
-                print(f"Rendering frame for {mesh_name}")
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts_pred[i].detach().cpu().numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -1111,7 +1058,6 @@ class MultiViewTester(MultiViewTrainer):
                     .numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
-                input_hand_mesh.visual.vertex_colors = hand_color
                 gt_hand_mesh = trimesh.Trimesh(
                     vertices=gt_verts[i * labels["theta"].shape[1] + n_observations - 1]
                     .detach()
@@ -1119,15 +1065,6 @@ class MultiViewTester(MultiViewTrainer):
                     .numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
-                gt_hand_mesh.visual.vertex_colors = hand_color
-                #if mesh_name not in obj_meshes:
-                #    obj_mesh = o3dio.read_triangle_mesh(mesh_pth)
-                #    if self._data_loader.dataset.center_on_object_com:
-                #        obj_mesh.translate(-obj_mesh.get_center())
-                #    obj_mesh = Trimesh(obj_mesh.vertices, obj_mesh.triangles)
-                #    obj_mesh.visual.vertex_colors = trimesh.visual.random_color()
-                #    obj_meshes[mesh_name] = obj_mesh
-
                 if mesh_name not in scenes:
                     scene_anim = ScenePicAnim()
                     scenes[mesh_name] = scene_anim
@@ -2022,7 +1959,7 @@ class MultiViewTester(MultiViewTrainer):
                     min(4, self._max_observations)
                     if self._data_loader.dataset.name.lower()
                     in ["contactpose", "oakink"]
-                    else 7,
+                    else 7,  # TODO: WHY??? I must have been exhausted and thought it was a good number
                     self._dump_videos,
                 )
         else:
