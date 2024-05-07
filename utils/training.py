@@ -49,6 +49,7 @@ def optimize_pose_pca_from_choir(
     choir_w: float = 1.0,
     save_tto_anim: bool = False,
     obj_meshes: Optional[trimesh.Trimesh] = None,
+    return_sequence: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     /!\ Important /!\: when computing the CHOIR field, the scalar is applied to the pointclouds
@@ -58,6 +59,8 @@ def optimize_pose_pca_from_choir(
     assert len(choir.shape) == 3
     B = choir.shape[0]
     affine_mano, smplx_model = None, None
+    if return_sequence:
+        mano_sequence, verts_sequence = [], []
     if use_smplx:
         with redirect_stdout(None):
             smplx_model = to_cuda_(
@@ -171,6 +174,9 @@ def optimize_pose_pca_from_choir(
             verts, joints = output.vertices, output.joints
         else:
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
+        if return_sequence:
+            mano_sequence.append((theta, beta, trans, rot))
+            verts_sequence.append(verts.cpu().detach().numpy())
 
         if save_tto_anim:
             anim.add_frame(
@@ -218,7 +224,7 @@ def optimize_pose_pca_from_choir(
     ):  # Don't override stage 1 when we want stage 2
         anim.save_animation("tto_stage1.html")
 
-    if contact_gaussians is None:
+    if contact_gaussians is None and not return_sequence:
         return (
             theta.detach(),
             beta.detach(),
@@ -228,6 +234,8 @@ def optimize_pose_pca_from_choir(
             verts.detach(),
             joints.detach(),
         )
+    elif contact_gaussians is None:
+        return _, _, _, _, mano_sequence, verts_sequence
 
     plateau_cnt = 0
     proc_bar = tqdm.tqdm(range(max_iterations))
@@ -263,6 +271,10 @@ def optimize_pose_pca_from_choir(
             verts, joints = output.vertices, output.joints
         else:
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
+
+        if return_sequence:
+            mano_sequence.append((theta, beta, trans, rot))
+            verts_sequence.append(verts.cpu().detach().numpy())
 
         if save_tto_anim:
             anim.add_frame(
@@ -328,15 +340,18 @@ def optimize_pose_pca_from_choir(
     if save_tto_anim:
         anim.save_animation("tto_stage2.html")
 
-    return (
-        theta.detach(),
-        beta.detach(),
-        rot.detach(),
-        trans.detach(),
-        anchors.detach(),
-        verts.detach(),
-        joints.detach(),
-    )
+    if not return_sequence:
+        return (
+            theta.detach(),
+            beta.detach(),
+            rot.detach(),
+            trans.detach(),
+            anchors.detach(),
+            verts.detach(),
+            joints.detach(),
+        )
+    else:
+        return _, _, _, _, mano_sequence, verts_sequence
 
 
 @to_cuda

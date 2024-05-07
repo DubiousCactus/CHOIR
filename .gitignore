@@ -12,3 +12,7 @@ tags.*
 *.pickle
 models/
 FIGURES/
+*.mp4
+*.ckpt
+*.pkl
+tmp/

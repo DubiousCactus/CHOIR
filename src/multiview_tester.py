@@ -887,7 +887,7 @@ class MultiViewTester(MultiViewTrainer):
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        samples, labels, mesh_pths = batch  # type: ignore
+        samples, labels, mesh_pths, sample_pths = batch  # type: ignore
         eval_metrics = self._test_batch(
             samples,
             labels,
@@ -1874,7 +1874,7 @@ class MultiViewTester(MultiViewTrainer):
         for i, batch in enumerate(self._data_loader):
             if not self._running:
                 print("[!] Testing aborted.")
-            samples, labels, mesh_pths = batch  # type: ignore
+            samples, labels, mesh_pths, sample_pths = batch  # type: ignore
             if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
                 self._save_batch_predictions(
                     samples, labels, mesh_pths, viewed_meshes, n_observations, i
@@ -1890,10 +1890,13 @@ class MultiViewTester(MultiViewTrainer):
                     samples,
                     labels,
                     mesh_pths,
+                    sample_pths,
                     n_observations,
                     i,
                     scenes,
                 )
+            # TODO: Now that I've got the scene ID, I can use this heuristic to save the scene and
+            # clear the cache.
             if len(list(scenes.keys())) > 1:
                 del scenes[list(scenes.keys())[-1]]
                 break

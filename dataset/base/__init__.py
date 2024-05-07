@@ -534,4 +534,7 @@ class BaseDataset(TaskSet, abc.ABC):
         else:
             label["obj_pts"] = torch.tensor(0.0)
             label["obj_contacts"] = torch.tensor(0.0)
-        return sample, label, mesh_pths
+        if self._eval_mode:
+            return sample, label, mesh_pths, samples_paths
+        else:
+            return sample, label, mesh_pths
