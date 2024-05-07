@@ -18,7 +18,7 @@
             "+experiment=coddpm_3d_multiview_grab_multimodal",
             "dataset.tiny=1",
             "dataset.n_augs=2",
-            "data_loader.batch_size=2",
+            "data_loader.batch_size=16",
             "run.enable_contacts_tto=0",
             "run.compute_contact_scores=0",
             "run.compute_pose_error=1",

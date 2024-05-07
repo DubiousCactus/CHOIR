@@ -10,7 +10,6 @@ Motion Sequence DDPM Tester.
 """
 
 
-import os
 import pathlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -18,7 +17,6 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 import trimesh
-from hydra.core.hydra_config import HydraConfig
 
 from src.multiview_tester import MultiViewTester
 from utils import to_cuda
@@ -30,6 +28,7 @@ from utils.training import optimize_pose_pca_from_choir
 @dataclass
 class CacheEntry:
     frame_count: int
+    marked_for_optimization: bool
     mano: Dict
     verts: torch.Tensor
 
@@ -160,7 +159,14 @@ class SeqDDPMTester(MultiViewTester):
         print(
             "Rendering: "
             + ", ".join(
-                [mesh_name.split(".")[0] for mesh_name in batch_obj_data["mesh_name"]]
+                list(
+                    set(
+                        [
+                            mesh_name.split(".")[0]
+                            for mesh_name in batch_obj_data["mesh_name"]
+                        ]
+                    )
+                )
             )
         )
         hand_color = trimesh.visual.random_color()
@@ -204,19 +210,21 @@ class SeqDDPMTester(MultiViewTester):
         # element.
         use_smplx = False  # TODO: I don't use it for now
 
-        # TODO: Ok let's implement the actual logic here. We have a cache where we can store the
-        # previous frame's fitted MANO parameters for the given scenes in the batch. We will use
-        # them as initial parameters for the optimization, unless it's not the cache in which case
-        # we'll use the noisy input parameters. Then we replace the cache entry with the optimized
-        # parameters.
-        # TODO: We need to adapt the optimize_pose_pca_from_choir method so that it returns a
-        # sequence of MANO frames. From this sequence we'll sample N frames using np.logspace(0, N)
-        # to accomodate for the fact that convergence speed is like a logarithmic curve.
+        """
+        Ok let's implement the actual logic here. We have a cache where we can store the
+        previous frame's fitted MANO parameters for the given scenes in the batch. We will use
+        them as initial parameters for the optimization, unless it's not the cache in which case
+        we'll use the noisy input parameters. Then we replace the cache entry with the optimized
+        parameters.
+        We need to adapt the optimize_pose_pca_from_choir method so that it returns a
+        sequence of MANO frames. From this sequence we'll sample N frames using np.logspace(0, N)
+        to accomodate for the fact that convergence speed is like a logarithmic curve.
+
+        1. Find the scene in the cache, retrieve the MANO parameters.
+        2. Run the optimization with the MANO parameters as initial parameters.
+        3. Store the optimized MANO parameters in the cache.
+        """
         scene_names = [pathlib.PurePath(path).parent.name for path in sample_pths]
-        print(f"scene names: {scene_names}")
-        # 1. Find the scene in the cache, retrieve the MANO parameters.
-        # 2. Run the optimization with the MANO parameters as initial parameters.
-        # 3. Store the optimized MANO parameters in the cache.
         # TODO: What happens if we have multiple scenes in the batch? Can we handle more than 3?
         # Well, we work with sequences. So in the batch we either have B frames of the same scene,
         # or B frames of different scenes. We want to run optimization of ONE frame per scene,
@@ -225,30 +233,23 @@ class SeqDDPMTester(MultiViewTester):
         # corresponding cached result for N_0 for each scene of the K scenes.
 
         # Find the indices in the scene_names array where the scene changes:
+        # TODO: Refactor the following two list comprehensions into one simple loop.
         new_scene_indices = [
             i
             for i in range(len(scene_names))
-            if scene_names[i] != scene_names[i - 1]
+            if scene_names[i] != scene_names[max(i - 1, 0)]
             or scene_names[i] not in self._scenes_cache
         ]
         # Prune new scenes that are duplicates:
         new_scene_indices = [
-            i
-            for i in range(len(new_scene_indices))
-            if scene_names[new_scene_indices[i]] not in scene_names[:i]
+            i for i in new_scene_indices if scene_names[i] not in scene_names[:i]
         ]
-        print(f"new scene indices: {new_scene_indices}")
         individual_scenes = set(scene_names)
-        print(f"individual scenes: {individual_scenes}")
-        # TODO: For each inidividual scene, look up the cache entry or init to the noisy input.
-        # Then build a batch of initial MANO paramters from these, and run the optimization to get
-        # a sequence of N=self._window_size frames for each scene. Then update the cache.
-        for k in self._scenes_cache.keys():
-            if k in individual_scenes:
-                self._scenes_cache[k].frame_count += 1
+
         # next we need to find the frame to optimize for if it's in the batch. It must abide
-        # one of the following conditions: 1. It's the last frame of the sequence, 2. It's the
+        # one of the following conditions: A. It's the last frame of the sequence, B. It's the
         # frame number (using the running counter in the cache entry) that is equal to the window size.
+        # A. Find the last frame of the sequence(s).
         last_frames = []
         for i in range(len(scene_names)):
             # TODO: Interpolate with N - frame_count frames not N frames
@@ -257,14 +258,37 @@ class SeqDDPMTester(MultiViewTester):
             last_frame_idx = max(i - 1, 0)
             if last_frame_idx not in new_scene_indices:
                 last_frames.append(last_frame_idx)
-        due_frames = [
-            i
-            for i in range(len(scene_names))
-            if self._scenes_cache.get(
-                scene_names[i], CacheEntry(0, None, None)
-            ).frame_count
-            == self._window_size
-        ]
+
+        # B. Find the frames due for optimization (window full).
+        # 1. I want to find the first frame that brings the counter to the window size, if it's in
+        # the batch.
+        # 2. I want to update the frame counter, taking 1. into account (meaning overflow/reset if
+        # needed).
+
+        # For each inidividual scene, look up the cache entry or init to the noisy input.
+        # Then build a batch of initial MANO paramters from these, and run the optimization to get
+        # a sequence of N=self._window_size frames for each scene. Then update the cache.
+        due_frames = []
+        for i in range(len(scene_names)):
+            if scene_names[i] not in self._scenes_cache:
+                continue
+            # For each frame in the batch, update the cache entry's frame count.
+            self._scenes_cache[scene_names[i]].frame_count += 1
+            # If the frame count has reached window_size, use this corresponding frame as the
+            # optimization target.
+            # If we matched, reset the frame count to 0 and keep counting the following
+            # frames. If we matched more than once per cache entry, the batch size is too large and
+            # we can't handle this case for now (abort and warn, this is not needed).
+            if self._scenes_cache[scene_names[i]].frame_count >= self._window_size:
+                if self._scenes_cache[scene_names[i]].marked_for_optimization:
+                    raise NotImplementedError(
+                        "Can't handle more than one window per scene in the batch. Please reduce the batch size."
+                    )
+                due_frames.append(i)
+                self._scenes_cache[scene_names[i]].frame_count = 0
+                self._scenes_cache[scene_names[i]].marked_for_optimization = True
+
+        # ========================================================================================
         frames_to_optimize = {
             "choir": [],
             "contacts": [],
@@ -274,13 +298,13 @@ class SeqDDPMTester(MultiViewTester):
             "is_rhand": [],
             "init_params": [],
         }
-        print(f"last_frames: {last_frames}, due_frames: {due_frames}")
         frame_indices = set(last_frames + due_frames)
-        print(f"frame indices: {frame_indices}")
         y_hat = (
             None
             if len(frame_indices) == 0
-            else self._inference(samples, labels, use_prior=True)
+            else self._inference(
+                samples, labels, use_prior=True
+            )  # TODO: Don't run inference on the whole batch, only on the frames we need to optimize.
         )
         for i in frame_indices:
             contacts = y_hat.get("contacts", None)
@@ -288,8 +312,10 @@ class SeqDDPMTester(MultiViewTester):
                 assert (
                     scene_names[i] in self._scenes_cache
                 ), f"Scene {scene_names[i]} not in cache, but {scene_names[i]} is a new sceen!"
-            initial_params = (
-                {
+                initial_params = self._scenes_cache[scene_names[i]].mano
+                self._scenes_cache[scene_names[i]].marked_for_optimization = False
+            else:
+                initial_params = {
                     k: (
                         v[i, -1] if multiple_obs else v[i]
                     )  # Initial pose is the last observation
@@ -297,16 +323,9 @@ class SeqDDPMTester(MultiViewTester):
                     if k
                     in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
                 }
-                if i in new_scene_indices
-                else self._scenes_cache[scene_names[i]].mano
-            )
-            print(
-                f"filling {i} with {scene_names[i]}. Is in new_scene_indices? {i in new_scene_indices}"
-            )
             assert (
                 initial_params is not None
             ), f"Initial params are None for {scene_names[i]}"
-            print(f"initial params: {initial_params}")
             frames_to_optimize["choir"].append(y_hat["choir"][i])
             frames_to_optimize["contacts"].append(
                 contacts[i] if contacts is not None else None
@@ -317,31 +336,20 @@ class SeqDDPMTester(MultiViewTester):
             frames_to_optimize["is_rhand"].append(samples["is_rhand"][i])
             frames_to_optimize["init_params"].append(initial_params)
 
-        print(
-            f"batch: {scene_names}, frames to optimize: {frame_indices}, last frames: {last_frames}, due frames: {due_frames}, new scene indices: {new_scene_indices}"
-        )
         # It's perfectly ok to not have any frames to optimize, because we may have a small batch
         # and we have to wait to get self._window_size frames. Meaning we need to keep track of
         # scene frames in the cache and only optimize when we have enough frames.
-
         mano_sequence_pred, verts_sequence_pred = [], []
         if len(frames_to_optimize["choir"]) > 0:
             # Make tensors from lists of tensors:
             for k, v in frames_to_optimize.items():
                 if v != [] and isinstance(v[0], torch.Tensor):
                     frames_to_optimize[k] = torch.stack(v)
-            print(
-                type(frames_to_optimize["init_params"]),
-                frames_to_optimize["init_params"],
-            )
             # Coalesce the list of init param dicts into a single dict:
             frames_to_optimize["init_params"] = {
                 k: torch.stack([v[k] for v in frames_to_optimize["init_params"]])
                 for k in frames_to_optimize["init_params"][0].keys()
             }
-            print(frames_to_optimize.keys())
-            for k, v in frames_to_optimize.items():
-                print(f"{k}: {v.shape if isinstance(v, torch.Tensor) else len(v)}")
             with torch.set_grad_enabled(True):
                 (
                     _,
@@ -381,13 +389,10 @@ class SeqDDPMTester(MultiViewTester):
             # Store the optimized MANO parameters in the cache:
             for i in frame_indices:
                 self._scenes_cache[scene_names[i]] = CacheEntry(
-                    0, mano_sequence_pred[-1], verts_sequence_pred[-1]
+                    0, False, mano_sequence_pred[-1], verts_sequence_pred[-1]
                 )  # Reset the cache
 
         # We also need to add the initial noisy input to the cache entries if it's a new sequence:
-        print(
-            f"Adding initial noisy input to the cache for new scenes: {new_scene_indices}"
-        )
         for i in new_scene_indices:
             assert scene_names[i] not in self._scenes_cache
             mano_params = {
@@ -398,30 +403,33 @@ class SeqDDPMTester(MultiViewTester):
                 if k in ["theta", ("vtemp" if use_smplx else "beta"), "rot", "trans"]
             }
             verts = sample_verts[i]
-            self._scenes_cache[scene_names[i]] = CacheEntry(0, mano_params, verts)
+            self._scenes_cache[scene_names[i]] = CacheEntry(
+                0, False, mano_params, verts
+            )
 
-        image_dir = os.path.join(
-            HydraConfig.get().runtime.output_dir,
-            "tto_images",
-        )
-        if not os.path.exists(image_dir):
-            os.makedirs(image_dir)
-        obj_meshes = {}
-        print("Interpolating and rendering frames...")
-        # TODO: Render frames in the verts_sequence_pred list using np.logspace(0, N) sampling.
         # TODO: See how to properly sample when contact fitting is enabled. A first simple strategy
         # is to concatenate frames of both stages and still use np.logspace(0, N) sampling.
         # Assuming we have one entry in the list per optimization step:
+        # TODO: What I have now may give me what I want, but the ground-truth and input hand meshes
+        # aren't right because I skip a lot of batches and drop them until I have a full window.
+        # Instead, I need to cache them for when I'm ready to dump processed preds.
         if len(verts_sequence_pred) < self._window_size:
             return scenes
         sampling_indices = (
-            np.geomspace(1, len(verts_sequence_pred), self._window_size, endpoint=True)
+            np.geomspace(1, len(verts_sequence_pred), self._window_size, endpoint=False)
             .round()
             .astype(int)
         )
+        sampling_indices -= np.ones_like(
+            sampling_indices
+        )  # Because np.geomspace can't start at 0
         for j, obj_mesh in enumerate(batch_obj_data["mesh"]):
             mesh_name = batch_obj_data["mesh_name"][j].split(".")[0]
-            key = scene_names[j]
+            if j >= len(list(individual_scenes)):
+                break
+            key = list(individual_scenes)[
+                j
+            ]  # TODO: Fix that. Should be coming from unique scene names? Find a proper solution.
             for i, (mano_params, verts) in enumerate(
                 zip(mano_sequence_pred, verts_sequence_pred)
             ):
