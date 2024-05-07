@@ -16,3 +16,4 @@ FIGURES/
 *.ckpt
 *.pkl
 tmp/
+.DS_Store
