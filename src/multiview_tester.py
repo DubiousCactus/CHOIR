@@ -1897,14 +1897,14 @@ class MultiViewTester(MultiViewTrainer):
                 )
             # TODO: Now that I've got the scene ID, I can use this heuristic to save the scene and
             # clear the cache.
-            if len(list(scenes.keys())) > 1:
+            if len(list(scenes.keys())) > 1:  # Simply render the first scene and stop.
                 del scenes[list(scenes.keys())[-1]]
                 break
-            if (
-                len(list(scenes.keys())) > 0
-                and scenes[list(scenes.keys())[0]].n_frames > 30
-            ):
-                break
+            # if (
+            # len(list(scenes.keys())) > 0
+            # and scenes[list(scenes.keys())[0]].n_frames > 30
+            # ):
+            # break
             self._pbar.update()
         for mesh_name, scene in scenes.items():
             print(f"Saving {mesh_name}")

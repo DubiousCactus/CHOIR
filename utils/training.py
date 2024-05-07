@@ -175,7 +175,9 @@ def optimize_pose_pca_from_choir(
         else:
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
         if return_sequence:
-            mano_sequence.append((theta, beta, trans, rot))
+            mano_sequence.append(
+                {"theta": theta, "beta": beta, "trans": trans, "rot": rot}
+            )
             verts_sequence.append(verts.cpu().detach().numpy())
 
         if save_tto_anim:
@@ -273,7 +275,9 @@ def optimize_pose_pca_from_choir(
             verts, joints = affine_mano(theta, beta, trans, rot_6d=rot)
 
         if return_sequence:
-            mano_sequence.append((theta, beta, trans, rot))
+            mano_sequence.append(
+                {"theta": theta, "beta": beta, "trans": trans, "rot": rot}
+            )
             verts_sequence.append(verts.cpu().detach().numpy())
 
         if save_tto_anim:

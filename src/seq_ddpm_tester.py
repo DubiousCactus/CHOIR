@@ -277,8 +277,12 @@ class SeqDDPMTester(MultiViewTester):
         print(f"last_frames: {last_frames}, due_frames: {due_frames}")
         frame_indices = set(last_frames + due_frames)
         print(f"frame indices: {frame_indices}")
+        y_hat = (
+            None
+            if len(frame_indices) == 0
+            else self._inference(samples, labels, use_prior=True)
+        )
         for i in frame_indices:
-            y_hat = self._inference(samples, labels, use_prior=True)
             contacts = y_hat.get("contacts", None)
             if i not in new_scene_indices:
                 assert (
@@ -360,7 +364,7 @@ class SeqDDPMTester(MultiViewTester):
                     scalar=frames_to_optimize["scalar"],
                     max_iterations=1000,
                     loss_thresh=1e-6,
-                    lr=8e-2,
+                    lr=3e-3,
                     is_rhand=frames_to_optimize["is_rhand"],
                     use_smplx=use_smplx,
                     dataset=self._data_loader.dataset.name,

@@ -10,7 +10,10 @@ from typing import Dict, Optional
 
 import numpy as np
 import pyvista as pv
+import scenepic as sp
 from trimesh import Trimesh
+
+from utils import colorize_prints
 
 colors = {
     "hand": np.array([181 / 255, 144 / 255, 191 / 255]),
@@ -75,12 +78,12 @@ class ScenePicAnim:
     ):
         super().__init__()
         try:
-            import scenepic as sp
-        except:
-            raise Exception(
-                "scenepic not installed. Some visualization functions will not work. (I know it's not available on Apple Silicon :("
-            )
-        pv.start_xvfb()
+            pv.start_xvfb()
+        except OSError:
+            with colorize_prints("red"):
+                print(
+                    "[!] Could not start Xvfb, you might be in a headless environment. This might prevent ScenePic from working."
+                )
         self.scene = sp.Scene()
         self.n_frames = 0
         self.main = self.scene.create_canvas_3d(
