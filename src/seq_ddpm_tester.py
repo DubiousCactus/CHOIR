@@ -97,6 +97,9 @@ class SeqDDPMTester(MultiViewTester):
         elif modality == "noisy_pair":
             # Already comes in noisy_pair modality
             pass
+        indices = kwargs.get("indices", None)
+        if indices is not None:
+            y = y[indices]
         udf, contacts = model.generate(
             1,
             y=y,
@@ -109,6 +112,21 @@ class SeqDDPMTester(MultiViewTester):
         # from just sampling z (unlike ours hehehe).
         # TODO: Apply augmentations to the test dataset (can't rotate CHOIRs easily).
         udf, contacts = udf.squeeze(1), contacts.squeeze(1)
+        # If I passed indices, I still want to return the same shape as y would have without
+        # indices:
+        _udf = (
+            torch.zeros_like(udf)
+            .expand(samples["choir"].shape[0], *udf.shape[1:])
+            .clone()
+        )
+        _udf[indices] = udf
+        _contacts = (
+            torch.zeros_like(contacts)
+            .expand(_udf.shape[0], *contacts.shape[1:])
+            .clone()
+        )
+        _contacts[indices] = contacts
+        udf, contacts = _udf, _contacts
         return {"choir": udf, "contacts": contacts, "rotations": rotations}
 
     @to_cuda
@@ -124,13 +142,10 @@ class SeqDDPMTester(MultiViewTester):
     ):
         """
         This function takes in a batch of sequential frames and a scenes dictionary, and returns
-        that dictionary with the new frames added to it. An object sequence is over when the batch
-        transitions to a new object (TODO: verify this assumption, because we may have several
-        sequences of the same object in successive batches!).
+        that dictionary with the new frames added to it..
         """
         mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         sample_pths = list(sample_pths[-1])  # Now we have a list of B entries.
-        # TODO: Use sample_pths to get the sequence ID so that we know when to start fresh.
         mp_process_obj_meshes(
             mesh_pths,
             self._object_cache,
@@ -278,11 +293,13 @@ class SeqDDPMTester(MultiViewTester):
             # optimization target.
             # If we matched, reset the frame count to 0 and keep counting the following
             # frames. If we matched more than once per cache entry, the batch size is too large and
-            # we can't handle this case for now (abort and warn, this is not needed).
+            # we can't handle this case for now (abort and warn, this is not needed). We can only
+            # match once per batch because optimization of frames depends on the solution of
+            # previous frames.
             if self._scenes_cache[scene_names[i]].frame_count >= self._window_size:
                 if self._scenes_cache[scene_names[i]].marked_for_optimization:
                     raise NotImplementedError(
-                        "Can't handle more than one window per scene in the batch. Please reduce the batch size."
+                        "Can't handle more than one window per scene in the batch. Please reduce the batch size (try 8)."
                     )
                 due_frames.append(i)
                 self._scenes_cache[scene_names[i]].frame_count = 0
@@ -297,14 +314,17 @@ class SeqDDPMTester(MultiViewTester):
             "scalar": [],
             "is_rhand": [],
             "init_params": [],
+            "obj_mesh": [],
+            "mesh_name": [],
+            "scene_name": [],
         }
         frame_indices = set(last_frames + due_frames)
         y_hat = (
             None
             if len(frame_indices) == 0
             else self._inference(
-                samples, labels, use_prior=True
-            )  # TODO: Don't run inference on the whole batch, only on the frames we need to optimize.
+                samples, labels, use_prior=True, indices=list(frame_indices)
+            )  # Pass indices to run inference on just on the frames we need to optimize.
         )
         for i in frame_indices:
             contacts = y_hat.get("contacts", None)
@@ -335,6 +355,11 @@ class SeqDDPMTester(MultiViewTester):
             frames_to_optimize["scalar"].append(input_scalar[i])
             frames_to_optimize["is_rhand"].append(samples["is_rhand"][i])
             frames_to_optimize["init_params"].append(initial_params)
+            frames_to_optimize["obj_mesh"].append(batch_obj_data["mesh"][i])
+            frames_to_optimize["mesh_name"].append(
+                batch_obj_data["mesh_name"][i].split(".")[0]
+            )
+            frames_to_optimize["scene_name"].append(scene_names[i])
 
         # It's perfectly ok to not have any frames to optimize, because we may have a small batch
         # and we have to wait to get self._window_size frames. Meaning we need to keep track of
@@ -388,9 +413,9 @@ class SeqDDPMTester(MultiViewTester):
                 )
             # Store the optimized MANO parameters in the cache:
             for i in frame_indices:
-                self._scenes_cache[scene_names[i]] = CacheEntry(
-                    0, False, mano_sequence_pred[-1], verts_sequence_pred[-1]
-                )  # Reset the cache
+                self._scenes_cache[scene_names[i]].marked_for_optimization = False
+                self._scenes_cache[scene_names[i]].mano = mano_sequence_pred[-1]
+                self._scenes_cache[scene_names[i]].verts = verts_sequence_pred[-1]
 
         # We also need to add the initial noisy input to the cache entries if it's a new sequence:
         for i in new_scene_indices:
@@ -423,21 +448,16 @@ class SeqDDPMTester(MultiViewTester):
         sampling_indices -= np.ones_like(
             sampling_indices
         )  # Because np.geomspace can't start at 0
-        for j, obj_mesh in enumerate(batch_obj_data["mesh"]):
-            mesh_name = batch_obj_data["mesh_name"][j].split(".")[0]
-            if j >= len(list(individual_scenes)):
-                break
-            key = list(individual_scenes)[
-                j
-            ]  # TODO: Fix that. Should be coming from unique scene names? Find a proper solution.
+        for j in range(len(list(frames_to_optimize.values())[0])):
             for i, (mano_params, verts) in enumerate(
                 zip(mano_sequence_pred, verts_sequence_pred)
             ):
                 if i not in sampling_indices:
                     continue
+                key = frames_to_optimize["scene_name"][j]
                 # if mesh_name not in ["wineglass"]:
                 # continue
-                # verts has batch dimension, which we can index with j
+                # verts has batch dimension that corresponds to the frames to optimize.
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts[j],
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
@@ -468,7 +488,7 @@ class SeqDDPMTester(MultiViewTester):
 
                 scenes[key].add_frame(
                     {
-                        "object": obj_mesh,
+                        "object": frames_to_optimize["obj_mesh"][j],
                         "hand": pred_hand_mesh,
                         "hand_aug": input_hand_mesh,
                         "gt_hand": gt_hand_mesh,
