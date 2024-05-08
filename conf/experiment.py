@@ -12,7 +12,6 @@ Configurations for the experiments and config groups, using hydra-zen.
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import open3d
 import torch
 from hydra.conf import HydraConf, JobConf, RunDir
 from hydra_zen import (
@@ -61,9 +60,6 @@ from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
 from src.seq_ddpm_tester import SeqDDPMTester
-
-_ = open3d  # noqa: F401. I need to import open3d before torch on MacOS.
-
 
 # Set hydra.job.chdir=True using store():
 hydra_store = ZenStore(overwrite_ok=True)

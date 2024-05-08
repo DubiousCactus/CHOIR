@@ -42,6 +42,8 @@ def optimize_pose_pca_from_choir(
     loss_thresh: float = 1e-7,
     contact_loss_thresh: float = 1e-6,
     lr: float = 5e-2,
+    lr_stepsize: int = 100,
+    lr_gamma: float = 0.5,
     max_iterations=8000,
     initial_params=None,
     beta_w: float = 0.05,
@@ -122,7 +124,9 @@ def optimize_pose_pca_from_choir(
     optimizer = torch.optim.Adam([rot, trans, theta, beta], lr=lr)
 
     if initial_params is not None:
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=lr_stepsize, gamma=lr_gamma
+        )
     else:
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
     proc_bar = tqdm.tqdm(range(max_iterations))

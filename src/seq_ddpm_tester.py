@@ -162,14 +162,15 @@ class SeqDDPMTester(MultiViewTester):
         batch_obj_data = make_batch_of_obj_data(
             self._object_cache, mesh_pths, keep_mesh_contact_identity=False
         )
-        found = False
         for i in range(len(batch_obj_data["mesh_name"])):
             mesh_name = batch_obj_data["mesh_name"][i].split(".")[0]
             if mesh_name in ["wineglass"]:
-                found = True
+                # Remove all batch elements before the first frame that has the object we want.
+                batch_obj_data = {k: v[i:] for k, v in batch_obj_data.items()}
+                sample_pths = sample_pths[i:]
+                mesh_pths = mesh_pths[i:]
                 break
-        found = True
-        if not found:
+        else:  # Didn't find the right mesh
             return scenes
         print(
             "Rendering: "
@@ -329,9 +330,11 @@ class SeqDDPMTester(MultiViewTester):
         for i in frame_indices:
             contacts = y_hat.get("contacts", None)
             if i not in new_scene_indices:
+                if scene_names[i] not in self._scenes_cache:
+                    raise
                 assert (
                     scene_names[i] in self._scenes_cache
-                ), f"Scene {scene_names[i]} not in cache, but {scene_names[i]} is a new sceen!"
+                ), f"Scene {scene_names[i]} not in cache, but {scene_names[i]} is not a new scene!"
                 initial_params = self._scenes_cache[scene_names[i]].mano
                 self._scenes_cache[scene_names[i]].marked_for_optimization = False
             else:
@@ -395,9 +398,11 @@ class SeqDDPMTester(MultiViewTester):
                     obj_normals=frames_to_optimize["obj_normals"],
                     anchor_indices=self._anchor_indices,
                     scalar=frames_to_optimize["scalar"],
-                    max_iterations=1000,
+                    max_iterations=3000,
                     loss_thresh=1e-6,
-                    lr=3e-3,
+                    lr=1e-3,
+                    lr_stepsize=50,
+                    lr_gamma=0.9,
                     is_rhand=frames_to_optimize["is_rhand"],
                     use_smplx=use_smplx,
                     dataset=self._data_loader.dataset.name,
@@ -433,8 +438,7 @@ class SeqDDPMTester(MultiViewTester):
             )
 
         # TODO: See how to properly sample when contact fitting is enabled. A first simple strategy
-        # is to concatenate frames of both stages and still use np.logspace(0, N) sampling.
-        # Assuming we have one entry in the list per optimization step:
+        # is to concatenate frames of both stages and still use np.geomspace(0, N) sampling.
         # TODO: What I have now may give me what I want, but the ground-truth and input hand meshes
         # aren't right because I skip a lot of batches and drop them until I have a full window.
         # Instead, I need to cache them for when I'm ready to dump processed preds.
@@ -454,9 +458,6 @@ class SeqDDPMTester(MultiViewTester):
             ):
                 if i not in sampling_indices:
                     continue
-                key = frames_to_optimize["scene_name"][j]
-                # if mesh_name not in ["wineglass"]:
-                # continue
                 # verts has batch dimension that corresponds to the frames to optimize.
                 pred_hand_mesh = trimesh.Trimesh(
                     vertices=verts[j],
@@ -482,6 +483,7 @@ class SeqDDPMTester(MultiViewTester):
                     .numpy(),
                     faces=self._affine_mano.closed_faces.detach().cpu().numpy(),
                 )
+                key = frames_to_optimize["scene_name"][j]
                 if key not in scenes:
                     scene_anim = ScenePicAnim()
                     scenes[key] = scene_anim
