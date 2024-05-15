@@ -14,7 +14,6 @@ import copy
 import os
 import os.path as osp
 import pickle as pkl
-from typing import Tuple
 
 import numpy as np
 import torch
@@ -132,27 +131,30 @@ class TOCHInference(torch.nn.Module):
             joint_rot_mode="axisang",
         )
 
-    def forward(self, features: Tuple[torch.Tensor]):
+    def forward(
+        self,
+        input_rhand_pc,
+        obj_pc,
+        obj_corr_mask,
+        obj_corr_pts,
+        obj_corr_dist,
+        obj_rot,
+        obj_transl,
+        obj_id,
+        obj_vn,
+        is_left,
+    ):
         # What to return (bare minimum):
         # { "verts": , "joints": , "anchors": }
         # I think the anchors can be ignored.
+        assert (
+            len(input_rhand_pc.shape) == 2 and len(obj_pc.shape) == 2
+        ), "ContactPose is for single frame optimization only. Inputs shouldn't be batched."
         input_rhand_pcs = []
         object_verts = []
         input_features = []
         Rs = []
         ts = []
-        (
-            input_rhand_pc,
-            obj_pc,
-            obj_corr_mask,
-            obj_corr_pts,
-            obj_corr_dist,
-            obj_rot,
-            obj_transl,
-            obj_id,
-            obj_vn,
-            is_left,
-        ) = features
         obj_corr_mask[obj_corr_dist > 0.1] = 0
         obj_mesh = Mesh(filename=self.id2objmesh[obj_id])
         obj_verts = np.dot(
@@ -427,4 +429,5 @@ class TOCHInference(torch.nn.Module):
         if is_left:
             hand_verts[..., 0] = -hand_verts[..., 0]
 
-        return {"verts": hand_verts, "faces": self.mano_mesh.f}
+        assert hand_verts.shape[0] == 1, "Output hand vertices should have BS=1."
+        return {"verts": hand_verts[0], "faces": self.mano_mesh.f}
