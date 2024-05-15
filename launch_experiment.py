@@ -23,6 +23,7 @@ from hydra_zen.typing import Partial
 import conf.experiment  # Must import the config to add all components to the store!
 import wandb
 from conf import project as project_conf
+from dataset.toch_loaders import ContactPoseDataset_Eval
 from model.aggregate_ved import Aggregate_VED
 from model.diffusion_model import BPSDiffusionModel, ContactsBPSDiffusionModel
 from src.base_trainer import BaseTrainer
@@ -98,18 +99,24 @@ def launch_experiment(
         bps = train_dataset.bps
         remap_bps_distances = train_dataset.bps
         exponential_map_w = train_dataset.bps
+        opt_inst = optimizer(model_inst.parameters())
+
+        if scheduler.func is torch.optim.lr_scheduler.CosineAnnealingLR:
+            scheduler_inst = scheduler(opt_inst, T_max=run.epochs)
+        else:
+            scheduler_inst = scheduler(
+                opt_inst
+            )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
     else:
-        test_dataset = dataset(split="test", augment=False, seed=run.seed)
-        bps = test_dataset.bps
-        remap_bps_distances = test_dataset.bps
-        exponential_map_w = test_dataset.bps
-    opt_inst = optimizer(model_inst.parameters())
-    if scheduler.func is torch.optim.lr_scheduler.CosineAnnealingLR:
-        scheduler_inst = scheduler(opt_inst, T_max=run.epochs)
-    else:
-        scheduler_inst = scheduler(
-            opt_inst
-        )  # TODO: less hacky way to set T_max for CosineAnnealingLR?
+        if dataset.func in [ContactPoseDataset_Eval]:
+            test_dataset = dataset()
+        else:
+            test_dataset = dataset(split="test", augment=False, seed=run.seed)
+            bps = test_dataset.bps
+            remap_bps_distances = test_dataset.bps
+            exponential_map_w = test_dataset.bps
+        opt_inst = None
+        scheduler_inst = None
 
     if not run.training_mode:
         training_loss_inst = None
@@ -147,7 +154,7 @@ def launch_experiment(
     if run.training_mode:
         train_loader_inst = data_loader(train_dataset, generator=g)
         val_loader_inst = data_loader(
-            val_dataset, generator=g, shuffle=False, drop_last=False, n_batches=None
+            val_dataset, generator=g, shuffle=False, drop_last=False
         )
     else:
         test_loader_inst = data_loader(
@@ -155,7 +162,6 @@ def launch_experiment(
             generator=g,
             shuffle=False,
             drop_last=False,
-            n_batches=None,
             num_workers=1,
         )
 

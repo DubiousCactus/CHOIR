@@ -70,6 +70,7 @@ class MultiViewTester(MultiViewTrainer):
         """
         self._is_baseline = False
         self._is_grasptta = False
+        self._is_toch = False
         self._run_name = run_name
         self._model = model
         # self._ema = EMA(
@@ -633,6 +634,8 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                         rotations=y_hat["rotations"],
                     )
+                elif self._is_toch:
+                    raise NotImplementedError("TOCH is not implemented for testing.")
                 else:
                     sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
@@ -1286,6 +1289,8 @@ class MultiViewTester(MultiViewTrainer):
                     y_hat["joints"],
                     y_hat["anchors"],
                 )
+            elif self._is_toch:
+                raise NotImplementedError("TOCH is not implemented for testing.")
             else:
                 use_smplx = False  # TODO: I don't use it for now
                 contacts_pred, obj_points, obj_normals = (

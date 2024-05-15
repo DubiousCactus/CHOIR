@@ -23,6 +23,7 @@ from hydra_zen import (
     store,
 )
 from metabatch import TaskLoader
+from torch.utils.data import DataLoader
 from unique_names_generator import get_random_name
 from unique_names_generator.data import ADJECTIVES, NAMES
 
@@ -30,6 +31,7 @@ import conf.project as project_conf
 from dataset.contactpose import ContactPoseDataset
 from dataset.grab import GRABDataset
 from dataset.oakink import OakInkDataset
+from dataset.toch_loaders import ContactPoseDataset_Eval
 from launch_experiment import launch_experiment
 from model.aggregate_ved import Aggregate_VED
 from model.baseline import BaselineModel
@@ -42,6 +44,7 @@ from model.diffusion_model import (
 from model.graspTTA.affordanceNet_obman_mano_vertex import affordanceNet
 from model.graspTTA.ContactNet import pointnet_reg
 from model.graspTTA.grasptta_wrapper import GraspTTA
+from model.TOCH.toch_wrapper import TOCHInference
 from src.base_tester import BaseTester
 from src.base_trainer import BaseTrainer
 from src.ddpm_tester import DDPMTester
@@ -60,6 +63,7 @@ from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
 from src.multiview_trainer import MultiViewTrainer
 from src.seq_ddpm_tester import SeqDDPMTester
+from src.toch_tester import TOCHTester
 
 # Set hydra.job.chdir=True using store():
 hydra_store = ZenStore(overwrite_ok=True)
@@ -145,6 +149,14 @@ dataset_store(
     name="grab",
 )
 
+dataset_store(
+    pbuilds(
+        ContactPoseDataset_Eval,
+        processed_root=MISSING,
+    ),
+    name="toch_contactpose",
+)
+
 " ================== Dataloader & sampler ================== "
 
 
@@ -162,10 +174,20 @@ class DataloaderConf:
     shuffle: bool = True
     num_workers: int = 4
     pin_memory: bool = False
-    n_batches: Optional[int] = None
+    # n_batches: Optional[int] = None
     prefetch_factor: Optional[int] = None
     persistent_workers: bool = True
 
+
+data_loader_store = store(group="data_loader")
+data_loader_store(
+    pbuilds(TaskLoader, builds_bases=(DataloaderConf,), n_batches=None),
+    name="default",
+)
+data_loader_store(
+    pbuilds(DataLoader, builds_bases=(DataloaderConf,)),
+    name="metadefault",
+)
 
 " ================== Model ================== "
 # Pre-set the group for store's model entries
@@ -333,6 +355,14 @@ model_store(
         contactnet_model_pth=None,
     ),
     name="grasp_tta_wrapper",
+)
+
+
+model_store(
+    pbuilds(
+        TOCHInference,
+    ),
+    name="toch",
 )
 
 " ================== Losses ================== "
@@ -530,6 +560,10 @@ tester_store(
     pbuilds(SeqDDPMTester, populate_full_signature=True),
     name="seq_ddpm",
 )
+tester_store(
+    pbuilds(TOCHTester, populate_full_signature=True),
+    name="toch",
+)
 
 Experiment = builds(
     launch_experiment,
@@ -539,6 +573,7 @@ Experiment = builds(
         {"trainer": "base"},
         {"tester": "base"},
         {"dataset": "contactpose"},
+        {"data_loader": "default"},
         {"model": "baseline"},
         {"optimizer": "adam"},
         {"scheduler": "step"},
@@ -553,9 +588,7 @@ Experiment = builds(
     scheduler=MISSING,
     run=MISSING,
     training_loss=MISSING,
-    data_loader=pbuilds(
-        TaskLoader, builds_bases=(DataloaderConf,)
-    ),  # Needs a partial because we need to set the dataset
+    data_loader=MISSING,
 )
 store(Experiment, name="base_experiment")
 
@@ -1429,4 +1462,29 @@ experiment_store(
         ),
     ),
     name="grasp_tta_wrapped_contactpose",
+)
+
+
+experiment_store(
+    make_config(
+        hydra_defaults=[
+            "_self_",
+            {"override /model": "toch"},
+            # {"override /trainer": "grasp_tta_contactnet"},
+            {"override /tester": "toch"},
+            {"override /dataset": "toch_contactpose"},
+            # {"override /training_loss": "grasp_tta_cvae"},
+            {"override /data_loader": "metadefault"},
+        ],
+        data_loader=dict(batch_size=64),
+        bases=(Experiment,),
+        run=dict(
+            compute_pose_error=True,
+            compute_contact_scores=True,
+            compute_iv=True,
+            compute_sim_displacement=True,
+            inference_mode="denoising",
+        ),
+    ),
+    name="toch_contactpose",
 )

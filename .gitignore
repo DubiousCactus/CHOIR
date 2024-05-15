@@ -12,3 +12,9 @@ tags.*
 *.pickle
 models/
 FIGURES/
+*.mp4
+*.pkl
+tmp/
+*.ckpt
+.DS_Store
+package-lock.json
