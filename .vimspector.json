@@ -1,0 +1,61 @@
+{
+  "configurations": {
+    "test-grab-sequence": {
+      "adapter": "debugpy",
+      "filetypes": [ "python" ],
+      "configuration": {
+        "name": "test-grab-sequence: Launch",
+        "type": "python",
+        "request": "launch",
+        "cwd": "${workspaceRoot}",
+        "python": "~/miniforge3/envs/choir/bin/python",
+        "stopOnEntry": false,
+        "console": "integratedTerminal",
+        "debugOptions": [],
+        "program": "test.py",
+        "env": {"USE_MPS_IF_AVAILABLE": "0", "PYTORCH_ENABLE_MPS_FALLBACK": "1"},
+        "args": [
+            "+experiment=coddpm_3d_multiview_grab_multimodal",
+            "dataset.tiny=1",
+            "dataset.n_augs=2",
+            "data_loader.batch_size=16",
+            "run.enable_contacts_tto=0",
+            "run.compute_contact_scores=0",
+            "run.compute_pose_error=1",
+            "run.compute_sim_displacement=0",
+            "run.debug_tto=0",
+            "run.load_from=multimodal.ckpt",
+            "run.save_predictions=true"
+        ]
+      },
+      "breakpoints": {
+        "exception": {
+          "raised": "N",
+          "uncaught": "Y",
+          "userUnhandled": ""
+        }
+      }
+    },
+    "test-grab-sequence-nobp": {
+        "extends": "test-grab-sequence",
+        "configuration": {
+            "stopOnEntry": true
+        }
+    },
+    "test-toch": {
+        "extends": "test-grab-sequence",
+        "configuration": {
+            "args": [
+                "+experiment=toch_contactpose",
+                "dataset.processed_root=/Users/cactus/Code/toch/contactpose_preprocessed",
+                "data_loader.batch_size=16",
+                "run.enable_contacts_tto=0",
+                "run.compute_contact_scores=0",
+                "run.compute_pose_error=1",
+                "run.compute_sim_displacement=0",
+                "run.debug_tto=0"
+            ]
+        }
+    }
+  }
+}
