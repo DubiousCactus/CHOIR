@@ -32,7 +32,9 @@ class TOCHTester(MultiViewTester):
         max_observations: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
-        raise NotImplementedError()
+        features = samples["toch_features"]
+        verts, joints, anchors = self._model(features)
+        return {"verts": verts, "joints": joints, "anchors": anchors}
 
     @to_cuda
     def _visualize(

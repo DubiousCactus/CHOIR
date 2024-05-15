@@ -1476,7 +1476,7 @@ experiment_store(
             # {"override /training_loss": "grasp_tta_cvae"},
             {"override /data_loader": "metadefault"},
         ],
-        data_loader=dict(batch_size=64),
+        data_loader=dict(batch_size=1),
         bases=(Experiment,),
         run=dict(
             compute_pose_error=True,
