@@ -311,7 +311,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
         # same order as the samples/gt:
         path_to_test_data = os.path.join(
             processed_root,
-            "dataset_7-participants_from-0.8_to-1.0_split_8000-obj-pts_right-hand.pkl",
+            "dataset_51-participants_from-0.8_to-1.0_split_8000-obj-pts_right-hand.pkl",
         )
         with open(path_to_test_data, "rb") as f:
             compressed_pkl = f.read()

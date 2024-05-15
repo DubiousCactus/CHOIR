@@ -26,6 +26,7 @@ from conf import project as project_conf
 from dataset.toch_loaders import ContactPoseDataset_Eval
 from model.aggregate_ved import Aggregate_VED
 from model.diffusion_model import BPSDiffusionModel, ContactsBPSDiffusionModel
+from model.TOCH.toch_wrapper import TOCHInference
 from src.base_trainer import BaseTrainer
 from src.losses.hoi import CHOIRLoss
 from utils import colorize, to_cuda_
@@ -83,6 +84,8 @@ def launch_experiment(
         )  # Use just() to get the config out of the Zen-Partial
     elif model.func in [BPSDiffusionModel, ContactsBPSDiffusionModel]:
         model_inst = model(bps_dim=just(dataset).bps_dim)
+    elif model.func is TOCHInference:
+        model_inst = model(processed_data_path=just(dataset).processed_root)
     else:
         model_inst = model()
     print(model_inst)

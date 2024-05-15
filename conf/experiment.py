@@ -361,6 +361,11 @@ model_store(
 model_store(
     pbuilds(
         TOCHInference,
+        processed_data_path=MISSING,
+        model_path=MISSING,
+        mano_models_path=MISSING,
+        latent_size=64,
+        num_init=10,
     ),
     name="toch",
 )
