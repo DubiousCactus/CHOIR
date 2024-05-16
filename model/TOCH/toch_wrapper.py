@@ -14,6 +14,7 @@ import copy
 import os
 import os.path as osp
 import pickle as pkl
+from typing import Optional
 
 import numpy as np
 import torch
@@ -56,8 +57,8 @@ class TOCHInference(torch.nn.Module):
     def __init__(
         self,
         processed_data_path: str,
-        model_path: str,
         mano_models_path: str,
+        model_path: Optional[str] = None,
         latent_size: int = 64,
         num_init: int = 10,
     ):
@@ -87,10 +88,12 @@ class TOCHInference(torch.nn.Module):
             self.mano = pkl.load(f, encoding="latin-1")
             mano_mesh = Mesh(self.mano["v_template"], self.mano["f"])
             J_regressor = torch.tensor(self.mano["J_regressor"].todense()).float()
-        with open("data/grab/scale_center.pkl", "rb") as f:
-            scale, center = pkl.load(f)
-            mano_mesh.v = mano_mesh.v * scale + center
-            self.mano_mesh = seal(mano_mesh)
+        # Loaded from the data/grab/scale_center.pkl file of the repo:
+        scale, center = 5.180721556271635, np.array(
+            [-0.09076019, -0.02022504, -0.05842724]
+        )
+        mano_mesh.v = mano_mesh.v * scale + center
+        self.mano_mesh = seal(mano_mesh)
 
         object_paths = []
         for f in os.listdir(processed_data_path):
