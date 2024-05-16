@@ -329,7 +329,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
 
     @property
     def theta_dim(self):
-        return 0
+        return ContactPoseDataset.theta_dim  # 18
 
     @property
     def bps_dim(self):

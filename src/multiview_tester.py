@@ -97,7 +97,10 @@ class MultiViewTester(MultiViewTrainer):
             AffineMANO(
                 ncomps=self._data_loader.dataset.theta_dim - 3,
                 flat_hand_mean=(self._data_loader.dataset.name == "grab"),
-                for_contactpose=(self._data_loader.dataset.name == "contactpose"),
+                for_contactpose=(
+                    self._data_loader.dataset.name
+                    in ["contactpose", "toch_contactpose"]
+                ),
                 for_oakink=(self._data_loader.dataset.name == "oakink"),
             )
         )
@@ -321,6 +324,11 @@ class MultiViewTester(MultiViewTrainer):
                     assert (
                         rotations is not None
                     ), "For GraspTTA, rotations must be provided to compute sim. displacement."
+                elif self._is_toch:
+                    # TODO: In theory, we should also pass in the object rotations/translation. But
+                    # in practice, I don't have any rotation/translation on ContactPose objects for
+                    # TOCH so I'll assume this is not needed.
+                    pass
                 batch_sim_displacement = mp_compute_sim_displacement(
                     batch_obj_data["mesh"], verts_pred, mano_faces, rotations
                 )
@@ -389,14 +397,20 @@ class MultiViewTester(MultiViewTrainer):
             raise NotImplementedError("Right hand only is implemented for testing.")
         multiple_obs = len(samples["theta"].shape) > 2
         gt_contact_gaussian_params = (
-            labels["contact_gaussians"] if self._enable_contacts_tto else None
+            labels.get("contact_gaussians", None) if self._enable_contacts_tto else None
         )
 
         # ============== Object processing ==============
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
-        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        if isinstance(mesh_pths, tuple):
+            mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        elif isinstance(mesh_pths, list):
+            # This is for the normal dataloader used for TOCH_ContactPose
+            pass
+        else:
+            raise ValueError("mesh_pths must be a tuple or a list.")
         if self._debug_tto:
             # for i in range(len(mesh_pths)):
             # mesh_pths[i] = mesh_pths[i].replace(
@@ -635,7 +649,20 @@ class MultiViewTester(MultiViewTrainer):
                         rotations=y_hat["rotations"],
                     )
                 elif self._is_toch:
-                    raise NotImplementedError("TOCH is not implemented for testing.")
+                    verts_pred, joints_pred, anchors_pred = (
+                        y_hat["verts"],
+                        y_hat["joints"],
+                        torch.zeros(verts_pred.shape[0], 32, 3).to(verts_pred.device),
+                    )  # Don't need anchors
+                    eval_metrics["TOCH"] = self._compute_eval_metrics(
+                        anchors_pred,
+                        verts_pred,
+                        joints_pred,
+                        gt_anchors,
+                        gt_verts,
+                        gt_joints,
+                        batch_obj_data,
+                    )
                 else:
                     sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
