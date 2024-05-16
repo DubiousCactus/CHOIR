@@ -35,8 +35,8 @@ class TOCHTester(MultiViewTester):
         features = samples["toch_features"]
         # TODO: Assert that what I pass to the model isn't batched! Because of the structure of the code I took from the TOCH repo, I cna't use batches... We'll have to deal with this.
         torch.set_grad_enabled(True)
-        verts, joints, anchors = self._model(*[f.squeeze(0).cpu().numpy() for f in features])
-        return {"verts": verts, "joints": joints, "anchors": anchors}
+        verts, joints = self._model(*[f.squeeze(0).cpu().numpy() for f in features])
+        return {"verts": verts, "joints": joints, "anchors": None}
 
     @to_cuda
     def _visualize(
