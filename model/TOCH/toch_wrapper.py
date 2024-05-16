@@ -162,7 +162,7 @@ class TOCHInference(torch.nn.Module):
         obj_mesh = Mesh(filename=self.id2objmesh[obj_id.item()])
         obj_verts = np.dot(
             obj_mesh.v, R.from_rotvec(obj_rot.cpu()).as_matrix()
-        ) + obj_transl.reshape(1, 3)
+        ) + obj_transl.reshape(1, 3).cpu().numpy()
         obj_verts -= obj_verts.mean(axis=0, keepdims=True)
 
         if i == 0:
