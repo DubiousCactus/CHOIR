@@ -161,12 +161,11 @@ class TOCHInference(torch.nn.Module):
         obj_corr_mask[obj_corr_dist > 0.1] = 0
         obj_mesh = Mesh(filename=self.id2objmesh[obj_id.item()])
         obj_verts = np.dot(
-            obj_mesh.v, R.from_rotvec(obj_rot.cpu()).as_matrix()
-        ) + obj_transl.reshape(1, 3).cpu().numpy()
+            obj_mesh.v, R.from_rotvec(obj_rot).as_matrix()
+        ) + obj_transl.reshape(1, 3)
         obj_verts -= obj_verts.mean(axis=0, keepdims=True)
 
-        if i == 0:
-            obj_pc_variance = np.max(np.sqrt(np.sum(obj_pc**2, axis=1)))
+        obj_pc_variance = np.max(np.sqrt(np.sum(obj_pc**2, axis=1)))
         obj_pc = obj_pc / obj_pc_variance
         object_pc = torch.tensor(obj_pc, dtype=torch.float32)
 
@@ -199,14 +198,20 @@ class TOCHInference(torch.nn.Module):
         assert (
             len(input_features) == 1
         ), "ContactPose is for single frame optimization only. This should never be more than 1."
+        # =================== Run the model inference on the GPU ====================
+        device = next(self.model.parameters()).device
         batched_input = torch.stack(input_features, dim=0).unsqueeze(
             0
-        )  # Batch of 1 element with 1 frame
+        ).to(device)  # Batch of 1 element with 1 frame
 
         with torch.no_grad():
             corr_mask_output, corr_pts_output, corr_dist_output = self.model(
                 batched_input
             )
+        # == Move everything back to the CPU so I don't have to migrate the original code from numpy to torch ==
+        device = torch.device("cpu")
+        corr_mask_output, corr_pts_output, corr_dist_output = corr_mask_output.to(device), corr_pts_output.to(device), corr_dist_output.to(device)
+        batched_input = batched_input.to(device)
 
         data_collection = []
         object_contact_pts = []
@@ -272,8 +277,10 @@ class TOCHInference(torch.nn.Module):
         )
 
         num_frames = 1
-        device = next(self.mano_layer.parameters()).device
         # initialize variables
+        #print("====================== COARSE OPTIMIZATION ======================")
+        device = next(self.model.parameters()).device # Back to GPU!
+        device = torch.device("cpu")
         beta_var = torch.randn([self.num_init, 10]).to(device)
         # first 3 global orientation
         rot_var = torch.randn([self.num_init * num_frames, 3]).to(device)
@@ -283,14 +290,14 @@ class TOCHInference(torch.nn.Module):
         rot_var.requires_grad_()
         theta_var.requires_grad_()
         transl_var.requires_grad_()
+        object_contact_pts = object_contact_pts.to(device)
 
-        print("====================== COARSE OPTIMIZATION ======================")
         # coarse optimization loop
         num_iters = self.num_coarse_iter
-        opt = torch.nn.optim.Adam([rot_var, transl_var], lr=self.coarse_lr)
+        opt = torch.optim.Adam([rot_var, transl_var], lr=self.coarse_lr)
         for i in range(num_iters):
             opt.zero_grad()
-            hand_verts, _ = self.mano_layer(
+            hand_verts, _ = self.mano_layer.to(device)(
                 torch.cat([rot_var, theta_var], dim=-1),
                 beta_var.unsqueeze(1).repeat(1, num_frames, 1).view(-1, 10),
                 transl_var,
@@ -303,8 +310,8 @@ class TOCHInference(torch.nn.Module):
             pred_contact_pts = []
             for j in range(self.num_init):
                 for k in range(num_frames):
-                    vert_ids = data_collection[k][0]
-                    bary_coords = data_collection[k][1]
+                    vert_ids = data_collection[k][0].to(device)
+                    bary_coords = data_collection[k][1].to(device)
                     pred_contact_pts.append(
                         (
                             hand_verts[j, k, vert_ids].view(-1, 3, 3)
@@ -321,17 +328,17 @@ class TOCHInference(torch.nn.Module):
             loss.backward()
             opt.step()
 
-            print("Iter {}: {}".format(i, loss.item()))
-            print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+            #print("Iter {}: {}".format(i, loss.item()))
+            #print("\tCorrespondence Loss: {}".format(corr_loss.item()))
 
-        print("===============================================================")
-        print("====================== FINE OPTIMIZATION ======================")
+        #print("===============================================================")
+        #print("====================== FINE OPTIMIZATION ======================")
         # fine optimization loop
         num_iters = self.num_fine_iter
-        opt = torch.nn.optim.Adam(
+        opt = torch.optim.Adam(
             [beta_var, rot_var, theta_var, transl_var], lr=self.fine_lr
         )
-        scheduler = torch.nn.optim.lr_scheduler.StepLR(opt, step_size=1000, gamma=0.5)
+        scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=1000, gamma=0.5)
         for i in range(num_iters):
             opt.zero_grad()
             hand_verts, _ = self.mano_layer(
@@ -382,16 +389,16 @@ class TOCHInference(torch.nn.Module):
             opt.step()
             scheduler.step()
 
-            print("Iter {}: {}".format(i, loss.item()), flush=True)
-            print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
-            print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
-            print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+            #print("Iter {}: {}".format(i, loss.item()), flush=True)
+            #print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
+            #print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
+            #print("\tCorrespondence Loss: {}".format(corr_loss.item()))
             # print("\tPose Smoothness Loss: {}".format(pose_smoothness_loss.item()))
             # print("\tJoints Smoothness Loss: {}".format(joints_smoothness_loss.item()))
             assert not torch.isnan(loss).any(), "Loss is NaN"
 
-        print("===============================================================")
-        print("==================== AGGREGATION/SELECTION ====================")
+        #print("===============================================================")
+        #print("==================== AGGREGATION/SELECTION ====================")
         # find best initialization
         with torch.no_grad():
             hand_verts, _ = self.mano_layer(
