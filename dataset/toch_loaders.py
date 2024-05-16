@@ -300,11 +300,11 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
             )
             self.gt.append(
                 {
-                    "theta": grasp_clean["f3"],
+                    "theta": grasp_clean["f3"].copy(),
                     "beta": np.zeros((1, 10)),
-                    "rot": grasp_clean["f1"],
-                    "trans": grasp_clean["f2"],
-                    "verts": grasp_clean["f0"],
+                    "rot": grasp_clean["f1"].copy(),
+                    "trans": grasp_clean["f2"].copy(),
+                    "verts": grasp_clean["f0"].copy(),
                 }
             )
         # Now let's try to load the contact maps under the assumption that they are in the exact
