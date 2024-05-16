@@ -237,7 +237,7 @@ def process_object(
         gt_obj_contacts = None  # TODO
     else:
         obj_mesh = o3dio.read_triangle_mesh(path)
-        if dataset == "contactpose":
+        if dataset in ["contactpose", "toch_contactpose"]:
             # From ContactOpt:
             vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
             gt_obj_contacts = torch.from_numpy(

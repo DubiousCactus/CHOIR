@@ -60,7 +60,7 @@ class TOCHInference(torch.nn.Module):
         mano_models_path: str,
         model_path: Optional[str] = None,
         latent_size: int = 64,
-        num_init: int = 10,
+        num_init: int = 1,
     ):
         super().__init__()
         self.coarse_lr = 0.1
@@ -76,6 +76,9 @@ class TOCHInference(torch.nn.Module):
             )
         )
         self.affine_mano = AffineMANO(for_contactpose=True)
+        print(
+            colorize(f"Manually loading TOCH model from {model_path}...", project_conf.ANSI_COLORS["cyan"])
+        )
         ckpt = torch.load(model_path, map_location=torch.device("cpu"))
         self.model = TemporalPointAE(
             input_dim=11, latent_dim=latent_size, window_size=1
@@ -89,11 +92,14 @@ class TOCHInference(torch.nn.Module):
             mano_mesh = Mesh(self.mano["v_template"], self.mano["f"])
             J_regressor = torch.tensor(self.mano["J_regressor"].todense()).float()
         # Loaded from the data/grab/scale_center.pkl file of the repo:
-        scale, center = 5.180721556271635, np.array(
-            [-0.09076019, -0.02022504, -0.05842724]
-        )
-        mano_mesh.v = mano_mesh.v * scale + center
-        self.mano_mesh = seal(mano_mesh)
+        #scale, center = 5.180721556271635, np.array(
+        #    [-0.09076019, -0.02022504, -0.05842724]
+        #)
+        #mano_mesh.v = mano_mesh.v * scale + center
+        with open("/home/moralest/toch/data/grab/scale_center.pkl", "rb") as f:
+            scale, center = pkl.load(f)
+            mano_mesh.v = mano_mesh.v * scale + center
+            self.mano_mesh = seal(mano_mesh)
 
         object_paths = []
         for f in os.listdir(processed_data_path):
@@ -146,7 +152,9 @@ class TOCHInference(torch.nn.Module):
         obj_id,
         obj_vn,
         is_left,
+        gt=None
     ):
+        torch.set_grad_enabled(True)
         # What to return (bare minimum):
         # { "verts": , "joints": , "anchors": }
         # I think the anchors can be ignored.
@@ -234,11 +242,13 @@ class TOCHInference(torch.nn.Module):
         object_corr_dist = corr_dist_output[0][0] * 0.1
         object_corr_mask = torch.from_numpy(obj_corr_mask)
 
-        closest_face, closest_points = self.mano_mesh.closest_faces_and_points(
+        mano_mesh = copy.deepcopy(self.mano_mesh)
+
+        closest_face, closest_points = mano_mesh.closest_faces_and_points(
             obj_corr_pts[obj_corr_mask]
         )
         # What this does is compute_aabb_tree().nearest(vertices) where vertices is arg to closest_faces_and_points.
-        vert_ids, bary_coords = self.mano_mesh.barycentric_coordinates_for_points(
+        vert_ids, bary_coords = mano_mesh.barycentric_coordinates_for_points(
             closest_points, closest_face.astype("int32")
         )
         vert_ids = torch.from_numpy(vert_ids.astype(np.int64)).view(-1)
@@ -278,7 +288,7 @@ class TOCHInference(torch.nn.Module):
 
         num_frames = 1
         # initialize variables
-        #print("====================== COARSE OPTIMIZATION ======================")
+        print("====================== COARSE OPTIMIZATION ======================")
         device = next(self.model.parameters()).device # Back to GPU!
         device = torch.device("cpu")
         beta_var = torch.randn([self.num_init, 10]).to(device)
@@ -286,10 +296,10 @@ class TOCHInference(torch.nn.Module):
         rot_var = torch.randn([self.num_init * num_frames, 3]).to(device)
         theta_var = torch.randn([self.num_init * num_frames, 24]).to(device)
         transl_var = torch.randn([self.num_init * num_frames, 3]).to(device)
-        beta_var.requires_grad_()
-        rot_var.requires_grad_()
-        theta_var.requires_grad_()
-        transl_var.requires_grad_()
+        beta_var.requires_grad_(True)
+        rot_var.requires_grad_(True)
+        theta_var.requires_grad_(True)
+        transl_var.requires_grad_(True)
         object_contact_pts = object_contact_pts.to(device)
 
         # coarse optimization loop
@@ -328,11 +338,11 @@ class TOCHInference(torch.nn.Module):
             loss.backward()
             opt.step()
 
-            #print("Iter {}: {}".format(i, loss.item()))
-            #print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+            print("Iter {}: {}".format(i, loss.item()))
+            print("\tCorrespondence Loss: {}".format(corr_loss.item()))
 
-        #print("===============================================================")
-        #print("====================== FINE OPTIMIZATION ======================")
+        print("===============================================================")
+        print("====================== FINE OPTIMIZATION ======================")
         # fine optimization loop
         num_iters = self.num_fine_iter
         opt = torch.optim.Adam(
@@ -389,35 +399,37 @@ class TOCHInference(torch.nn.Module):
             opt.step()
             scheduler.step()
 
-            #print("Iter {}: {}".format(i, loss.item()), flush=True)
-            #print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
-            #print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
-            #print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+            print("Iter {}: {}".format(i, loss.item()), flush=True)
+            print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
+            print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
+            print("\tCorrespondence Loss: {}".format(corr_loss.item()))
             # print("\tPose Smoothness Loss: {}".format(pose_smoothness_loss.item()))
             # print("\tJoints Smoothness Loss: {}".format(joints_smoothness_loss.item()))
             assert not torch.isnan(loss).any(), "Loss is NaN"
 
-        #print("===============================================================")
-        #print("==================== AGGREGATION/SELECTION ====================")
+        print("===============================================================")
+        print("==================== AGGREGATION/SELECTION ====================")
         # find best initialization
         with torch.no_grad():
-            hand_verts, _ = self.mano_layer(
+            hand_verts, hand_joints = self.mano_layer(
                 torch.cat([rot_var, theta_var], dim=-1),
                 beta_var.unsqueeze(1).repeat(1, num_frames, 1).view(-1, 10),
                 transl_var,
             )
             hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3) * 0.001
+            hand_joints = hand_joints.view(self.num_init, num_frames, 21, 3) * 0.001
             center = (hand_verts[:, :, circle_v_id, :]).mean(2, keepdim=True)
-            hand_verts = torch.cat([hand_verts, center], dim=2)
+            hand_verts_w_center = torch.cat([hand_verts, center], dim=2)
 
             pred_contact_pts = []
             for j in tqdm(range(self.num_init), desc="Selecting best initialization"):
+            #for j in range(self.num_init):
                 for k in range(num_frames):
                     vert_ids = data_collection[k][0]
                     bary_coords = data_collection[k][1]
                     pred_contact_pts.append(
                         (
-                            hand_verts[j, k, vert_ids].view(-1, 3, 3)
+                            hand_verts_w_center[j, k, vert_ids].view(-1, 3, 3)
                             * bary_coords[..., np.newaxis]
                         ).sum(dim=1)
                     )
@@ -430,14 +442,33 @@ class TOCHInference(torch.nn.Module):
             ).mean(dim=1)
             min_id = torch.argmin(corr_loss)
             hand_verts = hand_verts[min_id]
+            hand_joints = hand_joints[min_id]
 
         if is_left:
-            self.mano_mesh.f = self.mano_mesh.f[..., [2, 1, 0]]
+            mano_mesh.f = mano_mesh.f[..., [2, 1, 0]]
             self.mano["f"] = self.mano["f"][..., [2, 1, 0]]
 
         hand_verts = hand_verts.cpu().numpy()
+        hand_joints = hand_joints.cpu().numpy()
         if is_left:
             hand_verts[..., 0] = -hand_verts[..., 0]
+            hand_joints[..., 0] = -hand_joints[..., 0]
 
-        assert hand_verts.shape[0] == 1, "Output hand vertices should have BS=1."
-        return {"verts": hand_verts[0], "faces": self.mano_mesh.f}
+        assert (hand_verts.shape[0] == 1 and hand_joints.shape[0] == 1), "Output hand vertices should have BS=1."
+
+        if gt is not None:
+            ground_truth_hand_mesh = Mesh(v=gt[0].cpu().numpy(), f=mano_mesh.f)
+            ground_truth_hand_mesh.write_ply(
+                os.path.join("visu", "gt_hand.ply")
+            )
+        hand_mesh = Mesh(v=hand_verts[0], f=mano_mesh.f)
+        hand_mesh_input = seal(Mesh(v=input_rhand_pcs[0], f=self.mano["f"]))
+        object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
+        hand_mesh.write_ply(os.path.join("visu", "hand.ply"))
+        hand_mesh_input.write_ply(
+            os.path.join("visu", "input_hand.ply")
+        )
+        object_mesh.write_ply(os.path.join("visu", "object.ply"))
+
+        print(f"pred hand: {hand_verts[..., :10, :]}, gt hand: {gt[0].cpu().numpy()[..., :10, :]}")
+        return {"verts": hand_verts, "faces": mano_mesh.f, "joints": hand_joints}

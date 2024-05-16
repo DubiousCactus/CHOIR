@@ -380,22 +380,24 @@ class MultiViewTester(MultiViewTrainer):
             y_hat = self._inference(samples, labels, use_prior=use_prior)
 
         mano_params_gt = {
-            "pose": labels["theta"],
-            "beta": labels["beta"],
-            "rot_6d": labels["rot"],
-            "trans": labels["trans"],
+            "pose": labels["theta"].float(),
+            "beta": labels["beta"].float(),
+            "rot_6d": labels["rot"].float(),
+            "trans": labels["trans"].float(),
         }
         # Only use the last view for each batch element (they're all the same anyway for static
         # grasps, but for dynamic grasps we want to predict the LAST frame!).
-        mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+        mano_params_gt = {k: (v[:, -1] if len(v.shape) > 2 else v) for k, v in mano_params_gt.items() }
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         gt_verts, gt_joints = self._affine_mano(
             gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
         )
+        print(f"Recovered GT verts error: {torch.norm(gt_verts - labels['verts']).item()*1000:.6f}mm")
+        #print(gt_verts[..., :10, :], labels['verts'][..., :10, :])
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
-        multiple_obs = len(samples["theta"].shape) > 2
+        multiple_obs = "theta" in samples and len(samples["theta"].shape) > 2
         gt_contact_gaussian_params = (
             labels.get("contact_gaussians", None) if self._enable_contacts_tto else None
         )
@@ -405,12 +407,11 @@ class MultiViewTester(MultiViewTrainer):
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
         if isinstance(mesh_pths, tuple):
-            mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
-        elif isinstance(mesh_pths, list):
-            # This is for the normal dataloader used for TOCH_ContactPose
-            pass
-        else:
-            raise ValueError("mesh_pths must be a tuple or a list.")
+            if isinstance(mesh_pths[0], list):
+                mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+            else:
+                # This is for the normal dataloader used for TOCH_ContactPose
+                mesh_pths = list(mesh_pths)
         if self._debug_tto:
             # for i in range(len(mesh_pths)):
             # mesh_pths[i] = mesh_pths[i].replace(
@@ -652,7 +653,7 @@ class MultiViewTester(MultiViewTrainer):
                     verts_pred, joints_pred, anchors_pred = (
                         y_hat["verts"],
                         y_hat["joints"],
-                        torch.zeros(verts_pred.shape[0], 32, 3).to(verts_pred.device),
+                        torch.zeros(y_hat["verts"].shape[0], 32, 3).to(y_hat["verts"].device),
                     )  # Don't need anchors
                     eval_metrics["TOCH"] = self._compute_eval_metrics(
                         anchors_pred,

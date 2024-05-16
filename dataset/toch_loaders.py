@@ -285,7 +285,7 @@ class ContactPose_Single_Frame(torch.utils.data.Dataset):
 class ContactPoseDataset_Eval(torch.utils.data.Dataset):
     def __init__(self, processed_root, **kwargs):
         self.samples, self.gt, self.object_contact_maps = [], [], []
-        files_clean = glob.glob(os.path.join(processed_root, "test", "corr_*.npy"))
+        files_clean = sorted(glob.glob(os.path.join(processed_root, "test", "corr_*.npy")))
         for f in tqdm(files_clean):
             grasp_clean = np.load(f)
             grasp_pert = np.load(
@@ -304,7 +304,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
                     "beta": np.zeros((1, 10)),
                     "rot": grasp_clean["f1"].copy(),
                     "trans": grasp_clean["f2"].copy(),
-                    "verts": grasp_clean["f0"].copy(),
+                    "verts": grasp_clean["f0"].reshape(778, 3).copy(),
                 }
             )
         # Now let's try to load the contact maps under the assumption that they are in the exact
@@ -329,7 +329,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
 
     @property
     def theta_dim(self):
-        return ContactPoseDataset.theta_dim  # 18
+        return 18
 
     @property
     def bps_dim(self):
@@ -373,6 +373,18 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
     def max_ctx_pts(self):
         return 0
 
+    @property
+    def is_right_hand_only(self):
+        return True
+
+    @property
+    def center_on_object_com(self):
+        return True
+
+    @property
+    def eval_observation_plateau(self):
+        return False
+
     def __getitem__(self, index):
         noisy_sample_feat, gt_sample_feat = self.samples[index]
         label = self.gt[index]
@@ -393,13 +405,6 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
 
         is_left = noisy_sample_feat[0]["f13"]
 
-        # TODO: We have a lot more things to return here to be able to compute all the metrics!
-        # See the base dataset for reference.
-        # TODO: We have to return at least this outer struct:
-        # (samples, labels, mesh_pths), where:
-        # samples = ?
-        # labels = { "theta": , "beta": , "rot": , "trans": , ... }
-        # mesh_pths = (pth1,pth2,)
         sample = {
             "toch_features": (
                 rhand_pc,
