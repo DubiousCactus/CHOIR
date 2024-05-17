@@ -21,7 +21,6 @@ import torch
 import torch.nn.functional as F
 from manopth.manolayer import ManoLayer
 from scipy.spatial.transform import Rotation as R
-from tqdm import tqdm
 
 import conf.project as project_conf
 from model.TOCH import TemporalPointAE
@@ -30,9 +29,16 @@ from utils import colorize
 try:
     from psbody.mesh import Mesh
 except ImportError:
-    raise ImportError(
-        "Please install the psbody-mesh package to evaluate TOCH. Otherwise, don't import this file."
+    # raise ImportError(
+    # "Please install the psbody-mesh package to evaluate TOCH. Otherwise, don't import this file."
+    # )
+    print(
+        colorize(
+            "Please install the psbody-mesh package to evaluate TOCH. Otherwise, don't import this file.",
+            project_conf.ANSI_COLORS["red"],
+        )
     )
+    Mesh = lambda x: None
 
 
 def seal(mesh_to_seal):
@@ -75,7 +81,10 @@ class TOCHInference(torch.nn.Module):
             )
         )
         print(
-            colorize(f"Manually loading TOCH model from {model_path}...", project_conf.ANSI_COLORS["cyan"])
+            colorize(
+                f"Manually loading TOCH model from {model_path}...",
+                project_conf.ANSI_COLORS["cyan"],
+            )
         )
         ckpt = torch.load(model_path, map_location=torch.device("cpu"))
         self.model = TemporalPointAE(
@@ -90,10 +99,10 @@ class TOCHInference(torch.nn.Module):
             mano_mesh = Mesh(self.mano["v_template"], self.mano["f"])
             J_regressor = torch.tensor(self.mano["J_regressor"].todense()).float()
         # Loaded from the data/grab/scale_center.pkl file of the repo:
-        #scale, center = 5.180721556271635, np.array(
+        # scale, center = 5.180721556271635, np.array(
         #    [-0.09076019, -0.02022504, -0.05842724]
-        #)
-        #mano_mesh.v = mano_mesh.v * scale + center
+        # )
+        # mano_mesh.v = mano_mesh.v * scale + center
         with open("/home/moralest/toch/data/grab/scale_center.pkl", "rb") as f:
             scale, center = pkl.load(f)
             mano_mesh.v = mano_mesh.v * scale + center
@@ -151,7 +160,7 @@ class TOCHInference(torch.nn.Module):
         obj_id,
         obj_vn,
         is_left,
-        gt=None
+        gt=None,
     ):
         torch.set_grad_enabled(True)
         # What to return (bare minimum):
@@ -208,19 +217,23 @@ class TOCHInference(torch.nn.Module):
         ), "ContactPose is for single frame optimization only. This should never be more than 1."
         # =================== Run the model inference on the GPU ====================
         device = next(self.model.parameters()).device
-        batched_input = torch.stack(input_features, dim=0).unsqueeze(
-            0
-        ).to(device)  # Batch of 1 element with 1 frame
-        #print(f"batched_input: {batched_input.shape}")
+        batched_input = (
+            torch.stack(input_features, dim=0).unsqueeze(0).to(device)
+        )  # Batch of 1 element with 1 frame
+        # print(f"batched_input: {batched_input.shape}")
 
         with torch.no_grad():
             corr_mask_output, corr_pts_output, corr_dist_output = self.model(
                 batched_input
             )
-        #print(f"corr_mask_output: {corr_mask_output.shape}, corr_pts_output: {corr_pts_output.shape}, corr_dist_output: {corr_dist_output.shape}")
+        # print(f"corr_mask_output: {corr_mask_output.shape}, corr_pts_output: {corr_pts_output.shape}, corr_dist_output: {corr_dist_output.shape}")
         # == Move everything back to the CPU so I don't have to migrate the original code from numpy to torch ==
         device = torch.device("cpu")
-        corr_mask_output, corr_pts_output, corr_dist_output = corr_mask_output.to(device), corr_pts_output.to(device), corr_dist_output.to(device)
+        corr_mask_output, corr_pts_output, corr_dist_output = (
+            corr_mask_output.to(device),
+            corr_pts_output.to(device),
+            corr_dist_output.to(device),
+        )
         batched_input = batched_input.to(device)
 
         data_collection = []
@@ -246,8 +259,8 @@ class TOCHInference(torch.nn.Module):
 
         mano_mesh = copy.deepcopy(self.mano_mesh)
 
-        #print(f"mano_mesh verts:{ mano_mesh.v[..., :10, :]}")
-        #print(f"template mano mesh verts: {mano_mesh.v.shape}")
+        # print(f"mano_mesh verts:{ mano_mesh.v[..., :10, :]}")
+        # print(f"template mano mesh verts: {mano_mesh.v.shape}")
 
         closest_face, closest_points = mano_mesh.closest_faces_and_points(
             obj_corr_pts[obj_corr_mask]
@@ -293,8 +306,8 @@ class TOCHInference(torch.nn.Module):
 
         num_frames = 1
         # initialize variables
-        #print("====================== COARSE OPTIMIZATION ======================")
-        device = next(self.model.parameters()).device # Back to GPU!
+        # print("====================== COARSE OPTIMIZATION ======================")
+        device = next(self.model.parameters()).device  # Back to GPU!
         device = torch.device("cpu")
         beta_var = torch.randn([self.num_init, 10]).to(device)
         # first 3 global orientation
@@ -306,10 +319,10 @@ class TOCHInference(torch.nn.Module):
         theta_var.requires_grad_(True)
         transl_var.requires_grad_(True)
         object_contact_pts = object_contact_pts.to(device)
-        #print(f"theta_var: {theta_var.shape}, transl_var: {transl_var.shape}")
+        # print(f"theta_var: {theta_var.shape}, transl_var: {transl_var.shape}")
         self.mano_layer = self.mano_layer.to(device)
 
-        #print(f"loading MANO from {self.mano_models_path}")
+        # print(f"loading MANO from {self.mano_models_path}")
         mano_layer = ManoLayer(
             flat_hand_mean=True,
             side="right",
@@ -319,11 +332,10 @@ class TOCHInference(torch.nn.Module):
             root_rot_mode="axisang",
             joint_rot_mode="axisang",
         ).to(device)
-        #print(mano_layer)
-        #print(f"transl_var: {transl_var[0]}")
-        #print(f"object vertices: {object_verts[0].shape}")
-        #print(f"object vertices: {object_verts[0][:10]}")
-
+        # print(mano_layer)
+        # print(f"transl_var: {transl_var[0]}")
+        # print(f"object vertices: {object_verts[0].shape}")
+        # print(f"object vertices: {object_verts[0][:10]}")
 
         # coarse optimization loop
         num_iters = self.num_coarse_iter
@@ -335,15 +347,7 @@ class TOCHInference(torch.nn.Module):
                 beta_var.unsqueeze(1).repeat(1, num_frames, 1).view(-1, 10),
                 transl_var,
             )
-            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3)# * 0.001
-            
-            #print(f"saving hand mesh: {hand_verts.shape}")
-            #hand_mesh = Mesh(v=hand_verts[0, 0].detach().cpu().numpy(), f=self.mano["f"])
-            #object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
-            #object_mesh.write_ply(os.path.join("visu", "object.ply"))
-            #hand_mesh.write_ply(os.path.join("visu", "first_step_hand_stage1.ply"))
-            #exit(1)
-
+            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3)  # * 0.001
             center = (hand_verts[:, :, circle_v_id, :]).mean(2, keepdim=True)
             hand_verts = torch.cat([hand_verts, center], dim=2)
 
@@ -368,12 +372,12 @@ class TOCHInference(torch.nn.Module):
             loss.backward()
             opt.step()
 
-            #§print("Iter {}: {}".format(i, loss.item()))
-            #§print("\tCorrespondence Loss: {}".format(corr_loss.item()))
-        #print(f"[output] hand_verts: {hand_verts.shape}")
+            # §print("Iter {}: {}".format(i, loss.item()))
+            # §print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+        # print(f"[output] hand_verts: {hand_verts.shape}")
 
-        #print("===============================================================")
-        #print("====================== FINE OPTIMIZATION ======================")
+        # print("===============================================================")
+        # print("====================== FINE OPTIMIZATION ======================")
         # fine optimization loop
         num_iters = self.num_fine_iter
         opt = torch.optim.Adam(
@@ -387,7 +391,7 @@ class TOCHInference(torch.nn.Module):
                 beta_var.unsqueeze(1).repeat(1, num_frames, 1).view(-1, 10),
                 transl_var,
             )
-            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3) #* 0.001
+            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3)  # * 0.001
 
             center = (hand_verts[:, :, circle_v_id, :]).mean(2, keepdim=True)
             hand_verts = torch.cat([hand_verts, center], dim=2)
@@ -430,17 +434,17 @@ class TOCHInference(torch.nn.Module):
             opt.step()
             scheduler.step()
 
-            #print("Iter {}: {}".format(i, loss.item()), flush=True)
-            #print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
-            #print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
-            #print("\tCorrespondence Loss: {}".format(corr_loss.item()))
+            # print("Iter {}: {}".format(i, loss.item()), flush=True)
+            # print("\tShape Prior Loss: {}".format(shape_prior_loss.item()))
+            # print("\tPose Prior Loss: {}".format(pose_prior_loss.item()))
+            # print("\tCorrespondence Loss: {}".format(corr_loss.item()))
             # print("\tPose Smoothness Loss: {}".format(pose_smoothness_loss.item()))
             # print("\tJoints Smoothness Loss: {}".format(joints_smoothness_loss.item()))
             assert not torch.isnan(loss).any(), "Loss is NaN"
-        #print(f"[output] hand_verts: {hand_verts.shape}")
+        # print(f"[output] hand_verts: {hand_verts.shape}")
 
-        #print("===============================================================")
-        #print("==================== AGGREGATION/SELECTION ====================")
+        # print("===============================================================")
+        # print("==================== AGGREGATION/SELECTION ====================")
         # find best initialization
         with torch.no_grad():
             hand_verts, hand_joints = mano_layer(
@@ -448,13 +452,13 @@ class TOCHInference(torch.nn.Module):
                 beta_var.unsqueeze(1).repeat(1, num_frames, 1).view(-1, 10),
                 transl_var,
             )
-            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3) #* 0.001
-            hand_joints = hand_joints.view(self.num_init, num_frames, 21, 3) #* 0.001
+            hand_verts = hand_verts.view(self.num_init, num_frames, 778, 3)  # * 0.001
+            hand_joints = hand_joints.view(self.num_init, num_frames, 21, 3)  # * 0.001
             center = (hand_verts[:, :, circle_v_id, :]).mean(2, keepdim=True)
             hand_verts_w_center = torch.cat([hand_verts, center], dim=2)
 
             pred_contact_pts = []
-            #for j in tqdm(range(self.num_init), desc="Selecting best initialization"):
+            # for j in tqdm(range(self.num_init), desc="Selecting best initialization"):
             for j in range(self.num_init):
                 for k in range(num_frames):
                     vert_ids = data_collection[k][0]
@@ -475,7 +479,7 @@ class TOCHInference(torch.nn.Module):
             min_id = torch.argmin(corr_loss)
             hand_verts = hand_verts[min_id]
             hand_joints = hand_joints[min_id]
-        #print(f"[output] hand_verts: {hand_verts.shape}")
+        # print(f"[output] hand_verts: {hand_verts.shape}")
 
         if is_left:
             mano_mesh.f = mano_mesh.f[..., [2, 1, 0]]
@@ -487,24 +491,22 @@ class TOCHInference(torch.nn.Module):
             hand_verts[..., 0] = -hand_verts[..., 0]
             hand_joints[..., 0] = -hand_joints[..., 0]
 
-        assert (hand_verts.shape[0] == 1 and hand_joints.shape[0] == 1), "Output hand vertices should have BS=1."
-        #print(f"[output] hand_verts: {hand_verts.shape}")
-        #print(f"[output] faces: {mano_mesh.f.shape}")
-        #print(f"[input] hand_verts: {input_rhand_pcs[0].shape}")
+        assert (
+            hand_verts.shape[0] == 1 and hand_joints.shape[0] == 1
+        ), "Output hand vertices should have BS=1."
+        # print(f"[output] hand_verts: {hand_verts.shape}")
+        # print(f"[output] faces: {mano_mesh.f.shape}")
+        # print(f"[input] hand_verts: {input_rhand_pcs[0].shape}")
 
         if gt is not None:
             ground_truth_hand_mesh = Mesh(v=gt[0].cpu().numpy(), f=mano_mesh.f)
-            ground_truth_hand_mesh.write_ply(
-                os.path.join("visu", "gt_hand.ply")
-            )
-			hand_mesh = Mesh(v=hand_verts[0], f=mano_mesh.f)
-			hand_mesh_input = seal(Mesh(v=input_rhand_pcs[0], f=self.mano["f"]))
-			object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
-			hand_mesh.write_ply(os.path.join("visu", "hand.ply"))
-			hand_mesh_input.write_ply(
-				os.path.join("visu", "input_hand.ply")
-			)
-			object_mesh.write_ply(os.path.join("visu", "object.ply"))
+            ground_truth_hand_mesh.write_ply(os.path.join("visu", "gt_hand.ply"))
+            hand_mesh = Mesh(v=hand_verts[0], f=mano_mesh.f)
+            hand_mesh_input = seal(Mesh(v=input_rhand_pcs[0], f=self.mano["f"]))
+            object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
+            hand_mesh.write_ply(os.path.join("visu", "hand.ply"))
+            hand_mesh_input.write_ply(os.path.join("visu", "input_hand.ply"))
+            object_mesh.write_ply(os.path.join("visu", "object.ply"))
 
-        #print(f"pred hand: {hand_verts[..., :10, :]}, gt hand: {gt[0].cpu().numpy()[..., :10, :]}")
+        # print(f"pred hand: {hand_verts[..., :10, :]}, gt hand: {gt[0].cpu().numpy()[..., :10, :]}")
         return {"verts": hand_verts, "faces": mano_mesh.f, "joints": hand_joints}

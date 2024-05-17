@@ -49,6 +49,8 @@ from utils.visualization import (
     visualize_MANO,
 )
 
+avg_choir_time = []
+
 
 class ContactPoseDataset(BaseDataset):
     """ "
@@ -553,6 +555,9 @@ class ContactPoseDataset(BaseDataset):
 
                     # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                     # workers, but bps_torch is forcing my hand here so I might as well help it.
+                    from timeit import default_timer as timer
+
+                    start = timer()
                     gt_choir, gt_rescaled_ref_pts = compute_choir(
                         obj_ptcld.unsqueeze(0),
                         gt_anchors,
@@ -563,6 +568,8 @@ class ContactPoseDataset(BaseDataset):
                         exponential_map_w=self._exponential_map_w,
                         use_deltas=self._use_deltas,
                     )
+                    end = timer()
+                    bps_time = end - start
                     # ========== Compute ground-truth contact points ================
                     # =============== Object contact map for GraspTTA ===============
                     vertex_colors = np.array(obj_mesh.vertex_colors, dtype=np.float32)
@@ -590,6 +597,7 @@ class ContactPoseDataset(BaseDataset):
                     gt_hand_mesh.compute_vertex_normals()
                     normals = np.asarray(gt_hand_mesh.vertex_normals)
                     if self._model_contacts:
+                        start = timer()
                         gt_vertex_contacts = get_contact_counts_by_neighbourhoods(
                             gt_verts[0],
                             normals,
@@ -634,6 +642,20 @@ class ContactPoseDataset(BaseDataset):
                                 nugget = torch.eye(3) * 1e-8
                                 cholesky_cov[i] = torch.linalg.cholesky(cov[i] + nugget)
                         lower_tril_cov = cholesky_cov.view(-1, 9)[:, FLAT_LOWER_INDICES]
+                        end = timer()
+                        contact_gaussian_time = end - start
+                        print(f"Time to compute BPS: {bps_time * 1000:.2f}ms")
+                        print(
+                            f"Time to compute Contact Gaussians: {contact_gaussian_time*1000:.2f}ms"
+                        )
+                        print(
+                            f"Total time: {(bps_time + contact_gaussian_time) * 1000:.2f}ms"
+                        )
+                        avg_choir_time.append((bps_time + contact_gaussian_time) * 1000)
+                        if len(avg_choir_time) == 50:
+                            avg = np.mean(avg_choir_time)
+                            std = np.std(avg_choir_time)
+                            print(f"Avg time: {avg:.2f}ms, Std: {std:.2f}ms")
                         # Basic test:
                         # TODO: Use lower_tril_cholesky_to_covmat()
                         test_lower_tril_mat = torch.zeros_like(cov).view(-1, 9)
