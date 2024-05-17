@@ -497,14 +497,14 @@ class TOCHInference(torch.nn.Module):
             ground_truth_hand_mesh.write_ply(
                 os.path.join("visu", "gt_hand.ply")
             )
-        hand_mesh = Mesh(v=hand_verts[0], f=mano_mesh.f)
-        hand_mesh_input = seal(Mesh(v=input_rhand_pcs[0], f=self.mano["f"]))
-        object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
-        hand_mesh.write_ply(os.path.join("visu", "hand.ply"))
-        hand_mesh_input.write_ply(
-            os.path.join("visu", "input_hand.ply")
-        )
-        object_mesh.write_ply(os.path.join("visu", "object.ply"))
+			hand_mesh = Mesh(v=hand_verts[0], f=mano_mesh.f)
+			hand_mesh_input = seal(Mesh(v=input_rhand_pcs[0], f=self.mano["f"]))
+			object_mesh = Mesh(v=object_verts[0], f=obj_mesh.f)
+			hand_mesh.write_ply(os.path.join("visu", "hand.ply"))
+			hand_mesh_input.write_ply(
+				os.path.join("visu", "input_hand.ply")
+			)
+			object_mesh.write_ply(os.path.join("visu", "object.ply"))
 
         #print(f"pred hand: {hand_verts[..., :10, :]}, gt hand: {gt[0].cpu().numpy()[..., :10, :]}")
         return {"verts": hand_verts, "faces": mano_mesh.f, "joints": hand_joints}

@@ -38,7 +38,7 @@ class TOCHTester(MultiViewTester):
         # And I also have to numpify everything because I don't want to migrate the original code
         # to pytorch. No time for that.
         torch.set_grad_enabled(True)
-        output = self._model(*[f.squeeze(0).cpu().numpy() for f in features], gt=labels['verts'])
+        output = self._model(*[f.squeeze(0).cpu().numpy() for f in features], gt=None)#labels['verts'])
         device = next(self._model.parameters()).device
         return {"verts": torch.from_numpy(output["verts"]).to(device), "joints": torch.from_numpy(output["joints"]).to(device), "anchors": None}
 
