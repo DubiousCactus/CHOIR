@@ -11,6 +11,7 @@ import os
 import pickle
 import signal
 from collections import defaultdict
+from timeit import default_timer as timer
 from typing import Dict, List, Optional, Tuple, Union
 
 import blosc2
@@ -360,6 +361,7 @@ class MultiViewTester(MultiViewTrainer):
         use_input: bool = False,
     ) -> Tuple:
         input_scalar = samples["scalar"]
+        total_inf_time = torch.inf
         if len(input_scalar.shape) == 2:
             input_scalar = input_scalar.mean(dim=1)
         if self._debug_tto:
@@ -377,7 +379,10 @@ class MultiViewTester(MultiViewTrainer):
                     }
                     pickle.dump(y_hat, f)
         else:
+            start = timer()
             y_hat = self._inference(samples, labels, use_prior=use_prior)
+            end = timer()
+            inference_time = end - start
 
         mano_params_gt = {
             "pose": labels["theta"].float(),
@@ -387,13 +392,14 @@ class MultiViewTester(MultiViewTrainer):
         }
         # Only use the last view for each batch element (they're all the same anyway for static
         # grasps, but for dynamic grasps we want to predict the LAST frame!).
-        mano_params_gt = {k: (v[:, -1] if len(v.shape) > 2 else v) for k, v in mano_params_gt.items() }
+        mano_params_gt = {
+            k: (v[:, -1] if len(v.shape) > 2 else v) for k, v in mano_params_gt.items()
+        }
         gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
         gt_verts, gt_joints = self._affine_mano(
             gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
         )
-        print(f"Recovered GT verts error: {torch.norm(gt_verts - labels['verts']).item()*1000:.6f}mm")
-        #print(gt_verts[..., :10, :], labels['verts'][..., :10, :])
+        # print(gt_verts[..., :10, :], labels['verts'][..., :10, :])
         gt_anchors = self._affine_mano.get_anchors(gt_verts)
         if not self._data_loader.dataset.is_right_hand_only:
             raise NotImplementedError("Right hand only is implemented for testing.")
@@ -406,12 +412,11 @@ class MultiViewTester(MultiViewTrainer):
         # For mesh_pths we have a tuple of N lists of B entries. N is the number of
         # observations and B is the batch size. We'll take the last observation for each batch
         # element.
-        if isinstance(mesh_pths, tuple):
-            if isinstance(mesh_pths[0], list):
-                mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
-            else:
-                # This is for the normal dataloader used for TOCH_ContactPose
-                mesh_pths = list(mesh_pths)
+        if self._is_toch:
+            # This is for the normal dataloader used for TOCH_ContactPose
+            mesh_pths = list(mesh_pths)
+        else:
+            mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
         if self._debug_tto:
             # for i in range(len(mesh_pths)):
             # mesh_pths[i] = mesh_pths[i].replace(
@@ -649,11 +654,14 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data,
                         rotations=y_hat["rotations"],
                     )
+                    total_inf_time = inference_time
                 elif self._is_toch:
                     verts_pred, joints_pred, anchors_pred = (
                         y_hat["verts"],
                         y_hat["joints"],
-                        torch.zeros(y_hat["verts"].shape[0], 32, 3).to(y_hat["verts"].device),
+                        torch.zeros(y_hat["verts"].shape[0], 32, 3).to(
+                            y_hat["verts"].device
+                        ),
                     )  # Don't need anchors
                     eval_metrics["TOCH"] = self._compute_eval_metrics(
                         anchors_pred,
@@ -664,6 +672,7 @@ class MultiViewTester(MultiViewTrainer):
                         gt_joints,
                         batch_obj_data,
                     )
+                    total_inf_time = inference_time
                 else:
                     sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
@@ -671,6 +680,7 @@ class MultiViewTester(MultiViewTrainer):
                         batch_obj_data["points"],
                         None,
                     )
+                    start = timer()
                     (
                         theta_tto,
                         beta_tto,
@@ -716,6 +726,8 @@ class MultiViewTester(MultiViewTrainer):
                         obj_meshes=batch_obj_data["mesh"],
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
+                    end = timer()
+                    tto_1_time = end - start
                     if False and self._debug_tto:
                         pred_hand_mesh = trimesh.Trimesh(
                             vertices=verts_pred[sample_to_viz].detach().cpu().numpy(),
@@ -828,6 +840,7 @@ class MultiViewTester(MultiViewTrainer):
                                 anchors_pred[sample_to_viz].cpu(),
                             )
 
+                        start = timer()
                         (
                             _,
                             _,
@@ -867,6 +880,8 @@ class MultiViewTester(MultiViewTrainer):
                             obj_meshes=batch_obj_data["mesh"],
                             save_tto_anim=self._debug_tto or self._save_predictions,
                         )
+                        end = timer()
+                        tto_2_time = end - start
                         if False and self._debug_tto:
                             pred_hand_mesh = trimesh.Trimesh(
                                 vertices=verts_pred[-1].detach().cpu().numpy(),
@@ -902,7 +917,8 @@ class MultiViewTester(MultiViewTrainer):
                             batch_obj_data,
                             rotations=y_hat.get("rotations", None),
                         )
-        return eval_metrics
+                        total_inf_time = inference_time + tto_1_time + tto_2_time
+        return eval_metrics, total_inf_time
 
     @to_cuda
     def _test_iteration(
@@ -910,7 +926,7 @@ class MultiViewTester(MultiViewTrainer):
         batch: Union[Tuple, List, torch.Tensor],
         n_observations: int,
         batch_idx: int,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], float]:
         """Evaluation procedure for one batch. We want to keep the code DRY and avoid
         making mistakes, so this code calls the BaseTrainer._train_val_iteration() method.
         Args:
@@ -919,7 +935,7 @@ class MultiViewTester(MultiViewTrainer):
             torch.Tensor: The loss for the batch.
         """
         samples, labels, mesh_pths = batch  # type: ignore
-        eval_metrics = self._test_batch(
+        eval_metrics, eval_time = self._test_batch(
             samples,
             labels,
             mesh_pths,
@@ -936,7 +952,7 @@ class MultiViewTester(MultiViewTrainer):
             if v is not None:
                 for metric_name, metric_val in v.items():
                     batch_metrics[f"[{k}] {metric_name}"] = metric_val
-        return batch_metrics
+        return batch_metrics, eval_time
 
     @to_cuda
     def _save_batch_predictions_as_sequence(
@@ -1953,11 +1969,23 @@ class MultiViewTester(MultiViewTrainer):
             total=len(self._data_loader), desc=f"Testing {n_observations} observations"
         )
         self._pbar.refresh()
+        timing = []
         for i, batch in enumerate(self._data_loader):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            batch_metrics = self._test_iteration(batch, n_observations, i)
+            batch_metrics, inf_time = self._test_iteration(batch, n_observations, i)
+            timing.append(inf_time)
+            if len(timing) == 1:
+                mean = torch.mean(torch.tensor(timing[1:])).item()
+                std = torch.std(torch.tensor(timing[1:])).item()
+                print(
+                    colorize(
+                        f"[TIMING] Mean inference time over {len(timing) - 1} samples: {mean:.2f} ± {std:.2f} s",
+                        project_conf.ANSI_COLORS["green"],
+                    )
+                )
+                timing = []
             for k, v in batch_metrics.items():
                 metrics[k].update(v)
             del batch_metrics
