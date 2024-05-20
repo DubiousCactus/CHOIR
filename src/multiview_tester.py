@@ -861,7 +861,7 @@ class MultiViewTester(MultiViewTrainer):
                             scalar=input_scalar,
                             max_iterations=1000,
                             loss_thresh=1e-6,
-                            contact_loss_thresh=1e-6,
+                            contact_loss_thresh=1e-5,
                             lr=1e-12,  # We already converged stage 1. Stage 2 has a hardcoded lr (I know!!!)
                             is_rhand=samples["is_rhand"],
                             use_smplx=use_smplx,
@@ -1976,7 +1976,7 @@ class MultiViewTester(MultiViewTrainer):
                 break
             batch_metrics, inf_time = self._test_iteration(batch, n_observations, i)
             timing.append(inf_time)
-            if len(timing) == 1:
+            if len(timing) == 11:
                 mean = torch.mean(torch.tensor(timing[1:])).item()
                 std = torch.std(torch.tensor(timing[1:])).item()
                 print(

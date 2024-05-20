@@ -652,9 +652,9 @@ class ContactPoseDataset(BaseDataset):
                             f"Total time: {(bps_time + contact_gaussian_time) * 1000:.2f}ms"
                         )
                         avg_choir_time.append((bps_time + contact_gaussian_time) * 1000)
-                        if len(avg_choir_time) == 50:
-                            avg = np.mean(avg_choir_time)
-                            std = np.std(avg_choir_time)
+                        if len(avg_choir_time) == 51:
+                            avg = np.mean(avg_choir_time[1:])
+                            std = np.std(avg_choir_time[1:])
                             print(f"Avg time: {avg:.2f}ms, Std: {std:.2f}ms")
                         # Basic test:
                         # TODO: Use lower_tril_cholesky_to_covmat()
