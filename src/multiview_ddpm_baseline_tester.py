@@ -221,16 +221,18 @@ class MultiViewDDPMBaselineTester(MultiViewTester):
         max_observations = max_observations or samples["choir"].shape[1]
         kp, contacts = self._model.generate(
             1,
-            y=torch.cat(
-                (
-                    samples["rescaled_ref_pts"][:, :max_observations],
-                    samples["joints"][:, :max_observations],
-                    samples["anchors"][:, :max_observations],
-                ),
-                dim=-2,
-            )
-            if self.conditional
-            else None,
+            y=(
+                torch.cat(
+                    (
+                        samples["rescaled_ref_pts"][:, :max_observations],
+                        samples["joints"][:, :max_observations],
+                        samples["anchors"][:, :max_observations],
+                    ),
+                    dim=-2,
+                )
+                if self.conditional
+                else None
+            ),
         )
         # Only use 1 sample for now. TODO: use more samples and average?
         kp, contacts = kp.squeeze(1), contacts.squeeze(1)

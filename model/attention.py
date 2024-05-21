@@ -67,9 +67,11 @@ class MultiHeadAttention(torch.nn.Module):
         self.heads_q = torch.nn.Linear(q_dim, inner_dim, bias=use_bias)
         self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
         self.out_proj = torch.nn.Sequential(
-            torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
-            if q_dim != inner_dim
-            else torch.nn.Identity(),
+            (
+                torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
+                if q_dim != inner_dim
+                else torch.nn.Identity()
+            ),
             torch.nn.Dropout(p_dropout),
         )
 
@@ -141,9 +143,11 @@ class MultiHeadSpatialAttention(torch.nn.Module):
         self.heads_k = torch.nn.Linear(k_dim, inner_dim, bias=use_bias)
         self.heads_v = torch.nn.Linear(v_dim, inner_dim, bias=use_bias)
         self.out_proj = torch.nn.Sequential(
-            torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
-            if inner_dim != q_dim
-            else torch.nn.Identity(),
+            (
+                torch.nn.Linear(inner_dim, q_dim, bias=use_bias)
+                if inner_dim != q_dim
+                else torch.nn.Identity()
+            ),
             torch.nn.Dropout(p_dropout),
         )
 

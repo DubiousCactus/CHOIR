@@ -66,9 +66,11 @@ class Aggregate_VED(torch.nn.Module):
         # Multi-head cross-attention aggregator
         self.mhca_aggregator = (
             AttentionAggregator(
-                "multi_head_pytorch"
-                if aggregator == "attention_pytorch"
-                else "multi_head",
+                (
+                    "multi_head_pytorch"
+                    if aggregator == "attention_pytorch"
+                    else "multi_head"
+                ),
                 multi_head_use_bias=True,
                 n_heads=agg_heads,
                 k_dim_in=choir_embedding_dim,
@@ -206,9 +208,11 @@ class Aggregate_VED(torch.nn.Module):
                     latent_dim + (bps_dim if decoder_use_obj else 0),
                     decoder_layer_dims[0],
                 ),
-                torch.nn.BatchNorm1d(decoder_layer_dims[0])
-                if batch_norm
-                else torch.nn.Identity(),
+                (
+                    torch.nn.BatchNorm1d(decoder_layer_dims[0])
+                    if batch_norm
+                    else torch.nn.Identity()
+                ),
                 torch.nn.ReLU(),
             ]
             for i in range(len(decoder_layer_dims) - 1):

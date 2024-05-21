@@ -54,9 +54,11 @@ class MultiViewDDPMTrainer(BaseTrainer, metaclass=DebugMetaclass):
         with torch.no_grad():
             # Initialize the EMA model with a forward pass before generation
             self._ema.ema_model(
-                labels["choir"][:, -1]
-                if self._model.embed_full_choir
-                else labels["choir"][:, -1][..., -1].unsqueeze(-1),
+                (
+                    labels["choir"][:, -1]
+                    if self._model.embed_full_choir
+                    else labels["choir"][:, -1][..., -1].unsqueeze(-1)
+                ),
                 samples["choir"] if self.conditional else None,
             )
         visualize_model_predictions_with_multiple_views(

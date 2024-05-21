@@ -310,9 +310,9 @@ class BaseTrainer:
                     visualize_train_every > 0
                     and (epoch + 1) % visualize_train_every == 0,
                     epoch,
-                    last_val_loss=val_losses[-1]
-                    if len(val_losses) > 0
-                    else float("inf"),
+                    last_val_loss=(
+                        val_losses[-1] if len(val_losses) > 0 else float("inf")
+                    ),
                 )
             )
             if not self._disable_grad and self._ema is not None:
@@ -411,13 +411,15 @@ class BaseTrainer:
             {
                 **{
                     "model_ckpt": self._model.state_dict(),
-                    "ema_model_ckpt": self._ema.state_dict()
-                    if self._ema is not None
-                    else None,
+                    "ema_model_ckpt": (
+                        self._ema.state_dict() if self._ema is not None else None
+                    ),
                     "opt_ckpt": self._opt.state_dict(),
-                    "scheduler_ckpt": self._scheduler.state_dict()
-                    if self._scheduler is not None
-                    else None,
+                    "scheduler_ckpt": (
+                        self._scheduler.state_dict()
+                        if self._scheduler is not None
+                        else None
+                    ),
                     "epoch": self._epoch,
                     "val_loss": val_loss,
                 },

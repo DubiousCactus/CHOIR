@@ -73,16 +73,18 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                     use_self_attention=use_backbone_self_attn,
                     interpolate=not conv_transpose,
                 ),
-                partial(
-                    ResnetEncoderModel,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    pool_all_features="spatial",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        ResnetEncoderModel,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        pool_all_features="spatial",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
@@ -317,9 +319,11 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             else:
                 y_embed = self.object_y_embedder(y) if y is not None else None
         eps_hat_udf, eps_hat_contacts = self.backbone(
-            torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
-            if self.object_in_encoder
-            else diffused_x_udf,
+            (
+                torch.cat((x[..., 0].unsqueeze(-1), diffused_x_udf), dim=-1)
+                if self.object_in_encoder
+                else diffused_x_udf
+            ),
             diffused_x_contacts,
             t,
             y_embed,
@@ -398,9 +402,11 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat_udf, eps_hat_contacts = self.backbone(
-                    torch.cat((object_udf, z_udf_current), dim=-1)
-                    if self.object_in_encoder
-                    else z_udf_current,
+                    (
+                        torch.cat((object_udf, z_udf_current), dim=-1)
+                        if self.object_in_encoder
+                        else z_udf_current
+                    ),
                     z_contacts_current,
                     make_t_batched(t, n, y_embed),
                     y_embed,
@@ -427,9 +433,11 @@ class ContactsBPSDiffusionModel(torch.nn.Module):
                 pbar.update()
             # Now for z_0:
             eps_hat_udf, eps_hat_contacts = self.backbone(
-                torch.cat((object_udf, z_udf_current), dim=-1)
-                if self.object_in_encoder
-                else z_udf_current,
+                (
+                    torch.cat((object_udf, z_udf_current), dim=-1)
+                    if self.object_in_encoder
+                    else z_udf_current
+                ),
                 z_contacts_current,
                 make_t_batched(t, n, y_embed),
                 y_embed,
@@ -500,9 +508,13 @@ class BPSDiffusionModel(torch.nn.Module):
                     bps_dim=bps_dim,
                     context_channels=context_channels or y_embed_dim,
                 ),
-                partial(MLPResNetEncoderModel, hidden_dim=512, embed_dim=y_embed_dim)
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        MLPResNetEncoderModel, hidden_dim=512, embed_dim=y_embed_dim
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet": (
                 partial(
@@ -514,17 +526,19 @@ class BPSDiffusionModel(torch.nn.Module):
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
                 ),
-                partial(
-                    ResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    pool_all_features="spatial",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        ResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        pool_all_features="spatial",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_contact_unet": (
                 partial(
@@ -538,17 +552,19 @@ class BPSDiffusionModel(torch.nn.Module):
                     choir_dim=10,
                     no_decoding=True,
                 ),
-                partial(
-                    ResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    pool_all_features="spatial",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        ResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        pool_all_features="spatial",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_contact_unet_w_decoding": (
                 partial(
@@ -561,17 +577,19 @@ class BPSDiffusionModel(torch.nn.Module):
                     use_self_attention=use_backbone_self_attn,
                     choir_dim=10,
                 ),
-                partial(
-                    ResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    pool_all_features="spatial",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        ResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        pool_all_features="spatial",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet_multiscale_no_feature_pooling": (
                 partial(
@@ -583,16 +601,18 @@ class BPSDiffusionModel(torch.nn.Module):
                     use_self_attention=use_backbone_self_attn,
                     context_channels=[4, 8, 16, 32, 64],
                 ),
-                partial(
-                    MultiScaleResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        MultiScaleResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet_multiscale_max_feature_pooling": (
                 partial(
@@ -604,17 +624,19 @@ class BPSDiffusionModel(torch.nn.Module):
                     use_self_attention=use_backbone_self_attn,
                     context_channels=[1] * 5,
                 ),
-                partial(
-                    MultiScaleResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    feature_pooling="max",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        MultiScaleResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        feature_pooling="max",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet_multiscale_avg_feature_pooling": (
                 partial(
@@ -626,17 +648,19 @@ class BPSDiffusionModel(torch.nn.Module):
                     use_self_attention=use_backbone_self_attn,
                     context_channels=[1] * 5,
                 ),
-                partial(
-                    MultiScaleResnetEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    normalization="group",
-                    norm_groups=16,
-                    pooling="avg",
-                    feature_pooling="avg",
-                    use_self_attention=use_encoder_self_attn,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        MultiScaleResnetEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        normalization="group",
+                        norm_groups=16,
+                        pooling="avg",
+                        feature_pooling="avg",
+                        use_self_attention=use_encoder_self_attn,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet_w_transformer": (
                 partial(
@@ -648,12 +672,14 @@ class BPSDiffusionModel(torch.nn.Module):
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
                 ),
-                partial(
-                    TransformerEncoderModel,
-                    choir_dim=choir_dim * 2,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        TransformerEncoderModel,
+                        choir_dim=choir_dim * 2,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
             "3d_unet_w_transformer_spatial_patches": (
                 partial(
@@ -665,13 +691,15 @@ class BPSDiffusionModel(torch.nn.Module):
                     pooling="avg",
                     use_self_attention=use_backbone_self_attn,
                 ),
-                partial(
-                    TransformerEncoderModel,
-                    choir_dim=choir_dim * 2,
-                    spatialize_patches=True,
-                )
-                if y_embed_dim is not None
-                else None,
+                (
+                    partial(
+                        TransformerEncoderModel,
+                        choir_dim=choir_dim * 2,
+                        spatialize_patches=True,
+                    )
+                    if y_embed_dim is not None
+                    else None
+                ),
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
@@ -860,14 +888,16 @@ class KPDiffusionModel(torch.nn.Module):
                     context_dim=y_embed_dim,
                     skip_connections=skip_connections,
                 ),
-                partial(
-                    MLPResNetEncoderModel,
-                    input_dim=y_input_keypoints * 3,
-                    hidden_dim=2048,
-                    embed_dim=y_embed_dim,
-                )
-                if (y_embed_dim is not None and y_input_keypoints is not None)
-                else None,
+                (
+                    partial(
+                        MLPResNetEncoderModel,
+                        input_dim=y_input_keypoints * 3,
+                        hidden_dim=2048,
+                        embed_dim=y_embed_dim,
+                    )
+                    if (y_embed_dim is not None and y_input_keypoints is not None)
+                    else None
+                ),
             ),
             "mlp_resnet_w_pointnet2": (
                 partial(
@@ -882,13 +912,15 @@ class KPDiffusionModel(torch.nn.Module):
                     context_dim=y_embed_dim,
                     skip_connections=skip_connections,
                 ),
-                partial(
-                    PointNet2EncoderModel,
-                    input_points=y_input_keypoints,
-                    embed_dim=y_embed_dim,
-                )
-                if (y_embed_dim is not None and y_input_keypoints is not None)
-                else None,
+                (
+                    partial(
+                        PointNet2EncoderModel,
+                        input_points=y_input_keypoints,
+                        embed_dim=y_embed_dim,
+                    )
+                    if (y_embed_dim is not None and y_input_keypoints is not None)
+                    else None
+                ),
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
@@ -1000,9 +1032,11 @@ class KPDiffusionModel(torch.nn.Module):
         # 4. Predict the noise sample
         y_embed = self.embedder(y) if y is not None else None
         eps_hat = self.backbone(
-            torch.cat([obj_kpts, diffused_x], dim=-2)
-            if self.object_in_encoder
-            else diffused_x,
+            (
+                torch.cat([obj_kpts, diffused_x], dim=-2)
+                if self.object_in_encoder
+                else diffused_x
+            ),
             t,
             y_embed,
             debug=False,
@@ -1050,9 +1084,11 @@ class KPDiffusionModel(torch.nn.Module):
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat = self.backbone(
-                    torch.cat([obj_kpts, z_current], dim=-2)
-                    if self.object_in_encoder
-                    else z_current,
+                    (
+                        torch.cat([obj_kpts, z_current], dim=-2)
+                        if self.object_in_encoder
+                        else z_current
+                    ),
                     make_t_batched(t, n, y_embed),
                     y_embed,
                 )
@@ -1065,9 +1101,11 @@ class KPDiffusionModel(torch.nn.Module):
                 pbar.update()
             # Now for z_0:
             eps_hat = self.backbone(
-                torch.cat([obj_kpts, z_current], dim=-2)
-                if self.object_in_encoder
-                else z_current,
+                (
+                    torch.cat([obj_kpts, z_current], dim=-2)
+                    if self.object_in_encoder
+                    else z_current
+                ),
                 make_t_batched(t, n, y_embed),
                 y_embed,
             )
@@ -1118,14 +1156,16 @@ class KPContactsDiffusionModel(torch.nn.Module):
                     context_dim=y_embed_dim,
                     skip_connections=skip_connections,
                 ),
-                partial(
-                    MLPResNetEncoderModel,
-                    input_dim=y_input_keypoints * 3,
-                    hidden_dim=2048,
-                    embed_dim=y_embed_dim,
-                )
-                if (y_embed_dim is not None and y_input_keypoints is not None)
-                else None,
+                (
+                    partial(
+                        MLPResNetEncoderModel,
+                        input_dim=y_input_keypoints * 3,
+                        hidden_dim=2048,
+                        embed_dim=y_embed_dim,
+                    )
+                    if (y_embed_dim is not None and y_input_keypoints is not None)
+                    else None
+                ),
             ),
             "mlp_resnet_w_pointnet2": (
                 partial(
@@ -1140,13 +1180,15 @@ class KPContactsDiffusionModel(torch.nn.Module):
                     context_dim=y_embed_dim,
                     skip_connections=skip_connections,
                 ),
-                partial(
-                    PointNet2EncoderModel,
-                    input_points=y_input_keypoints,
-                    embed_dim=y_embed_dim,
-                )
-                if (y_embed_dim is not None and y_input_keypoints is not None)
-                else None,
+                (
+                    partial(
+                        PointNet2EncoderModel,
+                        input_points=y_input_keypoints,
+                        embed_dim=y_embed_dim,
+                    )
+                    if (y_embed_dim is not None and y_input_keypoints is not None)
+                    else None
+                ),
             ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
@@ -1297,9 +1339,11 @@ class KPContactsDiffusionModel(torch.nn.Module):
         else:
             raise NotImplementedError("Not implemented yet")
         eps_hat_x, eps_hat_contacts = self.backbone(
-            torch.cat([obj_kpts, diffused_x], dim=-2)
-            if self.object_in_encoder
-            else diffused_x,
+            (
+                torch.cat([obj_kpts, diffused_x], dim=-2)
+                if self.object_in_encoder
+                else diffused_x
+            ),
             diffused_contacts,
             t,
             y_embed,
@@ -1353,9 +1397,11 @@ class KPContactsDiffusionModel(torch.nn.Module):
             pbar = tqdm(total=self.time_steps, desc="Generating")
             for t in range(self.time_steps - 1, 0, -1):  # Reversed from T to 1
                 eps_hat_kp, eps_hat_contacts = self.backbone(
-                    torch.cat([obj_kpts, z_kp_current], dim=-2)
-                    if self.object_in_encoder
-                    else z_kp_current,
+                    (
+                        torch.cat([obj_kpts, z_kp_current], dim=-2)
+                        if self.object_in_encoder
+                        else z_kp_current
+                    ),
                     z_contacts_current,
                     make_t_batched(t, n, y_embed),
                     y_embed,
@@ -1380,9 +1426,11 @@ class KPContactsDiffusionModel(torch.nn.Module):
                 pbar.update()
             # Now for z_0:
             eps_hat_kp, eps_hat_contacts = self.backbone(
-                torch.cat([obj_kpts, z_kp_current], dim=-2)
-                if self.object_in_encoder
-                else z_kp_current,
+                (
+                    torch.cat([obj_kpts, z_kp_current], dim=-2)
+                    if self.object_in_encoder
+                    else z_kp_current
+                ),
                 z_contacts_current,
                 make_t_batched(t, n, y_embed),
                 y_embed,

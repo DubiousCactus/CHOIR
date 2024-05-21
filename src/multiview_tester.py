@@ -691,9 +691,9 @@ class MultiViewTester(MultiViewTrainer):
                         joints_pred,
                     ) = optimize_pose_pca_from_choir(
                         y_hat["choir"],
-                        contact_gaussians=contacts_pred
-                        if self._enable_contacts_tto
-                        else None,
+                        contact_gaussians=(
+                            contacts_pred if self._enable_contacts_tto else None
+                        ),
                         obj_pts=obj_points,
                         obj_normals=obj_normals,
                         bps=self._bps,
@@ -851,9 +851,9 @@ class MultiViewTester(MultiViewTrainer):
                             joints_pred,
                         ) = optimize_pose_pca_from_choir(
                             y_hat["choir"],
-                            contact_gaussians=contacts_pred
-                            if self._enable_contacts_tto
-                            else None,
+                            contact_gaussians=(
+                                contacts_pred if self._enable_contacts_tto else None
+                            ),
                             obj_pts=obj_points,
                             obj_normals=obj_normals,
                             bps=self._bps,
@@ -1363,9 +1363,9 @@ class MultiViewTester(MultiViewTrainer):
                             joints_pred,
                         ) = optimize_pose_pca_from_choir(  # TODO: make a partial
                             y_hat["choir"],
-                            contact_gaussians=contacts_pred
-                            if self._enable_contacts_tto
-                            else None,
+                            contact_gaussians=(
+                                contacts_pred if self._enable_contacts_tto else None
+                            ),
                             obj_pts=obj_points,
                             obj_normals=obj_normals,
                             bps=self._bps,
@@ -1447,9 +1447,11 @@ class MultiViewTester(MultiViewTrainer):
                 grasp_key = (mesh_name, i)
                 if grasp_key not in plots:
                     pl = pv.Plotter(
-                        shape=(3 if self._plot_contacts else 2, n_observations + 1)
-                        if self._model.single_modality != "object"
-                        else (2 if self._plot_contacts else 1, n_observations + 1),
+                        shape=(
+                            (3 if self._plot_contacts else 2, n_observations + 1)
+                            if self._model.single_modality != "object"
+                            else (2 if self._plot_contacts else 1, n_observations + 1)
+                        ),
                         border=False,
                         off_screen=False,
                     )
@@ -1925,10 +1927,14 @@ class MultiViewTester(MultiViewTrainer):
                 print("[!] Testing aborted.")
             samples, labels, mesh_pths = batch  # type: ignore
             if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
-                self._save_batch_predictions(
-                    samples, labels, mesh_pths, viewed_meshes, n_observations, i
-                ) if not dump_videos else self._save_batch_videos(
-                    samples, labels, mesh_pths, viewed_meshes, n_observations, i
+                (
+                    self._save_batch_predictions(
+                        samples, labels, mesh_pths, viewed_meshes, n_observations, i
+                    )
+                    if not dump_videos
+                    else self._save_batch_videos(
+                        samples, labels, mesh_pths, viewed_meshes, n_observations, i
+                    )
                 )
             elif self._data_loader.dataset.name.lower() == "grab":
                 if self._dump_videos:
@@ -2017,10 +2023,12 @@ class MultiViewTester(MultiViewTrainer):
         if self._save_predictions or self._dump_videos:
             with torch.no_grad():
                 self._save_model_predictions(
-                    min(4, self._max_observations)
-                    if self._data_loader.dataset.name.lower()
-                    in ["contactpose", "oakink"]
-                    else 7,  # TODO: WHY??? I must have been exhausted and thought it was a good number
+                    (
+                        min(4, self._max_observations)
+                        if self._data_loader.dataset.name.lower()
+                        in ["contactpose", "oakink"]
+                        else 7
+                    ),  # TODO: WHY??? I must have been exhausted and thought it was a good number
                     self._dump_videos,
                 )
         else:
