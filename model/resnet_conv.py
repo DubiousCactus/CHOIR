@@ -61,7 +61,7 @@ class TemporalResidualBlock(torch.nn.Module):
         kernels: Tuple[int, int] = (3, 0, 3, 1),
         output_padding: int = 0,
         context_channels: Optional[int] = None,
-        x_attn_heads: int = 16,
+        x_attn_heads: int = 8,
         x_attn_head_dim: int = 32,
         pooling: str = "none",
         interpolate: bool = False,
