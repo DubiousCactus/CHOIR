@@ -9,6 +9,7 @@
 TOCH tester.
 """
 
+import pickle as pkl
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -52,11 +53,16 @@ class TOCHTester(MultiViewTester):
     def _visualize(
         self,
         batch: Union[Tuple, List, torch.Tensor],
-        epoch: int,
+        batch_idx: int,
     ) -> None:
         """Visualize the model predictions.
         Args:
             batch: The batch to process.
             epoch: The current epoch.
         """
-        raise NotImplementedError()
+        output = self._inference(batch[0], batch[1])
+        fpath = f"batch_{batch_idx}_prediction.pkl"
+        mesh_path = batch[2]
+        print(f"Saving output to {fpath}...")
+        with open(fpath, "wb") as f:
+            pkl.dump(output, f)
