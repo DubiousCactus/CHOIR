@@ -1240,14 +1240,14 @@ class MultiViewTester(MultiViewTrainer):
                     "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
                     "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
                 }
+                for k, v in mano_params_input.items():
+                    print(f"{k}-> {v.shape}")
 
             # Only use the last view for each batch element (they're all the same anyway for static
             # grasps, but for dynamic grasps we want to predict the LAST frame!).
             mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
 
-            print(mano_params_gt.keys(), mano_params_gt["pose"].shape)
             gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
-            print(gt_pose.shape, gt_shape.shape, gt_rot_6d.shape, gt_trans.shape)
             gt_verts, gt_joints = self._affine_mano(
                 gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
             )
@@ -1257,7 +1257,7 @@ class MultiViewTester(MultiViewTrainer):
                 mano_params_input["beta"],
                 mano_params_input["trans"],
                 rot_6d=mano_params_input["rot_6d"],
-            ) if not self._is_toch else None, None
+            ) if not self._is_toch else (None, None)
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
 
@@ -1615,8 +1615,6 @@ class MultiViewTester(MultiViewTrainer):
                     pl.subplot(2 if self._plot_contacts else 1, n)
                     # i corresponds to batch element
                     # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
-                    print(self._affine_mano.closed_faces.detach().cpu().numpy().shape)
-                    print(sample_verts[i*samples["theta"].shape[1] + n - 1].shape)
                     input_hand_mesh = trimesh.Trimesh(
                         vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
                         .detach()
