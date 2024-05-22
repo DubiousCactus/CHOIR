@@ -1138,7 +1138,12 @@ class MultiViewTester(MultiViewTrainer):
     ):
         plots = {}
         gt_is_plotted = False
-        mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+        if self._is_toch:
+            # This is for the normal dataloader used for TOCH_ContactPose
+            mesh_pths = list(mesh_pths)
+        else:
+            mesh_pths = list(mesh_pths[-1])  # Now we have a list of B entries.
+
         if self._debug_tto:
             batch_obj_path = "batch_obj_data_{batch_idx}.pkl"
             if os.path.exists(batch_obj_path):
@@ -1188,7 +1193,6 @@ class MultiViewTester(MultiViewTrainer):
             )
         for n in range(1, n_observations + 1):
             print(f"For {n} observations")
-            print(samples["choir"].shape, samples["choir"][:, :n].shape)
             input_scalar = samples["scalar"]
             if len(input_scalar.shape) == 2:
                 input_scalar = input_scalar.mean(
@@ -1212,23 +1216,38 @@ class MultiViewTester(MultiViewTrainer):
                 y_hat = self._inference(
                     samples, labels, use_prior=True, max_observations=n
                 )
-            mano_params_gt = {
-                "pose": labels["theta"][:, :n],
-                "beta": labels["beta"][:, :n],
-                "rot_6d": labels["rot"][:, :n],
-                "trans": labels["trans"][:, :n],
-            }
-            gaussian_params_gt = labels["contact_gaussians"][:, -1]
-            mano_params_input = {
-                "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
-                "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
-                "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
-                "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
-            }
+            if self._is_toch:
+                mano_params_gt = {
+                        "pose": labels["theta"][:, :n].float(),
+                        "beta": labels["beta"][:, :n].float(),
+                        "rot_6d": labels["rot"][:, :n].float(),
+                        "trans": labels["trans"][:, :n].float(),
+                }
+                gaussian_params_gt = None
+                mano_params_input = None
+            else:
+                mano_params_gt = {
+                    "pose": labels["theta"][:, :n],
+                    "beta": labels["beta"][:, :n],
+                    "rot_6d": labels["rot"][:, :n],
+                    "trans": labels["trans"][:, :n],
+                }
+                gaussian_params_gt = labels["contact_gaussians"][:, -1]
+            
+                mano_params_input = {
+                    "pose": samples["theta"].view(-1, *samples["theta"].shape[2:]),
+                    "beta": samples["beta"].view(-1, *samples["beta"].shape[2:]),
+                    "rot_6d": samples["rot"].view(-1, *samples["rot"].shape[2:]),
+                    "trans": samples["trans"].view(-1, *samples["trans"].shape[2:]),
+                }
+
             # Only use the last view for each batch element (they're all the same anyway for static
             # grasps, but for dynamic grasps we want to predict the LAST frame!).
             mano_params_gt = {k: v[:, -1] for k, v in mano_params_gt.items()}
+
+            print(mano_params_gt.keys(), mano_params_gt["pose"].shape)
             gt_pose, gt_shape, gt_rot_6d, gt_trans = tuple(mano_params_gt.values())
+            print(gt_pose.shape, gt_shape.shape, gt_rot_6d.shape, gt_trans.shape)
             gt_verts, gt_joints = self._affine_mano(
                 gt_pose, gt_shape, gt_trans, rot_6d=gt_rot_6d
             )
@@ -1238,11 +1257,11 @@ class MultiViewTester(MultiViewTrainer):
                 mano_params_input["beta"],
                 mano_params_input["trans"],
                 rot_6d=mano_params_input["rot_6d"],
-            )
+            ) if not self._is_toch else None, None
             if not self._data_loader.dataset.is_right_hand_only:
                 raise NotImplementedError("Right hand only is implemented for testing.")
 
-            multiple_obs = len(samples["theta"].shape) > 2
+            multiple_obs = not self._is_toch and len(samples["theta"].shape) > 2 
             if self._is_baseline:
                 joints_pred, anchors_pred = (
                     y_hat["hand_keypoints"][:, :21],
@@ -1334,7 +1353,13 @@ class MultiViewTester(MultiViewTrainer):
                     y_hat["anchors"],
                 )
             elif self._is_toch:
-                raise NotImplementedError("TOCH is not implemented for testing.")
+                verts_pred, joints_pred, anchors_pred = (
+                    y_hat["verts"],
+                    y_hat["joints"],
+                    torch.zeros(y_hat["verts"].shape[0], 32, 3).to(
+                        y_hat["verts"].device
+                    ),
+                )
             else:
                 use_smplx = False  # TODO: I don't use it for now
                 contacts_pred, obj_points, obj_normals = (
@@ -1371,7 +1396,7 @@ class MultiViewTester(MultiViewTrainer):
                             bps=self._bps,
                             anchor_indices=self._anchor_indices,
                             scalar=input_scalar,
-                            max_iterations=1000,
+                            max_iterations=10,
                             loss_thresh=1e-7,
                             lr=8e-2,
                             is_rhand=samples["is_rhand"],
@@ -1492,6 +1517,13 @@ class MultiViewTester(MultiViewTrainer):
                                     .cpu()
                                     .numpy()
                                     .tolist(),
+                                    'rot_6d': mano_params_input["rot_6d"][
+                                            i * samples["rot"].shape[1] + n - 1
+                                    ].detach()
+                                    .cpu()
+                                    .numpy()
+                                    .tolist(),
+                                    "object_path": mesh_pths[i]
                                 }
                             )
                         )
@@ -1579,10 +1611,12 @@ class MultiViewTester(MultiViewTrainer):
                         smooth_shading=True,
                     )
                 viewed_meshes[mesh_name] += 1
-                if self._model.single_modality != "object":
+                if self._model.single_modality != "object" and not self._is_toch:
                     pl.subplot(2 if self._plot_contacts else 1, n)
                     # i corresponds to batch element
                     # sample_verts is (B, T, V, 3) but (B*T, V, 3) actually. So to index [i, n-1] we need to do [i * T + n - 1]. n-1 because n is 1-indexed.
+                    print(self._affine_mano.closed_faces.detach().cpu().numpy().shape)
+                    print(sample_verts[i*samples["theta"].shape[1] + n - 1].shape)
                     input_hand_mesh = trimesh.Trimesh(
                         vertices=sample_verts[i * samples["theta"].shape[1] + n - 1]
                         .detach()
@@ -1607,6 +1641,7 @@ class MultiViewTester(MultiViewTrainer):
                         color="red",
                     )
         for (mesh_name, i), plot in plots.items():
+            print("[*] Exporting...")
             plot.set_background("white")  # type: ignore
             plot.link_views()
             plot.export_html(
@@ -1923,8 +1958,12 @@ class MultiViewTester(MultiViewTrainer):
         for i, batch in enumerate(self._data_loader):
             if not self._running:
                 print("[!] Testing aborted.")
+            if "scissors" not in os.path.basename(batch[2][-1][0]):
+            #if "scissors" not in os.path.basename(batch[2][0]):
+                continue
+            print("SCISSORS")
             samples, labels, mesh_pths = batch  # type: ignore
-            if self._data_loader.dataset.name.lower() in ["contactpose", "oakink"]:
+            if self._data_loader.dataset.name.lower() in ["contactpose", "toch_contactpose", "oakink"]:
                 self._save_batch_predictions(
                     samples, labels, mesh_pths, viewed_meshes, n_observations, i
                 ) if not dump_videos else self._save_batch_videos(
@@ -1991,7 +2030,7 @@ class MultiViewTester(MultiViewTrainer):
             del batch_metrics
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
-                self._visualize(batch, color_code)
+                self._visualize(batch, i)
             self._pbar.update()
         self._pbar.close()
         print("=" * 81)
@@ -2019,7 +2058,7 @@ class MultiViewTester(MultiViewTrainer):
                 self._save_model_predictions(
                     min(4, self._max_observations)
                     if self._data_loader.dataset.name.lower()
-                    in ["contactpose", "oakink"]
+                    in ["contactpose", "toch_contactpose", "oakink"]
                     else 7,  # TODO: WHY??? I must have been exhausted and thought it was a good number
                     self._dump_videos,
                 )

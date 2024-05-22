@@ -17,6 +17,8 @@ from model.affine_mano import AffineMANO
 from src.multiview_tester import MultiViewTester
 from utils import to_cuda, to_cuda_
 
+import pickle as pkl
+
 
 class TOCHTester(MultiViewTester):
     def __init__(self, *args, **kwargs):
@@ -46,11 +48,16 @@ class TOCHTester(MultiViewTester):
     def _visualize(
         self,
         batch: Union[Tuple, List, torch.Tensor],
-        epoch: int,
+        batch_idx: int,
     ) -> None:
         """Visualize the model predictions.
         Args:
             batch: The batch to process.
             epoch: The current epoch.
         """
-        raise NotImplementedError()
+        output = self._inference(batch[0], batch[1])
+        fpath = f"batch_{batch_idx}_prediction.pkl"
+        mesh_path = batch[2]
+        print(f"Saving output to {fpath}...")
+        with open(fpath, "wb") as f:
+            pkl.dump(output, f)
