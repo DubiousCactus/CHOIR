@@ -201,19 +201,24 @@ def run_simulation(
             time1 = time.time()
         # convex hull decomposition
         save_obj(obj_tmp_fname, obj_verts, obj_faces)
+        if not os.path.isfile(convhull_obj_tmp_fname):
+            shutil.copy(obj_tmp_fname, convhull_obj_tmp_fname)
 
-        if not vhacd(
-            obj_tmp_fname,
-            vhacd_exe,
-            output_path=convhull_obj_tmp_fname,
-            resolution=vhacd_resolution,
-        ):
-            raise RuntimeError(
-                "Cannot compute convex hull "
-                "decomposition for {}".format(obj_tmp_fname)
+            print(
+                f"Running vhacd on {obj_tmp_fname}, saving to {convhull_obj_tmp_fname}"
             )
-        else:
-            print(f"Succeeded vhacd decomp of {obj_tmp_fname}")
+            if not vhacd(
+                obj_tmp_fname,
+                vhacd_exe,
+                convhull_obj_tmp_fname,
+                resolution=vhacd_resolution,
+            ):
+                raise RuntimeError(
+                    "Cannot compute convex hull "
+                    "decomposition for {}".format(obj_tmp_fname)
+                )
+            else:
+                print(f"Succeeded vhacd decomp of {obj_tmp_fname}")
 
         obj_collision_id = p.createCollisionShape(
             p.GEOM_MESH, fileName=convhull_obj_tmp_fname, physicsClientId=conn_id

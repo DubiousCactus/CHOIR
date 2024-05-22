@@ -322,7 +322,7 @@ class MultiViewTester(MultiViewTrainer):
                     ), "For GraspTTA, rotations must be provided to compute sim. displacement."
                 batch_sim_displacement = mp_compute_sim_displacement(
                     batch_obj_data["mesh"],
-                    batch_obj_data["mesh_name"] if rotations is None else None,
+                    batch_obj_data["mesh_name"] if (rotations is None) else None,
                     verts_pred,
                     mano_faces,
                     rotations,

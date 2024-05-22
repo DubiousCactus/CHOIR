@@ -75,11 +75,10 @@ def compute_iv_sample(
 
 
 def compute_sim_displacement_sample(
-    obj_mesh_w_hand_verts: Tuple[trimesh.Trimesh, torch.Tensor, int],
-    obj_name: str,
+    obj_mesh_w_hand_verts: Tuple[trimesh.Trimesh, torch.Tensor, str, int],
     hand_faces: torch.Tensor,
 ) -> torch.Tensor:
-    obj_mesh, hand_verts, i = obj_mesh_w_hand_verts
+    obj_mesh, hand_verts, obj_name, i = obj_mesh_w_hand_verts
     vhacd_exe = os.path.join(abspath(os.getcwd()), "../v-hacd/bin")
     assert os.path.exists(vhacd_exe), f"V-HACD executable not found at {vhacd_exe}"
     try:
@@ -199,6 +198,7 @@ def mp_compute_sim_displacement(
     assert (
         len(obj_data) == hand_verts.shape[0]
     ), "Batch sizes between object meshes and hand vertices don't match!"
+    assert len(batch_obj_names) == len(obj_data), "Batch sizes don't match!"
     with multiprocessing.Pool(min(os.cpu_count() - 2, len(obj_data))) as pool:
         results = tqdm(
             pool.imap(
@@ -208,8 +208,8 @@ def mp_compute_sim_displacement(
                 ),
                 zip(
                     obj_data,
-                    batch_obj_names,
                     [hand_verts[i].detach().cpu() for i in range(len(obj_data))],
+                    batch_obj_names,
                     list(range(len(obj_data))),
                 ),
             ),
