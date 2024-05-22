@@ -76,6 +76,7 @@ def compute_iv_sample(
 
 def compute_sim_displacement_sample(
     obj_mesh_w_hand_verts: Tuple[trimesh.Trimesh, torch.Tensor, int],
+    obj_name: str,
     hand_faces: torch.Tensor,
 ) -> torch.Tensor:
     obj_mesh, hand_verts, i = obj_mesh_w_hand_verts
@@ -89,6 +90,7 @@ def compute_sim_displacement_sample(
                     hand_faces,
                     obj_mesh[0],  # Vertices
                     obj_mesh[1],  # Faces
+                    obj_name=obj_name,
                     vhacd_exe=vhacd_exe,
                     sample_idx=i,
                     object_friction=1.2,
@@ -161,6 +163,7 @@ def mp_compute_solid_intersection_volume(
 
 def mp_compute_sim_displacement(
     batch_obj_meshes: List,
+    batch_obj_names: List[str],
     hand_verts: torch.Tensor,
     hand_faces: torch.Tensor,
     rotations: torch.Tensor,
@@ -205,6 +208,7 @@ def mp_compute_sim_displacement(
                 ),
                 zip(
                     obj_data,
+                    batch_obj_names,
                     [hand_verts[i].detach().cpu() for i in range(len(obj_data))],
                     list(range(len(obj_data))),
                 ),
@@ -253,8 +257,10 @@ def process_object(
     t_obj_mesh = trimesh.Trimesh(
         vertices=obj_mesh.vertices,
         faces=obj_mesh.triangles,
-        process=gt_obj_contacts is None,  # Don't remove my precious vertices you filthy animal!!!
-        validate=gt_obj_contacts is None, # Don't remove my precious vertices you filthy animal!!!
+        process=gt_obj_contacts
+        is None,  # Don't remove my precious vertices you filthy animal!!!
+        validate=gt_obj_contacts
+        is None,  # Don't remove my precious vertices you filthy animal!!!
     ).copy()
     if gt_obj_contacts is not None:
         assert (

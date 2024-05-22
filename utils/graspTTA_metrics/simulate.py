@@ -107,6 +107,7 @@ def run_simulation(
     hand_faces,
     obj_verts,
     obj_faces,
+    obj_name=None,
     conn_id=None,
     vhacd_exe=None,
     sample_idx=None,
@@ -178,6 +179,11 @@ def run_simulation(
     )
 
     obj_tmp_fname = tempfile.mktemp(suffix=".obj", dir=base_tmp_dir)
+    convhull_obj_tmp_fname = (
+        os.path.join(base_tmp_dir, f"{obj_name}_convhull.obj")
+        if obj_name is not None
+        else obj_tmp_fname
+    )
     os.makedirs(base_tmp_dir, exist_ok=True)
     # Save object obj
     if save_obj_path is not None:
@@ -196,7 +202,12 @@ def run_simulation(
         # convex hull decomposition
         save_obj(obj_tmp_fname, obj_verts, obj_faces)
 
-        if not vhacd(obj_tmp_fname, vhacd_exe, resolution=vhacd_resolution):
+        if not vhacd(
+            obj_tmp_fname,
+            vhacd_exe,
+            output_path=convhull_obj_tmp_fname,
+            resolution=vhacd_resolution,
+        ):
             raise RuntimeError(
                 "Cannot compute convex hull "
                 "decomposition for {}".format(obj_tmp_fname)
@@ -205,7 +216,7 @@ def run_simulation(
             print(f"Succeeded vhacd decomp of {obj_tmp_fname}")
 
         obj_collision_id = p.createCollisionShape(
-            p.GEOM_MESH, fileName=obj_tmp_fname, physicsClientId=conn_id
+            p.GEOM_MESH, fileName=convhull_obj_tmp_fname, physicsClientId=conn_id
         )
         if verbose:
             time2 = time.time()
@@ -295,6 +306,7 @@ def run_simulation(
 def vhacd(
     filename,
     vhacd_path,
+    output_path,
     resolution=1000,
     concavity=0.001,
     planeDownsampling=4,
@@ -326,7 +338,7 @@ def vhacd(
             mode,
             maxNumVerticesPerCH,
             minVolumePerCH,
-            filename,
+            output_path,
         )
     )
     print(cmd_line)
