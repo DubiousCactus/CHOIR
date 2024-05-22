@@ -1924,10 +1924,14 @@ class MultiViewTester(MultiViewTrainer):
             if not self._running:
                 print("[!] Testing aborted.")
                 break
-            batch_metrics = self._test_iteration(batch, n_observations, i)
-            for k, v in batch_metrics.items():
-                metrics[k].update(v)
-            del batch_metrics
+            n_repeats = (
+                10 if not self._is_grasptta and self._single_modality == "object" else 1
+            )
+            for _ in range(n_repeats):
+                batch_metrics = self._test_iteration(batch, n_observations, i)
+                for k, v in batch_metrics.items():
+                    metrics[k].update(v)
+                del batch_metrics
             " ==================== Visualization ==================== "
             if visualize_every > 0 and (i + 1) % visualize_every == 0:
                 self._visualize(batch, color_code)

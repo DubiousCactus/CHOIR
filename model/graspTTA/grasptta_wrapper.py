@@ -98,11 +98,6 @@ class GraspTTA(torch.nn.Module):
         # optimizer = torch.optim.SGD([recon_param], lr=0.00000625, momentum=0.8)
         optimizer = torch.optim.Adam([recon_param], lr=1e-3)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)
-        # TODO: The original implementation applies 1e6 random rotations to the object to obtain
-        # variable grasps. Here we'll just go with canonical object pose, as our method is doing.
-        # If we need to sample more grasps, we can just call this function multiple times. But in
-        # effect, the GraspCVAE samples z from a random normal, so why would random rotation be
-        # needed?
 
         pbar = tqdm(range(self.tto_steps), desc="TTO")
         # anim = ScenePicAnim()
