@@ -10,6 +10,7 @@ from tqdm import tqdm
 from dataset.contactpose import ContactPoseDataset
 from utils.toch_utils import random_rotate_np
 
+import math
 
 class GRAB_Dataset(torch.utils.data.Dataset):
     def __init__(
@@ -284,6 +285,7 @@ class ContactPose_Single_Frame(torch.utils.data.Dataset):
 
 class ContactPoseDataset_Eval(torch.utils.data.Dataset):
     def __init__(self, processed_root, **kwargs):
+        self.n_noisy_variations = 4
         self.samples, self.gt, self.object_contact_maps = [], [], []
         files_clean = sorted(glob.glob(os.path.join(processed_root, "test", "corr_*.npy")))
         for f in tqdm(files_clean):
@@ -320,7 +322,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
 
         assert len(self.samples) > 0, "No data found!"
         assert len(self.samples) == len(self.gt), "Mismatch in data and ground truth!"
-        assert len(self.object_contact_maps) == len(
+        assert len(self.object_contact_maps) * self.n_noisy_variations == len(
             self.samples
         ), "Mismatch in data and object paths!"
 
@@ -388,7 +390,7 @@ class ContactPoseDataset_Eval(torch.utils.data.Dataset):
     def __getitem__(self, index):
         noisy_sample_feat, gt_sample_feat = self.samples[index]
         label = self.gt[index]
-        mesh_pth = self.object_contact_maps[index]
+        mesh_pth = self.object_contact_maps[math.floor(index//self.n_noisy_variations)]
         num_points = noisy_sample_feat[0]["f4"].shape[0] // 3
         samp_ind = np.random.choice(list(range(num_points)), 2000)
 
