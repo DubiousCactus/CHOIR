@@ -1,3 +1,458 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-5KCXJL5L');</script>
+<!-- End Google Tag Manager -->
+  <meta charset="utf-8">
+  <meta name="description"
+        content="A Versatile and Differentiable Hand-Object Interaction Representation">
+  <meta name="keywords" content="Nerfies, D-NeRF, NeRF">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A Versatile and Differentiable Hand-Object Interaction Representation</title>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="./static/images/favicon.ico">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+</head>
 <body>
-<h1>Under construction.</h1>
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-5KCXJL5L"
+height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+<nav class="navbar" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+  <div class="navbar-menu">
+    <div class="navbar-start" style="flex-grow: 1; justify-content: center;">
+      <a class="navbar-item" href="https://theomorales.com">
+      <span class="icon">
+          <i class="fas fa-home"></i>
+      </span>
+      </a>
+    </div>
+  </div>
+</nav>
+
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">A Versatile and Differentiable Hand-Object Interaction Representation</h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">
+              <a href="https://theomorales.com">Théo Morales</a><sup>1</sup>,</span>
+            <span class="author-block">
+              <a href="https://otaheri.github.io/">Omid Taheri</a><sup>2</sup>,</span>
+            <span class="author-block">
+              <a href="https://www.maynoothuniversity.ie/faculty-science-engineering/our-people/gerard-lacey">Gerard Lacey</a><sup>3</sup>
+            </span>
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><sup>1</sup>Trinity College Dublin,</span>
+            <span class="author-block"><sup>2</sup>Max Plank Institute for Intelligent
+                  Systems,</span>
+            <span class="author-block"><sup>3</sup>Maynooth University</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <!-- PDF Link. -->
+              <span class="link-block">
+                <a href="https://arxiv.org/pdf/2409.16855"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fas fa-file-pdf"></i>
+                  </span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a href="https://arxiv.org/abs/2409.16855"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                  </span>
+                  <span>arXiv</span>
+                </a>
+              </span>
+              <!-- Video Link. -->
+              <!-- <span class="link-block"> -->
+              <!--   <a href="https://www.youtube.com/watch?v=MrKrnHhk8IA" -->
+              <!--      class="external-link button is-normal is-rounded is-dark"> -->
+              <!--     <span class="icon"> -->
+              <!--         <i class="fab fa-youtube"></i> -->
+              <!--     </span> -->
+              <!--     <span>Video</span> -->
+              <!--   </a> -->
+              <!-- </span> -->
+              <!-- Code Link. -->
+              <span class="link-block">
+                <a href="https://github.com/DubiousCactus/CHOIR"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fab fa-github"></i>
+                  </span>
+                  <span>Code</span>
+                  </a>
+              </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero teaser">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <video id="teaser" autoplay muted loop playsinline height="100%">
+        <source src="./static/videos/CHOIR_teaser.mp4"
+                type="video/mp4">
+      </video>
+      <h2 class="subtitle has-text-centered">
+        <span class="dnerf">CHOIR</span> jointly represents the hand and object
+            geometries via unsigned distances from fixed basis points, and hand-centric
+            local contacts via 3D Gaussian distributions. free-viewpoint portraits.
+      </h2>
+    </div>
+  </div>
+</section>
+
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div id="results-carousel" class="carousel results-carousel">
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/scissors_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/mug_4.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/knife_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/apple_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/banana_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/binoculars_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/bowl_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/camera_1.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/cell_phone_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster=""  autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/cup_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/eyeglasses_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <!-- Abstract. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            Synthesizing accurate hands-object interactions (HOI) is critical for
+            applications in Computer Vision, Augmented Reality (AR), and Mixed
+            Reality (MR). Despite recent advances, the accuracy of reconstructed or
+            generated HOI leaves room for refinement. Some techniques have improved
+            the accuracy of dense correspondences by shifting focus from generating
+            explicit contacts to using rich HOI fields. Still, they lack full
+            differentiability or continuity and are tailored to specific tasks. In
+            contrast, we present a Coarse Hand-Object Interaction Representation
+            (<span class="dnerf">CHOIR</span>), a novel, versatile and fully differentiable field for HOI
+            modelling.
+          </p>
+          <p>
+            <span class="dnerf">CHOIR</span> leverages discrete unsigned distances for
+            continuous shape and pose encoding, alongside multivariate Gaussian
+            distributions to represent dense contact maps with few parameters. To
+            demonstrate the versatility of <span class="dnerf">CHOIR</span> we design
+            JointDiffusion, a diffusion model to learn a grasp distribution
+            conditioned on noisy hand-object interactions or only object geometries,
+            for both refinement and synthesis applications.
+          </p>
+          <p>
+          We demonstrate JointDiffusion’s improvements over the SOTA in both
+          applications: it increases the contact F1 score by 5% for refinement and
+          decreases the sim. displacement by 46% for synthesis. Our experiments
+          show that JointDiffusion with <span class="dnerf">CHOIR</span> yield superior
+          contact accuracy and physical realism compared to SOTA methods designed
+          for specific tasks.
+          </p>
+        </div>
+      </div>
+    </div>
+    <!--/ Abstract. -->
+
+  <div class="columns is-centered has-text-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Method overview</h2>
+        <div class="content has-text-justified">
+          <p>
+              We introduce JointDiffusion, a diffusion model with a contact prediction
+                branch and a shape & pose prediction branch. JointDiffusion learns the
+                data distribution of CHOIR and can be conditioned on an object for grasp
+                synthesis, or a noisy hand-object pair for grasp denoising.
+          </p>
+        </div>
+        <div class="content has-text-centered">
+         <img src="./static/images/joint_diff_v3.png"
+                 class="interpolation-image"
+                 alt="Method diagram."/>
+            <p class="is-bold">Architecture of JointDiffusion. The 3D U-Net predicts the
+                noise sample ϵ_d for the hand distance field d_H . The contact prediction
+                branch predicts the noise sample ϵ_c for the contact Gaussian parameters
+                c_H from the features of the U-Net’s bottleneck. This joint learning
+                encourages the U-Net to extract features relevant to both tasks,
+                enhancing the accuracy of the learned CHOIR distribution.</p>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Paper video. -->
+    <!-- <div class="columns is-centered has-text-centered"> -->
+    <!--   <div class="column is-four-fifths"> -->
+    <!--     <h2 class="title is-3">Video</h2> -->
+    <!--     <div class="publication-video"> -->
+    <!--       <iframe src="https://www.youtube.com/embed/MrKrnHhk8IA?rel=0&amp;showinfo=0" -->
+    <!--               frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe> -->
+    <!--     </div> -->
+    <!--   </div> -->
+    <!-- </div> -->
+    <!--/ Paper video. -->
+  </div>
+</section>
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Static grasp denoising</h2>
+
+        <div class="content has-text-justified">
+          <p>
+              We evaluate our proposed method (JointDiffusion + CHOIR + TTO) on the
+                Perturbed ContactPose benchmark and compare against <a href="https://www.pgrady.net/contactopt/">ContactOpt</a> and <a href="https://virtualhumans.mpi-inf.mpg.de/toch/">TOCH</a>.
+          </p>
+        </div>
+        <div class="content has-text-centered">
+          <video id="replay-video" autoplay controls muted loop playsinline height width="100%">
+            <source src="./static/videos/denoising.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Static grasp synthesis</h2>
+        <div class="content has-text-justified">
+          <p>
+              We also evaluate our method on grasp synthesis with the ContactPose
+                dataset.
+          </p>
+        </div>
+    
+        
+      </div>
+    </div>
+<div class="hero-body">
+      <div class="container">
+      <div id="results-carousel" class="carousel results-carousel">
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/scissors_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/mug_4.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/knife_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/apple_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/banana_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/binoculars_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/bowl_0.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/camera_1.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/cell_phone_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster=""  autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/cup_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <div class="item">
+          <video poster="" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/eyeglasses_2.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>@article{morales2024CHOIR,
+    author    = {Théo Morales and Omid Taheri and Gerard Lacey},
+    title     = {A Versatile and Differentiable Hand-Object Interaction Representation}, 
+    journal   = {WACV},
+    year      = {2025},
+}</code></pre>
+  </div>
+</section>
+
+
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content">
+          <p>
+            This website is built upon the <a href="https://nerfies.github.io/">Nerfies</a> website 
+            and licensed under a <a rel="license"
+                  href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons
+                  Attribution-ShareAlike 4.0 International License</a>.
+          </p>
+          <p>
+            This means you are free to borrow the <a
+              href="https://github.com/nerfies/nerfies.github.io">source code</a> of this website,
+            we just ask that you link back to this page in the footer.
+            Please remember to remove the analytics code included in the header of the website which
+            you do not want on your website.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
 </body>
+</html>
