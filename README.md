@@ -2,7 +2,7 @@
 <p align="center">
   <h1 align="center">CHOIR: a Versatile and Differentiable Hand-Object Interaction Representation</h1>
   <p align="center">
-    <a href="https://theomorales.com"><strong>Theo Morales</strong></a>
+    <a href="https://theomorales.com"><strong>Théo Morales</strong></a>
     ·
     <a href="https://otaheri.github.io/"><strong>Omid Taheri</strong></a>
     ·
