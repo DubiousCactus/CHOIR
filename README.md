@@ -15,7 +15,7 @@
     <a href='https://arxiv.org/abs/2409.16855'>
       <img src='https://img.shields.io/badge/Paper-WACV-green?style=flat&logo=arxiv&logoWidth=20&logoColor=white&labelColor=94DD15&color=66cc00' alt='WACV'>
     </a>
-    <a href='https://theomorales.com/CHOIR'>
+    <a href='https://dubiouscactus.github.io/CHOIR/'>
       <img src='https://img.shields.io/badge/Project-Page-blue?style=flat&labelColor=f47983&color=ce4630' alt='Project page'>
     </a>
   </p>
