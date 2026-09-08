@@ -280,6 +280,7 @@ dependencies = [
     { name = "ema-pytorch" },
     { name = "hydra-zen" },
     { name = "imageio", extra = ["ffmpeg"] },
+    { name = "manopth" },
     { name = "manotorch" },
     { name = "metabatch" },
     { name = "numpy" },
@@ -323,6 +324,7 @@ requires-dist = [
     { name = "ema-pytorch" },
     { name = "hydra-zen", specifier = ">=0.13" },
     { name = "imageio", extras = ["ffmpeg"] },
+    { name = "manopth", git = "https://github.com/hassony2/manopth" },
     { name = "manotorch", directory = "vendor/manotorch" },
     { name = "metabatch" },
     { name = "numpy", specifier = "==1.26.4" },
@@ -983,6 +985,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/f1/45/7fa8f56b17dc0f0a4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/25/f4/ead6e0e37209b07c9baa3e984ccdb0348ca370b77cea3aaea8ddbb097e00/lightning_utilities-0.15.3-py3-none-any.whl", hash = "sha256:6c55f1bee70084a1cbeaa41ada96e4b3a0fea5909e844dd335bd80f5a73c5f91", size = 31906, upload-time = "2026-02-22T14:48:52.488Z" },
 ]
+
+[[package]]
+name = "manopth"
+version = "0.0.1"
+source = { git = "https://github.com/hassony2/manopth#4f1dcad1201ff1bfca6e065a85f0e3456e1aa32b" }
 
 [[package]]
 name = "manotorch"

@@ -18,6 +18,7 @@ dependencies = [
     "chumpy @ git+https://github.com/mikigom/chumpy",
     "chamfer_distance @ git+https://github.com/otaheri/chamfer_distance; sys_platform != 'darwin'",
     "bps-torch @ git+https://github.com/otaheri/bps_torch",
+    "manopth @ git+https://github.com/hassony2/manopth",
     "metabatch",
     "scenepic",
     "opencv-python",
