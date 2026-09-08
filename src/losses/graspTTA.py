@@ -12,9 +12,15 @@ GraspTTA losses.
 
 import importlib
 
-import chamfer_distance as chd
+try:
+    import chamfer_distance as chd
+except ImportError:
+    # The otaheri chamfer_distance package builds CUDA kernels only and is therefore unavailable
+    # on some platforms (e.g. macOS). point2point_signed falls back to pytorch3d.knn_points.
+    chd = None
 import numpy as np
 import torch
+from pytorch3d.ops import knn_points
 from pytorch3d.loss import chamfer_distance
 from pytorch3d.structures import Meshes
 
@@ -205,9 +211,13 @@ class GraspCVAELoss(torch.nn.Module):
         if y.shape[0] != N or y.shape[2] != D:
             raise ValueError("y does not have the correct shape.")
 
-        ch_dist = chd.ChamferDistance()
-
-        x_near, y_near, xidx_near, yidx_near = ch_dist(x, y)
+        if chd is not None:
+            _, _, xidx_near, yidx_near = chd.ChamferDistance()(x, y)
+        else:
+            # otaheri's CUDA-only chamfer_distance is unavailable: pytorch3d exact nearest
+            # neighbors produce the same indices.
+            xidx_near = knn_points(x, y, K=1).idx.squeeze(-1)
+            yidx_near = knn_points(y, x, K=1).idx.squeeze(-1)
 
         xidx_near_expanded = xidx_near.view(N, P1, 1).expand(N, P1, D).to(torch.long)
         x_near = y.gather(1, xidx_near_expanded)

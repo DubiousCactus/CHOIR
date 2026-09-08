@@ -8,11 +8,16 @@ from subprocess import Popen
 
 import numpy as np
 
-with redirect_stderr(None), redirect_stdout(None):
-    # The PyBullet import annoyingly tells us the build time and for some reason the module is
-    # imported once per worker and workers are being constantly recreated (I should set
-    # persistent_workers to True, but it should already be the case...).
-    import pybullet as p
+try:
+    with redirect_stderr(None), redirect_stdout(None):
+        # The PyBullet import annoyingly tells us the build time and for some reason the module is
+        # imported once per worker and workers are being constantly recreated (I should set
+        # persistent_workers to True, but it should already be the case...).
+        import pybullet as p
+except ImportError:
+    # PyBullet is only needed by run_simulation() and does not build on every platform (e.g. it
+    # has no CUDA-free wheels for macOS). The rest of the metrics must remain importable.
+    p = None
 
 import skvideo.io as skvio
 
@@ -127,6 +132,10 @@ def run_simulation(
     save_simul_folder=None,
     use_gui=False,
 ):
+    if p is None:
+        raise RuntimeError(
+            "pybullet is not installed: simulation-based metrics are unavailable on this platform."
+        )
     if conn_id is None:
         if use_gui:
             conn_id = p.connect(p.GUI)

@@ -18,3 +18,4 @@ tmp/
 *.ckpt
 .DS_Store
 package-lock.json
+.venv/

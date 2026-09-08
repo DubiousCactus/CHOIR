@@ -24,7 +24,7 @@ dependencies = [
     "ema-pytorch",
     "pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable",
     "imageio[ffmpeg]",
-    "pybullet",
+    "pybullet; sys_platform != 'darwin'",
     "scikit-video",
     "trame",
     "trame-vtk",
