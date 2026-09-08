@@ -1,306 +1,133 @@
 <div align="center">
 
-# Bells & Whistles: a PyTorch template
+# CHOIR: A Versatile and Differentiable Hand-Object Interaction Representation
 
-[![python](https://img.shields.io/badge/-Python_3.7_%7C_3.8_%7C_3.9_%7C_3.10-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![pytorch](https://img.shields.io/badge/PyTorch_1.10+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
-[![hydra-zen](https://img.shields.io/badge/Config-Hydra--Zen-9cf)](https://mit-ll-responsible-ai.github.io/hydra-zen/index.html)
-[![black](https://img.shields.io/badge/Code%20Style-Black-black.svg?labelColor=gray)](https://black.readthedocs.io/en/stable/)
-[![pre-commit](https://img.shields.io/badge/Pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-
-A batteries-included PyTorch template that stays out of your way with a terminal display!
-
-Click on [<kbd>Use this
-template</kbd>](https://github.com/DubiousCactus/bells-and-whistles/generate) to initialize a
-new repository.
-
-_Suggestions are always welcome!_
+[![arXiv](https://img.shields.io/badge/arXiv-2409.16855-b31b1b.svg)](https://arxiv.org/abs/2409.16855)
+[![python](https://img.shields.io/badge/-Python_3.11-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![pytorch](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge.svg)](https://docs.astral.sh/uv/)
 
 </div>
 
-<br>
+**CHOIR** (Coarse Hand-Object Interaction Representation) encodes hand-object interactions as
+unsigned distances over a regular grid (BPS) plus 32 probabilistic contact Gaussians.
+**JointDiffusion** is a conditional DDPM (3D U-Net + contact branch) that both *refines* noisy
+grasps (denoising) and *synthesizes* grasps (generation), evaluated against ContactOpt, TOCH
+and GraspTTA.
 
+> T. Morales, O. Taheri, G. Lacey.
+> *A Versatile and Differentiable Hand-Object Interaction Representation.* arXiv:2409.16855.
 
+## Setup
 
-# Why use this template?
+Requires Python 3.11 and [uv](https://docs.astral.sh/uv/getting-started/).
 
-<div align="center">
-<img src="https://www.scss.tcd.ie/~moralest/nfpt-display.gif">
-<i>Eyecandy display for your training curves in the terminal!</i>
-</div>
-<br>
-
-It is intented to quickly bootstrap a PyTorch project with all the **necessary**
-boilerplate that one typically writes in every project. We give you all the *bells and whistles* so
-you can focus on what matters.
-
-<h3><i>Key ideas:</i></h3>
-
-- Keep it DRY (Don't Repeat Yourself) and repeatable with
-	[Hydra-Zen](https://mit-ll-responsible-ai.github.io/hydra-zen/index.html).
-- Raw PyTorch for maximum flexibility and transparency.
-- Minimal abstraction and opacity but focus on extensibility.
-- The sweet spot between a template and a framework.
-    - The bare minimum boilerplate is taken care of but not hidden away.
-    - You are free to do whatever you want, everything is transparent.
-	- Provides base classes for datasets, trainer, etc. to make it easier to get started and provide
-      good structure for DRY code and easy debugging.
-    - Provides a set of defaults for the most common use cases.
-    - Provides a set of tools to make it easier to debug and visualize.
-	- Provides all the [bells and whistles](https://github.com/DubiousCactus/bells-and-whistles) to
-		make your programming experience *fun*!
-
-### Why this one?
-
-While the [lightning-hydra-template](https://github.com/ashleve/lightning-hydra-template) is clean,
-mature, highly functional and comes with all the features you could ever want, I find that because
-of all the abstraction it actually becomes a hindrance when writing research code. Unless you know
-the template on the tip of your fingers, it's too much hassle to look for the right file, the right
-method where you have to put your code. And PyTorch Lightning? Great for building stuff, not so
-much for researching new training pipelines or working with custom data loading.
-
-<div align="center">
-<h4>
-This template writes the necessary boilerplate for you, while staying out of your way.
-</h4>
-</div>
-
-
-## Features
-
-- **DRY configuration with [Hydra-Zen](https://mit-ll-responsible-ai.github.io/hydra-zen/index.html)**: painlessly configure experiments and swap whole groups with
-    the CLI, simpler and DRYier than Hydra!
-- **Run isolation and experiment reproducibility**: Hydra isolates each of your run and saves a
-    YAML file of your config so you can always backtrack in your ML experiments.
-- **Gorgeous terminal UI**: no more waiting for the slow Weights&Biases UI to load and sync,
-    the curves are in your terminal (thanks to [Plotext](https://github.com/piccolomo/plotext/))! An informative and good-looking progress bar lets you know
-    just what you need to know.
-- **[Weights & Biases](https://wandb.ai) integration**: of course, take advantage of WANDB when your code is ready to
-    be launched into orbit.
-- **Best-n model saver**: automatically deletes obsolete models from earlier epochs and only keeps
- the N best validation models on disk!
-- **Automatic loading of the best model from a run name**: no need to look for that good model
-    file, just pass the run name that was generated for you. They have cool and colorful names :)
-- **SIGINT handler**: waits for the end of the epoch and validation to terminate the programm if
-     CTRL+C is pressed.
-
-
-## Structure
-
-```
-my-pytorch-project/
-    conf/
-        experiment.py <-- experiment-level configurations
-        project.py <-- project-level constants
-    data/
-        . <-- your dataset goes here
-    dataset/
-        base/
-            __init__.py <-- base dataset implementation
-            image.py <- base image dataset implementation
-        . <-- your dataset implementation goes here
-    model/
-        . <-- your model implementation goes here
-    scripts/
-        resize_image_dataset.py
-        . <-- your utility scripts go here
-    src/
-        base_trainer.py <-- the core of the training logic
-    utils/
-        __init__.py <-- low-level utilities
-        helpers.py <-- high-level utilities
-        training.py <-- training related utilities
-    vendor/
-        . <-- third-party code goes here
-    train.py <-- training entry point
-    test.py <-- testing entry point
+```bash
+git clone --recursive git@github.com:DubiousCactus/CHOIR.git
+cd CHOIR
+uv sync                       # creates .venv and installs everything, incl. pytorch3d
 ```
 
-## Setting up
+Download the pretrained checkpoints from the
+[releases page](https://github.com/DubiousCactus/CHOIR/releases/tag/weights-v1) into the repo root:
 
-1. Set up a virtual environment and activate it.
-2. [Install PyTorch](https://pytorch.org/get-started/) for your system.
-3. Run `pip install -r requirements.txt`.
-4. Run `pre-commit install` to setup the pre-commit hooks. These will run [Black](), [Isort](),
-[Autoflake]() and others to clean up your code.
+```bash
+gh release download weights-v1     # multimodal.ckpt, graspTTA_cvae.ckpt, graspTTA_contactnet.ckpt
+```
+
+**MANO assets (license-gated).** The datasets and the evaluation rely on MANO, which requires a
+free registration at [http://mano.is.tue.mpg.de](http://mano.is.tue.mpg.de). Place the model files
+in `vendor/manotorch/assets/mano/models/` (`MANO_RIGHT.pkl`, and `MANO_LEFT.pkl` for OakInk):
+
+```
+vendor/manotorch/assets/mano/models/MANO_RIGHT.pkl
+vendor/manotorch/assets/mano/models/MANO_LEFT.pkl
+```
+
+**Data.** Everything under `data/*_preprocessed/` is precomputed (BPS/CHOIR fields); the code
+loads those caches directly and never needs the raw datasets for training or evaluation *unless
+a cache is missing*. Datasets used by the experiments:
+
+| Dataset | Location | Cached? |
+| --- | --- | --- |
+| ContactPose (perturbed) | `data/ContactPose_preprocessed/` | yes |
+| OakInk | `data/OakInk_preprocessed/` (tiny subset) | yes |
+| GRAB | raw GRAB release at `/Users/<you>/Code/GRAB` (set via `dataset.root_path`) | no |
+
+Evaluating the object-mesh metrics (intersection volume, contact F-score, simulation
+displacement) additionally needs the raw ContactPose object meshes; pose metrics (MPJPE,
+R-MPJPE, MPVPE) do not.
+
+**GRAB** additionally needs the SMPL-X MANO models: set `SMPLX_MODEL_PATH`
+(`conf/project.py`, or the `SMPLX_MODEL_PATH` environment variable).
 
 ## Usage
 
-A typical way of using this template is to follow these steps:
+Run configurations are managed with [hydra-zen](https://mit-ll-responsible-ai.github.io/hydra-zen/)
+stores; see `conf/experiment.py` for every experiment and its hyperparameters. Each run creates an
+isolated `runs/<name>/` directory with the resolved config, checkpoints and logs.
 
-1. Implement your dataset loader (look at `datqaset/example.py`)
-2. Configure it (look at the `dataset` section in `conf/experiment.py`)
-3. Implement your model (look at `model/example.py`)
-4. Configure it (look at the `model` section in `conf/experiment.py`)
-5. Configure your entire experiment(s) in `conf/experiment.py`.
-6. Implement `_train_val_iteration()` in `src/base_trainer.py`.
+**Train** (e.g. the full JointDiffusion model on Perturbed ContactPose):
 
-To run an experiment, use `./train.py +experiment=my_experiment`.
-
-You may experiment on the fly with `./train.py dataset=my_dataset data_loader.batch_size=32 model.latent_dim=128 training.epochs=30 training.viz_every=5`.
-
-To evaluate a model, run `test.py testing.load_from_run=<run_name_from_previous_training>`.
-
-
-You can always look at what's available in your config with `./train.py --help` or `./test.py
---help`!
-
-
-### Configuring your experiments & project
-
-This template comes with an example dataset and model that are pre-configured in
-`conf/experiment.py` using
-[hydra-zen](https://mit-ll-responsible-ai.github.io/hydra-zen/index.html). To learn how to adapt it
-to your project, you may refer to their
-[documentation](https://mit-ll-responsible-ai.github.io/hydra-zen/api_reference.html) and
-[tutorials](https://mit-ll-responsible-ai.github.io/hydra-zen/tutorials.html).
-
-In addition, you can configure the behaviour of the training logic as well as other settings by
-setting project-level constants in `conf/project.py`, such as the name of your project (i.e. for
-[wandb.ai](https://wandb.ai)).
-
-<details><summary>You can override most project-level constants at runtime using environment variables!</summary>
-
-```
-$ PLOT_ENABLED=false REPRODUCIBLE=0 ./train.py +experiment=my_experiment
+```bash
+uv run train.py +experiment=coddpm_3d_multiview_contactopt_multimodal
 ```
 
-</p>
-</details>
+Resume/initialize from a checkpoint with `run.load_from=<run_name or .ckpt path>`. On a machine
+without a GPU, everything runs on CPU/MPS out of the box; on MPS add
+`PYTORCH_ENABLE_MPS_FALLBACK=1` (a few ops, e.g. `avg_pool3d`, fall back to CPU).
 
+**Evaluate** a checkpoint:
 
-### Logging and repeatability
-
-Each of your run creates a folder with its name in `runs/`. You can find there the used YAML
-config, the checkpoints and any other file you wish to save.
-
-## Core logic
-
-The core of this template is implemented in `src/base_trainer.py`:
-```python
-class BaseTrainer:
-    def __init__(
-        self,
-        model: torch.nn.Module,
-        opt: Optimizer,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-    ) -> None:
-        """Base trainer class.
-        Args:
-            model (torch.nn.Module): Model to train.
-            opt (torch.optim.Optimizer): Optimizer to use.
-            train_loader (torch.utils.data.DataLoader): Training dataloader.
-            val_loader (torch.utils.data.DataLoader): Validation dataloader.
-        """
-
-    @to_cuda
-    def _train_val_iteration(
-        self,
-        batch: Union[Tuple, List, torch.Tensor],
-    ) -> torch.Tensor:
-        """Training or validation procedure for one batch. We want to keep the code DRY and avoid
-        making mistakes, so write this code only once at the cost of many function calls!
-        Args:
-            batch: The batch to process.
-        Returns:
-            torch.Tensor: The loss for the batch.
-        """
-        # TODO: Your code goes here!
-
-    def _train_epoch(self, description: str, epoch: int) -> float:
-        """Perform a single training epoch.
-        Args:
-            description (str): Description of the epoch for tqdm.
-            epoch (int): Current epoch number.
-        Returns:
-            float: Average training loss for the epoch.
-        """
-
-    def _val_epoch(self, description: str, visualize: bool, epoch: int) -> float:
-        """Validation loop for one epoch.
-        Args:
-            description: Description of the epoch for tqdm.
-            visualize: Whether to visualize the model predictions.
-        Returns:
-            float: Average validation loss for the epoch.
-        """
-        "==================== Validation loop for one epoch ===================="
-
-    def train(
-        self,
-        epochs: int = 10,
-        val_every: int = 1,  # Validate every n epochs
-        visualize_every: int = 10,  # Visualize every n validations
-    ):
-        """Train the model for a given number of epochs.
-        Args:
-            epochs (int): Number of epochs to train for.
-            val_every (int): Validate every n epochs.
-            visualize_every (int): Visualize every n validations.
-        Returns:
-            None
-        """
-
-    def _setup_plot(self):
-        """Setup the plot for training and validation losses."""
-
-    def _plot(self, epoch: int, train_losses: List[float], val_losses: List[float]):
-        """Plot the training and validation losses.
-        Args:
-            epoch (int): Current epoch number.
-            train_losses (List[float]): List of training losses.
-            val_losses (List[float]): List of validation losses.
-        Returns:
-            None
-        """
-
-    def _save_checkpoint(self, val_loss: float, ckpt_path: str, **kwargs) -> None:
-        """Saves the model and optimizer state to a checkpoint file.
-        Args:
-            val_loss (float): The validation loss of the model.
-            ckpt_path (str): The path to the checkpoint file.
-            **kwargs: Additional dictionary to save. Use the format {"key": state_dict}.
-        Returns:
-            None
-        """
-
-    def _load_checkpoint(self, ckpt_path: str) -> None:
-        """Loads the model and optimizer state from a checkpoint file.
-        Args:
-            ckpt_path (str): The path to the checkpoint file.
-        Returns:
-            None
-        """
-
-    def _terminator(self, sig, frame):
-        """
-        Handles the SIGINT signal (Ctrl+C) and stops the training loop.
-        """
+```bash
+uv run test.py +experiment=coddpm_3d_multiview_contactopt_multimodal \
+    run.load_from=multimodal.ckpt \
+    model.contacts_hidden_dim=2048 model.conv_transpose=true
 ```
 
-## Roadmap
- - [x] Torchmetrics: this takes care of batching the loss and averaging it
- - [x] Saving top 3 best val models (easily configure metric)
- - [x] Training + evaluation loop
- - [x] Wandb integration with predefined logging metrics
- - [x] Automatic instantiation for the optimizer, scheduler, model
- - [x] The best progress display I can ever get!! (kinda like torchlightning template? But I want
- colour (as in PIP), I want to see my hydra conf, and I want to see a little graph in a curses style in real
- time (look into Rich, Textual, etc.).
- - [x] Interception of SIGKILL, SIGTERM to stop training but save everything: two behaviours (1
- will be the default ofc) -- a) wait for epoch end and validation, b) abort epoch.
- - [x] Add git hooks for linting, formatting, etc.
- - [x] Training logic
- - [x] Generate random run name (human readble from words)
- - [x] Automatic model loading from run name
- - [x] Test logic
- - [x] requirements.txt
- - [ ] Tests?
- - [ ] Feedback & improvements
- - [ ] Refactor what is necessary (UI stuff)
- - [ ] Make datasets highly reproducible to the max (masterplan):
-	 - [ ] Hash the dataset post-instantiation (iterate and hash) and log to wandb.
-	 - [ ] Log the date of creation of all files (log anomalies like one date sticking out)
-	 - [ ] ???
+> [!NOTE]
+> The released `multimodal.ckpt` was trained with the previous architecture size
+> (`contacts_hidden_dim=2048`, `conv_transpose=true`), hence the two model overrides. Retraining
+> from the current config does not need them. Use `run.inference_mode=generation` for grasp
+> synthesis.
+
+**Experiments** (`uv run {train,test}.py +experiment=<name>`):
+
+| Experiment | Purpose |
+| --- | --- |
+| `coddpm_3d_multiview_contactopt_multimodal` | Full JointDiffusion, Perturbed ContactPose (refinement) |
+| `coddpm_3d_multiview_contactopt_noisy_pair` / `_object` | Denoising / synthesis variants (conditioning on the noisy pair / object only) |
+| `coddpm_3d_multiview_oakink_*` | OakInk (multimodal variant, Appendix C.5) |
+| `coddpm_3d_multiview_grab_*` | GRAB sequences (`tester=seq_ddpm`) |
+| `cddpm_3d_multiview_contactopt` | Ablation: JointDiffusion without the contact branch (Table 3, "+BPS") |
+| `baseline_cddpm_3d_multiview_contactopt` | Keypoint-diffusion baseline (Table 3) |
+| `grasp_tta_cvae_contactpose` / `grasp_tta_contactnet_contactpose` / `grasp_tta_wrapped_contactpose` | GraspTTA baseline (train CVAE / train ContactNet / wrapped TTA eval) |
+| `toch_contactpose` | TOCH baseline evaluation |
+
+Useful flags: `dataset.tiny=true` (subset), `run.epochs=N`, `run.viz_every=N`,
+`run.compute_iv/compute_contact_scores/compute_sim_displacement` (mesh-based metrics),
+`run.max_observations` (number of input observations at test time), `run.save_predictions=true`.
+
+## Project structure
+
+```
+conf/experiment.py      <- all experiment/store definitions (hydra-zen)
+dataset/                <- ContactPose / OakInk / GRAB / TOCH loaders (cache-first)
+model/diffusion_model.py<- ContactsBPSDiffusionModel (JointDiffusion), BPSDiffusionModel (+BPS), KPDiffusionModel (baseline)
+model/backbones.py      <- 3D U-Net backbone, contact branch, context encoders
+src/base_trainer.py     <- training loop, checkpointing, wandb, EMA
+src/base_tester.py      <- N-observation evaluation, TTO fitting, metrics
+src/ddpm_trainer.py     <- JointDiffusion trainer   src/ddpm_tester.py <- its tester
+src/losses/             <- DDPMLoss, fitting losses, GraspTTA losses
+utils/                  <- BPS/CHOIR computation, TTO fitting, metrics, visualization
+vendor/                 <- submodules: manotorch (assets), ContactPose, OakInk (only needed to rebuild caches)
+```
+
+## Notes
+
+- `pre-commit run --all-files` keeps the code formatted (black/isort/autoflake).
+- TOCH evaluation needs the TOCH weights and its preprocessed ContactPose contacts; point
+  `model.model_path` and `dataset.processed_root` at them. `psbody-mesh` is optional (a warning
+  is printed if absent).
+- The GraspTTA checkpoints are evaluated through `grasp_tta_wrapped_contactpose` with
+  `model.graspCVAE_model_pth=graspTTA_cvae.ckpt model.contactnet_model_pth=graspTTA_contactnet.ckpt`.
