@@ -27,7 +27,6 @@ from dataset.toch_loaders import ContactPoseDataset_Eval
 from model.diffusion_model import BPSDiffusionModel, ContactsBPSDiffusionModel
 from model.TOCH.toch_wrapper import TOCHInference
 from src.base_trainer import BaseTrainer
-from src.losses.hoi import CHOIRLoss
 from utils import colorize, to_cuda_
 
 
@@ -107,15 +106,8 @@ def launch_experiment(
             exponential_map_w = test_dataset.bps
         opt_inst = None
         scheduler_inst = None
-
     if not run.training_mode:
         training_loss_inst = None
-    elif training_loss.func is CHOIRLoss:
-        training_loss_inst = training_loss(
-            bps=bps,
-            remap_bps_distances=remap_bps_distances,
-            exponential_map_w=exponential_map_w,
-        )
     else:
         training_loss_inst = training_loss()
 

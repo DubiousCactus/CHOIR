@@ -10,7 +10,6 @@ GraspTTA losses.
 """
 
 
-import importlib
 
 try:
     import chamfer_distance as chd
@@ -170,7 +169,6 @@ class GraspCVAELoss(torch.nn.Module):
         hand_weights_path: str = "rhand_weights.npy",
     ):
         super().__init__()
-        self.emd_module = None
         self.a = a
         self.b = b
         self.c = c
@@ -325,19 +323,6 @@ class GraspCVAELoss(torch.nn.Module):
             recon_loss, _ = chamfer_distance(
                 recon_x, x, point_reduction="sum", batch_reduction="mean"
             )
-        elif loss_tpye == "EMD":
-            if self.emd_module is None:
-                # I can't install it on MacOS so importing here to avoid errors
-                self.emd_module = importlib.import_module(
-                    "vendor.MSN-Point-Cloud-Completion.emd.emd_module"
-                )
-            emd = self.emd_module.emdModule()
-            # recon_loss = earth_mover_distance(
-            #    recon_x, x, transpose=False
-            # ).sum() / x.size(0)
-            dist, _ = emd(recon_x, x, 0.002, 1000)  # Defaults from the package
-            recon_loss = dist.sum() / x.size(0)
-        if mode != "train":
             return torch.tensor(0.0), recon_loss, torch.tensor(0.0)
         # KLD loss
         KLD = (

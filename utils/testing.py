@@ -407,33 +407,6 @@ def make_batch_of_obj_data(
     return batch_obj_data
 
 
-def compute_contact_coverage(
-    hand_verts: torch.Tensor,
-    faces: torch.Tensor,
-    obj_points: torch.Tensor,
-    thresh_mm,
-    base_unit: float,
-    n_samples: int = 10000,
-) -> torch.Tensor:
-    contact_coverage = []
-    for i in range(hand_verts.shape[0]):
-        pred_hand_mesh = trimesh.Trimesh(
-            vertices=hand_verts[i].detach().cpu().numpy(),
-            faces=faces.detach().cpu().numpy(),
-        )
-        hand_points = to_cuda_(
-            torch.from_numpy(
-                trimesh.sample.sample_surface(pred_hand_mesh, n_samples)[0]
-            ).float()
-        )
-        dists = torch.cdist(hand_points, obj_points[i].to(hand_points.device))  # (N, N)
-        dists = dists.min(
-            dim=1
-        ).values  # (N): distance of each hand point to the closest object point
-        contact_coverage.append(
-            (dists <= (thresh_mm / base_unit)).sum() / n_samples * 100
-        )
-    return torch.stack(contact_coverage).mean().item()
 
 
 def compute_binary_contacts(
@@ -470,52 +443,6 @@ def compute_binary_contacts(
     )
 
 
-def compute_contact_fidelity(
-    canonical_verts: torch.Tensor,
-    pred_bin_contacts: torch.Tensor,
-    gt_bin_contacts: torch.Tensor,
-    normalize_false_positives: bool = False,
-) -> torch.Tensor:
-    """
-    Compute the contact fidelity between the predicted and ground-truth binary contacts, as a
-    modified Hamming distance with a normalized L2-norm-based penalty term for false positives and
-    a binary term corresponding to "Hamming score" for false negatives.
-
-     _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-    | This is very dumb... I was basically almost reinventing F1 score on binary contact maps!!!|
-     _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-
-    """
-    # Compute the true positives as the binary AND between the predicted and ground-truth binary contacts:
-    true_positive_scores = (pred_bin_contacts & gt_bin_contacts).sum(dim=-1).float()
-    # Compute the normalized L2-norm-based penalty term for false positives:
-    false_positive_bool_indices = (gt_bin_contacts == 0) & (pred_bin_contacts == 1)
-    dists = torch.cdist(canonical_verts, canonical_verts)  # (B, VERTS, VERTS)
-    true_positive_indices = gt_bin_contacts == 1
-    dists = torch.where(
-        true_positive_indices[:, None, :], dists, torch.inf
-    )  # (B, VERTS, VERTS). All GT vertices that aren't in contact have inf distance so they won't be selected.
-    # This seems much slower than torch.where: dists = dists * (torch.ones_like(dists) + true_positive_indices[:, None, :].int() * torch.inf)
-    nearest_true_contacts = dists.min(dim=-1).values  # (B, VERTS)
-    normalizer = 1.0
-    if normalize_false_positives:
-        # Compute the normalizing constant for the false positive penalty term, as the cardinality of
-        # the set of direct neighbors of the false positive vertices:
-        raise NotImplementedError("This is not implemented yet.")
-    # Now mask out the nearest true contact distances to keep only the false positive distances:
-    false_positive_penalties = (
-        torch.where(
-            false_positive_bool_indices,
-            torch.exp(nearest_true_contacts) * normalizer,
-            torch.zeros_like(nearest_true_contacts),
-        )
-        .sum(dim=-1)
-        .float()
-    )
-    return (true_positive_scores - false_positive_penalties).mean().cpu()
-
-
-# This function is taken from the ContactPose repo:
 def fit_sigmoid(colors, a=0.05):
     """Fits a sigmoid to raw contact temperature readings from the ContactPose dataset. This function is copied from that repo"""
     idx = colors > 0

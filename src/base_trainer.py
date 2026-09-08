@@ -27,7 +27,6 @@ import wandb
 from conf import project as project_conf
 from utils import blink_pbar, to_cuda, to_cuda_, update_pbar_str
 from utils.helpers import BestNModelSaver
-from utils.visualization import visualize_model_predictions
 
 
 class BaseTrainer:
@@ -75,26 +74,6 @@ class BaseTrainer:
         self._ema = None
         signal.signal(signal.SIGINT, self._terminator)
 
-    @to_cuda
-    def _visualize(
-        self,
-        batch: Union[Tuple, List, torch.Tensor],
-        epoch: int,
-    ) -> None:
-        """Visualize the model predictions.
-        Args:
-            batch: The batch to process.
-            epoch: The current epoch.
-        """
-        visualize_model_predictions(
-            self._model,
-            batch,
-            epoch,
-            bps_dim=self._bps_dim,
-            bps=self._bps,
-            remap_bps_distances=self._remap_bps_distances,
-            exponential_map_w=self._exponential_map_w,
-        )  # User implementation goes here (utils/training.py)
 
     @to_cuda
     def _train_val_iteration(

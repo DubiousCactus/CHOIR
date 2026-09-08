@@ -1,33 +1,9 @@
-[submodule "vendor/ContactPose"]
-	path = vendor/ContactPose
-	url = git@github.com:facebookresearch/ContactPose.git
 [submodule "vendor/manotorch"]
 	path = vendor/manotorch
 	url = git@github.com:lixiny/manotorch.git
-[submodule "vendor/GRAB"]
-	path = vendor/GRAB
-	url = git@github.com:otaheri/GRAB.git
-[submodule "vendor/GrabNet"]
-	path = vendor/GrabNet
-	url = git@github.com:otaheri/GrabNet.git
-[submodule "vendor/metabatch"]
-	path = vendor/metabatch
-	url = git@github.com:DubiousCactus/metabatch.git
-[submodule "vendor/Pointnet_Pointnet2_pytorch"]
-	path = vendor/Pointnet_Pointnet2_pytorch
-	url = https://github.com/yanx27/Pointnet_Pointnet2_pytorch/
+[submodule "vendor/ContactPose"]
+	path = vendor/ContactPose
+	url = git@github.com:facebookresearch/ContactPose.git
 [submodule "vendor/OakInk"]
 	path = vendor/OakInk
 	url = https://github.com/oakink/OakInk
-[submodule "vendor/GraspTTA"]
-	path = vendor/GraspTTA
-	url = https://github.com/hwjiang1510/GraspTTA
-[submodule "vendor/emd"]
-	path = vendor/emd
-	url = https://github.com/vinits5/emd
-[submodule "vendor/PyTorchEMD"]
-	path = vendor/PyTorchEMD
-	url = https://github.com/daerduoCarey/PyTorchEMD
-[submodule "vendor/MSN-Point-Cloud-Completion"]
-	path = vendor/MSN-Point-Cloud-Completion
-	url = https://github.com/Colin97/MSN-Point-Cloud-Completion

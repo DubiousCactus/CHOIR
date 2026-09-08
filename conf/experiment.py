@@ -52,7 +52,6 @@ from src.grasptta_graspcvae_trainer import GraspCVAETrainer
 from src.grasptta_tester import GraspTTATester
 from src.losses.diffusion import DDPMLoss
 from src.losses.graspTTA import GraspCVAELoss
-from src.losses.hoi import CHOIRLoss
 from src.ddpm_baseline_tester import DDPMBaselineTester
 from src.ddpm_baseline_trainer import DDPMBaselineTrainer
 from src.seq_ddpm_tester import SeqDDPMTester
@@ -300,38 +299,8 @@ model_store(
 )
 
 " ================== Losses ================== "
-
-
-@dataclass
-class CHOIRLossConf:
-    bps = MISSING
-    remap_bps_distances: bool = MISSING
-    exponential_map_w: float = MISSING
-    predict_anchor_orientation: bool = False
-    predict_anchor_position: bool = False
-    predict_mano: bool = False
-    orientation_w: float = 1.0
-    distance_w: float = 1.0
-    assignment_w: float = 1.0
-    mano_pose_w: float = 1.0
-    mano_global_pose_w: float = 1.0
-    mano_shape_w: float = 1.0
-    mano_agreement_w: float = 1.0
-    mano_anchors_w: float = 1.0
-    kl_w: float = 1e-4
-    multi_view: bool = False
-    temporal: bool = False
-    use_kl_scheduler: bool = False
-
-
 training_loss_store = store(group="training_loss")
-training_loss_store(
-    pbuilds(
-        CHOIRLoss,
-        builds_bases=(CHOIRLossConf,),
-    ),
-    name="choir",
-)
+
 
 training_loss_store(
     pbuilds(
@@ -499,7 +468,7 @@ Experiment = builds(
         {"optimizer": "adam"},
         {"scheduler": "step"},
         {"run": "default"},
-        {"training_loss": "choir"},
+        {"training_loss": "diffusion"},
     ],
     trainer=MISSING,
     tester=MISSING,

@@ -88,29 +88,3 @@ class BestNModelSaver:
         return best
 
 
-class BestMetricTracker:
-    def __init__(self, comp: str) -> None:
-        if comp not in ["max", "min"]:
-            raise ValueError(f"Invalid comp: {comp}. Must be 'max' or 'min'.")
-        self._comp = (lambda x, y: x > y) if comp == "max" else (lambda x, y: x < y)
-        self._best_value = float("-inf") if comp == "max" else float("inf")
-        self._best_at_epoch: int = 0
-        self._last_value = float("-inf") if comp == "max" else float("inf")
-
-    def update(self, epoch: int, metric: Union[float, int]) -> None:
-        self._last_value = metric
-        if self._comp(metric, self._best_value):
-            self._best_value = metric
-            self._best_at_epoch = epoch
-
-    @property
-    def value(self) -> Union[float, int]:
-        return self._best_value
-
-    @property
-    def at_epoch(self) -> int:
-        return self._best_at_epoch
-
-    @property
-    def last_value(self) -> float:
-        return self._last_value
