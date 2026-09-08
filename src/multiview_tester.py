@@ -453,24 +453,34 @@ class MultiViewTester(MultiViewTrainer):
                 with open(cached_obj_path, "wb") as f:
                     torch.save(batch_obj_data, f)
         else:
-            mp_process_obj_meshes(
-                mesh_pths,
-                self._object_cache,
-                self._data_loader.dataset.center_on_object_com,
-                self._enable_contacts_tto,
-                self._compute_iv,
-                self._pitch,
-                self._radius,
-                self._n_pts_on_mesh,
-                self._n_normals_on_mesh,
-                dataset=self._data_loader.dataset.name,
-                keep_mesh_contact_identity=self._compute_contact_scores,
-            )
-            batch_obj_data = make_batch_of_obj_data(
-                self._object_cache,
-                mesh_pths,
-                keep_mesh_contact_identity=self._compute_contact_scores,
-            )
+            if (
+                self._enable_contacts_tto
+                or self._compute_iv
+                or self._compute_contact_scores
+                or self._compute_sim_displacement
+            ):
+                mp_process_obj_meshes(
+                    mesh_pths,
+                    self._object_cache,
+                    self._data_loader.dataset.center_on_object_com,
+                    self._enable_contacts_tto,
+                    self._compute_iv,
+                    self._pitch,
+                    self._radius,
+                    self._n_pts_on_mesh,
+                    self._n_normals_on_mesh,
+                    dataset=self._data_loader.dataset.name,
+                    keep_mesh_contact_identity=self._compute_contact_scores,
+                )
+                batch_obj_data = make_batch_of_obj_data(
+                    self._object_cache,
+                    mesh_pths,
+                    keep_mesh_contact_identity=self._compute_contact_scores,
+                )
+            else:
+                # No object meshes needed: skip processing (e.g. pose-only evaluation on a
+                # machine without the raw object meshes).
+                batch_obj_data = None
         # ==============================================
         eval_metrics = {"Distance fitting only": None, "With contact fitting": None}
         if use_input:
@@ -677,7 +687,7 @@ class MultiViewTester(MultiViewTrainer):
                     sample_to_viz = 1
                     contacts_pred, obj_points, obj_normals = (
                         None,
-                        batch_obj_data["points"],
+                        batch_obj_data["points"] if batch_obj_data is not None else None,
                         None,
                     )
                     start = timer()
@@ -723,7 +733,7 @@ class MultiViewTester(MultiViewTrainer):
                         beta_w=1e-4,
                         theta_w=1e-7,
                         choir_w=1000,
-                        obj_meshes=batch_obj_data["mesh"],
+                        obj_meshes=batch_obj_data["mesh"] if batch_obj_data is not None else None,
                         save_tto_anim=self._debug_tto or self._save_predictions,
                     )
                     end = timer()
