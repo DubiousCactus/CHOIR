@@ -55,12 +55,12 @@ def launch_experiment(
     exp_conf = hydra_zen.to_yaml(
         dict(
             run_name=run_name,
-            run_conf=run,
-            dataset=dataset,
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            training_loss=training_loss,
+            run_conf=asdict(run),
+            dataset=just(dataset),
+            model=just(model),
+            optimizer=just(optimizer),
+            scheduler=just(scheduler),
+            training_loss=just(training_loss),
         )
     )
     print(
