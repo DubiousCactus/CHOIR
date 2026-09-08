@@ -33,7 +33,7 @@ from conf.project import ANSI_COLORS, Theme
 from dataset.base import BaseDataset
 from globals import FLAT_LOWER_INDICES
 from model.affine_mano import AffineMANO
-from utils import colorize
+from utils import colorize, debug_methods
 from utils.dataset import (
     augment_hand_object_pose,
     compute_anchor_gaussians,
@@ -52,6 +52,7 @@ from utils.visualization import (
 avg_choir_time = []
 
 
+@debug_methods
 class ContactPoseDataset(BaseDataset):
     """ "
     A task is defined as a set of random views of the same grasp of the same object. In ContactPose

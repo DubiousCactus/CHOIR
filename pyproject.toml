@@ -1,2 +1,59 @@
+[project]
+name = "choir"
+version = "1.0.0"
+description = "CHOIR: Hand-Object Interaction Contact Reconstruction via Implicit Diffusion"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch>=2.4,<2.7",
+    "numpy==1.26.4",
+    "hydra-zen>=0.13",
+    "unique-names-generator",
+    "torchmetrics",
+    "plotext",
+    "tqdm",
+    "wandb",
+    "transforms3d",
+    "pyvista",
+    "trimesh",
+    "chumpy @ git+https://github.com/mikigom/chumpy",
+    "chamfer_distance @ git+https://github.com/otaheri/chamfer_distance; sys_platform != 'darwin'",
+    "bps-torch @ git+https://github.com/otaheri/bps_torch",
+    "metabatch",
+    "scenepic",
+    "opencv-python",
+    "ema-pytorch",
+    "pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable",
+    "imageio[ffmpeg]",
+    "pybullet",
+    "scikit-video",
+    "trame",
+    "trame-vtk",
+    "trame-vuetify",
+    "open3d",
+    "smplx[all]",
+    "rtree",
+    "blosc2",
+    "manotorch",
+]
+
+[dependency-groups]
+dev = [
+    "ipython",
+    "black",
+    "isort",
+    "autoflake",
+    "pre-commit",
+]
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["pytorch3d"]
+
+[tool.uv.sources]
+manotorch = { path = "vendor/manotorch" }
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["setuptools", "pip"]
+
 [tool.isort]
 profile = "black"
