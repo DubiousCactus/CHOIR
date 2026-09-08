@@ -230,6 +230,70 @@ class ContactPoseDataset(BaseDataset):
     def _load_objects_and_grasps(
         self, tiny: bool, split: str, seed: int = 0
     ) -> Tuple[dict, list, list, str]:
+        participant_splits = (
+            self._use_contactopt_splits
+            or self._use_improved_contactopt_splits
+            or self._eval_anchor_assignment
+        )
+        n_participants = 10 if tiny else 51
+        print(f"[*] Loading ContactPose{' (tiny)' if tiny else ''}...")
+
+        if participant_splits:
+            assert not (
+                self._use_contactopt_splits and self._use_improved_contactopt_splits
+            ), "You can't use both ContactOpt's splits and the improved splits."
+            # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
+            if self._use_contactopt_splits:
+                if split == "train":
+                    low_p, high_p = 0, 0.8
+                else:
+                    low_p, high_p = 0.8, 1.0
+            elif self._use_improved_contactopt_splits:
+                # I'm improving it so that we have a validation split here.
+                if split == "train":
+                    low_p, high_p = 0, 0.7
+                elif split == "val":
+                    low_p, high_p = 0.7, 0.8
+                elif split == "test":
+                    low_p, high_p = 0.8, 1.0
+            elif self._eval_anchor_assignment:
+                if split != "test":
+                    low_p, high_p = 0.0, 0.1
+                else:
+                    low_p, high_p = 0.0, 1.0  # Use all the dataset to test this!
+
+        # Cache-first: the per-split file list pickle encodes the exact contents of the split, so
+        # when it exists we don't need the raw ContactPose data at all (useful for evaluating a
+        # released checkpoint from a fresh clone with only the preprocessed data).
+        dataset_path = osp.join(
+            self._cache_dir,
+            f"dataset_{split}_{n_participants}-participants"
+            + (
+                f"_{self._validation_objects}-val-held-out"
+                + f"_{self._test_objects}-test-held-out"
+                if not participant_splits
+                else f"_from-{low_p}_to-{high_p}_split"
+            )
+            + f"_{self._obj_ptcld_size}-obj-pts"
+            + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
+        )
+        if osp.isfile(dataset_path):
+            with open(dataset_path, "rb") as f:
+                compressed_pkl = f.read()
+                objects_w_contacts, grasps, n_left, n_right = pickle.loads(
+                    blosc2.decompress(compressed_pkl)
+                )
+            object_names = sorted({grasp["obj_name"] for grasp in grasps})
+            print(
+                f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
+            )
+            return (
+                objects_w_contacts,
+                grasps,
+                osp.basename(dataset_path.split(".")[0]),
+            )
+
+        "=============== Building the split from the raw ContactPose data ==============="
         if not osp.isdir(osp.join(get_original_cwd(), "vendor", "ContactPose")):
             raise RuntimeError(
                 "Please clone the ContactPose dataset in the vendor/ directory as 'ContactPose'"
@@ -254,13 +318,7 @@ class ContactPoseDataset(BaseDataset):
         # First, build a dictionary of object names to the participant, intent, and hand used. The
         # reason we don't do it all in one pass is that some participants may not manipulate some
         # objects.
-        participant_splits = (
-            self._use_contactopt_splits
-            or self._use_improved_contactopt_splits
-            or self._eval_anchor_assignment
-        )
         cp_dataset = {} if not participant_splits else []
-        n_participants = 10 if tiny else 51
         for p_num in range(1, n_participants):
             for intent in ["use", "handoff"]:
                 for obj_name in get_object_names(
@@ -277,30 +335,6 @@ class ContactPoseDataset(BaseDataset):
         hand_indices = {"right": 1, "left": 0}
 
         if participant_splits:
-            assert not (
-                self._use_contactopt_splits and self._use_improved_contactopt_splits
-            ), "You can't use both ContactOpt's splits and the improved splits."
-            # Naive split by grasp or almost by participant. Not great, but that's what ContactOpt does.
-            low_p, high_p = 0, 0
-            if self._use_contactopt_splits:
-                if split == "train":
-                    low_p, high_p = 0, 0.8
-                else:
-                    low_p, high_p = 0.8, 1.0
-            elif self._use_improved_contactopt_splits:
-                # I'm improving it so that we have a validation split here.
-                if split == "train":
-                    low_p, high_p = 0, 0.7
-                elif split == "val":
-                    low_p, high_p = 0.7, 0.8
-                elif split == "test":
-                    low_p, high_p = 0.8, 1.0
-            elif self._eval_anchor_assignment:
-                if split != "test":
-                    low_p, high_p = 0.0, 0.1
-                else:
-                    low_p, high_p = 0.0, 1.0  # Use all the dataset to test this!
-
             low_split = int(len(cp_dataset) * low_p)
             high_split = int(len(cp_dataset) * high_p)
             cp_dataset = cp_dataset[
@@ -354,59 +388,39 @@ class ContactPoseDataset(BaseDataset):
         # objects_w_contacts: object with contacts paths
         # grasps: MANO parameters w/ global pose pickle paths
         objects_w_contacts, grasps = [], []
-        print(f"[*] Loading ContactPose{' (tiny)' if tiny else ''}...")
 
-        dataset_path = osp.join(
-            self._cache_dir,
-            f"dataset_{split}_{n_participants}-participants"
-            + (
-                f"_{self._validation_objects}-val-held-out"
-                + f"_{self._test_objects}-test-held-out"
-                if not participant_splits
-                else f"_from-{low_p}_to-{high_p}_split"
-            )
-            + f"_{self._obj_ptcld_size}-obj-pts"
-            + f"{'right-hand' if self._right_hand_only else 'both-hands'}_seed-{seed}.pkl",
-        )
-        if osp.isfile(dataset_path):
-            with open(dataset_path, "rb") as f:
-                compressed_pkl = f.read()
-                objects_w_contacts, grasps, n_left, n_right = pickle.loads(
-                    blosc2.decompress(compressed_pkl)
+        n_left, n_right = 0, 0
+        for obj_name in tqdm(object_names):
+            for p_num, intent, hand in cp_dataset[obj_name]:
+                with redirect_stdout(None):
+                    cp = ContactPose(p_num, intent, obj_name)
+                random_grasp_frame = (
+                    cp.mano_params[hand_indices[hand]],
+                    cp.mano_meshes()[hand_indices[hand]],
+                )  # {'pose': _, 'betas': _, 'hTm': _} for mano, {'vertices': _, 'faces': _, 'joints': _} for mesh
+                if cp._valid_hands != [1] and hand_indices[hand] == 1:
+                    # We want the right hand, but this is anything else than just the right hand
+                    continue
+                obj_mesh_w_contacts_path, grasp = (
+                    cp.contactmap_filename,
+                    random_grasp_frame,
                 )
-        else:
-            n_left, n_right = 0, 0
-            for obj_name in tqdm(object_names):
-                for p_num, intent, hand in cp_dataset[obj_name]:
-                    with redirect_stdout(None):
-                        cp = ContactPose(p_num, intent, obj_name)
-                    random_grasp_frame = (
-                        cp.mano_params[hand_indices[hand]],
-                        cp.mano_meshes()[hand_indices[hand]],
-                    )  # {'pose': _, 'betas': _, 'hTm': _} for mano, {'vertices': _, 'faces': _, 'joints': _} for mesh
-                    if cp._valid_hands != [1] and hand_indices[hand] == 1:
-                        # We want the right hand, but this is anything else than just the right hand
-                        continue
-                    obj_mesh_w_contacts_path, grasp = (
-                        cp.contactmap_filename,
-                        random_grasp_frame,
-                    )
-                    objects_w_contacts.append(obj_mesh_w_contacts_path)
-                    grasps.append(
-                        {
-                            "grasp": grasp,
-                            "p_num": p_num,
-                            "intent": intent,
-                            "obj_name": obj_name,
-                            "hand_idx": hand,
-                        }
-                    )
-                    n_left += 1 if hand == "left" else 0
-                    n_right += 1 if hand == "right" else 0
-            with open(dataset_path, "wb") as f:
-                pkl = pickle.dumps((objects_w_contacts, grasps, n_left, n_right))
-                compressed_pkl = blosc2.compress(pkl)
-                f.write(compressed_pkl)
+                objects_w_contacts.append(obj_mesh_w_contacts_path)
+                grasps.append(
+                    {
+                        "grasp": grasp,
+                        "p_num": p_num,
+                        "intent": intent,
+                        "obj_name": obj_name,
+                        "hand_idx": hand,
+                    }
+                )
+                n_left += 1 if hand == "left" else 0
+                n_right += 1 if hand == "right" else 0
+        with open(dataset_path, "wb") as f:
+            pkl = pickle.dumps((objects_w_contacts, grasps, n_left, n_right))
+            compressed_pkl = blosc2.compress(pkl)
+            f.write(compressed_pkl)
 
         print(
             f"[*] Loaded {len(object_names)} objects and {len(grasps)} grasp sequences ({n_left} left hand, {n_right} right hand)"
