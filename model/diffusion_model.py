@@ -22,7 +22,6 @@ from model.backbones import (
     MLPResNetBackboneModel,
     MLPResNetEncoderModel,
     MultiScaleResnetEncoderModel,
-    PointNet2EncoderModel,
     ResnetEncoderModel,
     TransformerEncoderModel,
     UNetBackboneModel,
@@ -899,29 +898,6 @@ class KPDiffusionModel(torch.nn.Module):
                     else None
                 ),
             ),
-            "mlp_resnet_w_pointnet2": (
-                partial(
-                    MLPResNetBackboneModel,
-                    input_dim=(
-                        n_hand_keypoints
-                        + (self.n_obj_keypoints if object_in_encoder else 0)
-                    )
-                    * 3,
-                    output_dim=n_hand_keypoints * 3,
-                    hidden_dim=512,
-                    context_dim=y_embed_dim,
-                    skip_connections=skip_connections,
-                ),
-                (
-                    partial(
-                        PointNet2EncoderModel,
-                        input_points=y_input_keypoints,
-                        embed_dim=y_embed_dim,
-                    )
-                    if (y_embed_dim is not None and y_input_keypoints is not None)
-                    else None
-                ),
-            ),
         }
         assert backbone in backbones, f"Unknown backbone {backbone}"
         self.backbone = backbones[backbone][0](
@@ -1161,29 +1137,6 @@ class KPContactsDiffusionModel(torch.nn.Module):
                         MLPResNetEncoderModel,
                         input_dim=y_input_keypoints * 3,
                         hidden_dim=2048,
-                        embed_dim=y_embed_dim,
-                    )
-                    if (y_embed_dim is not None and y_input_keypoints is not None)
-                    else None
-                ),
-            ),
-            "mlp_resnet_w_pointnet2": (
-                partial(
-                    MLPResNetBackboneModel,
-                    input_dim=(
-                        n_hand_keypoints
-                        + (self.n_obj_keypoints if object_in_encoder else 0)
-                    )
-                    * 3,
-                    output_dim=n_hand_keypoints * 3,
-                    hidden_dim=512,
-                    context_dim=y_embed_dim,
-                    skip_connections=skip_connections,
-                ),
-                (
-                    partial(
-                        PointNet2EncoderModel,
-                        input_points=y_input_keypoints,
                         embed_dim=y_embed_dim,
                     )
                     if (y_embed_dim is not None and y_input_keypoints is not None)
