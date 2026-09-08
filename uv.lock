@@ -322,7 +322,7 @@ requires-dist = [
     { name = "chamfer-distance", marker = "sys_platform != 'darwin'", git = "https://github.com/otaheri/chamfer_distance" },
     { name = "chumpy", git = "https://github.com/mikigom/chumpy" },
     { name = "ema-pytorch" },
-    { name = "hydra-zen", specifier = ">=0.13" },
+    { name = "hydra-zen", specifier = "==0.12.1" },
     { name = "imageio", extras = ["ffmpeg"] },
     { name = "manopth", git = "https://github.com/hassony2/manopth" },
     { name = "manotorch", directory = "vendor/manotorch" },
@@ -706,16 +706,16 @@ wheels = [
 
 [[package]]
 name = "hydra-zen"
-version = "0.16.0"
+version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hydra-core" },
     { name = "omegaconf" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/61/b0f50be4f34b52390fdd204d86696aa37f718e91c73f727cdcbc782592ba/hydra_zen-0.16.0.tar.gz", hash = "sha256:55b931ba79bef329c9baa64e47c44b2dcc1594b0df292a445bed5d9a349596b0", size = 1332416, upload-time = "2025-10-22T17:29:52.861Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/ea/aed9e79135ce9d797d44b8f9ec1cfb62039cf306bb229f1fb5715d176c90/hydra_zen-0.12.1.tar.gz", hash = "sha256:e27979c16505a654918c8c36cc190cc61ded14054a4d84efd65c0b83e7078050", size = 1324572, upload-time = "2024-01-21T17:55:38.377Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/cc/64d0fad725570ed6a02f5c7676cbfe3a268bed2fc3b10a74b59425ce6386/hydra_zen-0.16.0-py3-none-any.whl", hash = "sha256:fdf33060dfc530ef14248b861c5a8ab43ebb54df38fec8fb6d0be15b5af617ea", size = 106312, upload-time = "2025-10-22T17:29:50.925Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/a1/5e0c5c979e087eda58ea5cb5644e98548f5cdfc6597d86659bb51cf44113/hydra_zen-0.12.1-py3-none-any.whl", hash = "sha256:23ad9df648f0db1747c15cc4c90c8e46be2809099493b5d00dcc6e49979d2545", size = 102155, upload-time = "2024-01-21T17:55:36.261Z" },
 ]
 
 [[package]]
