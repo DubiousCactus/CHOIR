@@ -45,6 +45,16 @@ except ImportError:
 
 from bps_torch.bps import bps_torch
 
+from pytorch3d.ops import knn_gather, knn_points
+from pytorch3d.structures import Pointclouds
+from pytorch3d.transforms import Transform3d, random_rotation
+from pytorch3d.transforms.rotation_conversions import (
+    matrix_to_rotation_6d,
+    rotation_6d_to_matrix,
+)
+from scipy.spatial import cKDTree
+from trimesh import Trimesh
+
 from globals import FLAT_LOWER_INDICES
 from utils import to_cuda
 
