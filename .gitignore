@@ -6,8 +6,8 @@ outputs/
 runs/
 tags
 tags.*
-*.png
-*.html
+./*.png
+./*.html
 *.tgz
 *.pickle
 models/
