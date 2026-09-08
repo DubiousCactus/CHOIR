@@ -477,7 +477,15 @@ class ContactPoseDataset(BaseDataset):
         )
         if not osp.isdir(samples_labels_pickle_pth):
             os.makedirs(samples_labels_pickle_pth)
-        affine_mano: AffineMANO = AffineMANO(for_contactpose=True)  # type: ignore
+        affine_mano: AffineMANO | None = None
+
+        def _affine_mano() -> AffineMANO:
+            nonlocal affine_mano
+            if affine_mano is None:
+                # MANO assets are license-gated and only needed to (re)compute CHOIR fields or
+                # visualize; loading cached samples requires nothing.
+                affine_mano = AffineMANO(for_contactpose=True)
+            return affine_mano
 
         n_augs = self._n_augs if self._augment else 0
 
@@ -561,10 +569,10 @@ class ContactPoseDataset(BaseDataset):
                         )
                         gt_trans -= obj_center.to(gt_trans.device, dtype=torch.float32)
                     # ================ Compute GT anchors and verts ==================
-                    gt_verts, gt_joints = affine_mano(
+                    gt_verts, gt_joints = _affine_mano()(
                         gt_theta, gt_beta, gt_trans, rot_6d=gt_rot_6d
                     )
-                    gt_anchors = affine_mano.get_anchors(gt_verts)
+                    gt_anchors = _affine_mano().get_anchors(gt_verts)
                     # ================== Rescaled Hand-Object Pair ==================
                     gt_scalar = get_scalar(gt_anchors, obj_ptcld, self._rescale)
 
@@ -607,7 +615,7 @@ class ContactPoseDataset(BaseDataset):
                         gt_verts[0].detach().cpu().numpy()
                     )
                     gt_hand_mesh.triangles = o3du.Vector3iVector(
-                        affine_mano.faces.detach().cpu().numpy()
+                        _affine_mano().faces.detach().cpu().numpy()
                     )
                     gt_hand_mesh.compute_vertex_normals()
                     normals = np.asarray(gt_hand_mesh.vertex_normals)
@@ -750,7 +758,7 @@ class ContactPoseDataset(BaseDataset):
                         theta += pose_noise
                         trans += trans_noise
 
-                        verts, joints = affine_mano(theta, beta, trans, rot_6d=rot_6d)
+                        verts, joints = _affine_mano()(theta, beta, trans, rot_6d=rot_6d)
 
                         mpjpe = torch.linalg.vector_norm(
                             joints.squeeze(0) - gt_joints.squeeze(0), dim=1, ord=2
@@ -764,7 +772,7 @@ class ContactPoseDataset(BaseDataset):
                         dataset_mpjpe.update(mpjpe.item())
                         dataset_root_aligned_mpjpe.update(root_aligned_mpjpe.item())
 
-                        anchors = affine_mano.get_anchors(verts)
+                        anchors = _affine_mano().get_anchors(verts)
                         scalar = get_scalar(anchors, obj_ptcld, self._rescale)
                         # I know it's bad to do CUDA stuff in the dataset if I want to use multiple
                         # workers, but bps_torch is forcing my hand here so I might as well help it.
@@ -832,10 +840,10 @@ class ContactPoseDataset(BaseDataset):
                                 obj_mesh,
                                 obj_ptcld,
                                 gt_rescaled_ref_pts.squeeze(0),
-                                affine_mano,
+                                _affine_mano(),
                                 use_deltas=self._use_deltas,
                             )
-                            faces = affine_mano.faces
+                            faces = _affine_mano().faces
                             gt_MANO_mesh = Trimesh(
                                 gt_verts.squeeze(0).cpu().numpy(), faces.cpu().numpy()
                             )
