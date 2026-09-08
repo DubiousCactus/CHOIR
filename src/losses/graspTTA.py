@@ -215,9 +215,13 @@ class GraspCVAELoss(torch.nn.Module):
             _, _, xidx_near, yidx_near = chd.ChamferDistance()(x, y)
         else:
             # otaheri's CUDA-only chamfer_distance is unavailable: pytorch3d exact nearest
-            # neighbors produce the same indices.
-            xidx_near = knn_points(x, y, K=1).idx.squeeze(-1)
-            yidx_near = knn_points(y, x, K=1).idx.squeeze(-1)
+            if x.is_cpu or x.is_cuda:
+                xidx_near = knn_points(x, y, K=1).idx.squeeze(-1)
+                yidx_near = knn_points(y, x, K=1).idx.squeeze(-1)
+            else:
+                # torch.cdist works on every device (e.g. MPS), unlike pytorch3d's knn kernels.
+                xidx_near = torch.cdist(x, y).argmin(dim=-1)
+                yidx_near = torch.cdist(y, x).argmin(dim=-1)
 
         xidx_near_expanded = xidx_near.view(N, P1, 1).expand(N, P1, D).to(torch.long)
         x_near = y.gather(1, xidx_near_expanded)

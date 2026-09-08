@@ -16,6 +16,7 @@ import numpy as np
 import open3d
 import torch
 from bps_torch.bps import bps_torch
+from pytorch3d.ops import knn_gather, knn_points
 from pytorch3d.structures import Pointclouds
 from pytorch3d.transforms import Transform3d, random_rotation
 from pytorch3d.transforms.rotation_conversions import (
@@ -25,9 +26,27 @@ from pytorch3d.transforms.rotation_conversions import (
 from scipy.spatial import cKDTree
 from trimesh import Trimesh
 
+try:
+    import chamfer_distance  # noqa: F401
+except ImportError:
+    # bps_torch imports the CUDA-only otaheri chamfer_distance package at module level. This
+    # shim provides the same nearest-neighbor indices through pytorch3d so BPS encoding works
+    # on platforms where that package cannot be built (e.g. macOS).
+    import bps_torch.bps as _bps_module
+    from types import SimpleNamespace
+
+    class _KNNChamferDistance:
+        def __call__(self, x, y):
+            x2y = knn_points(x, y, K=1)
+            y2x = knn_points(y, x, K=1)
+            x_near = knn_gather(y, x2y.idx).squeeze(2)
+            y_near = knn_gather(x, y2x.idx).squeeze(2)
+            return x_near, y_near, x2y.idx.squeeze(2), y2x.idx.squeeze(2)
+
+    _bps_module.chd = SimpleNamespace(ChamferDistance=_KNNChamferDistance)
+
 from globals import FLAT_LOWER_INDICES
 from utils import to_cuda
-
 
 def transform_verts(
     verts: torch.Tensor, rot6d: torch.Tensor, t: torch.Tensor, apply_inverse_rot: bool
