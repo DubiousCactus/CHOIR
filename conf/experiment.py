@@ -443,6 +443,10 @@ tester_store(
     name="ddpm_baseline",
 )
 tester_store(
+    pbuilds(GraspTTATester, populate_full_signature=True),
+    name="grasp_tta",
+)
+tester_store(
     pbuilds(GraspCVAETester, populate_full_signature=True),
     name="grasp_tta_cvae",
 )
