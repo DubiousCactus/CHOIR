@@ -13,12 +13,12 @@ import pyvista as pv
 import torch
 from trimesh import Trimesh
 
-from src.multiview_tester import MultiViewTester
+from src.base_tester import BaseTester
 from utils import to_cuda, to_cuda_
 from utils.dataset import fetch_gaussian_params_from_CHOIR
 
 
-class MultiViewDDPMBaselineTester(MultiViewTester):
+class DDPMBaselineTester(BaseTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)

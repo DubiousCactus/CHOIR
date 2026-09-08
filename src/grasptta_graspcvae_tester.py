@@ -11,11 +11,11 @@ from typing import Dict, Optional
 import torch
 
 from model.affine_mano import AffineMANO
-from src.multiview_tester import MultiViewTester
+from src.base_tester import BaseTester
 from utils import to_cuda_
 
 
-class GraspCVAETester(MultiViewTester):
+class GraspCVAETester(BaseTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._data_loader.dataset.set_observations_number(1)

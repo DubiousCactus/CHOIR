@@ -16,12 +16,12 @@ import trimesh
 from pytorch3d.transforms import Transform3d, random_rotations
 
 from model.affine_mano import AffineMANO
-from src.multiview_tester import MultiViewTester
+from src.base_tester import BaseTester
 from utils import to_cuda, to_cuda_
 from utils.visualization import visualize_MANO
 
 
-class GraspTTATester(MultiViewTester):
+class GraspTTATester(BaseTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._data_loader.dataset.set_observations_number(1)

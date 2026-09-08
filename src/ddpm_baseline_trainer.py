@@ -10,13 +10,13 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 
-from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
+from src.ddpm_trainer import DDPMTrainer
 from utils import to_cuda
 from utils.dataset import fetch_gaussian_params_from_CHOIR
 from utils.visualization import visualize_model_predictions_with_multiple_views
 
 
-class MultiViewDDPMBaselineTrainer(MultiViewDDPMTrainer):
+class DDPMBaselineTrainer(DDPMTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._train_loader.dataset.set_eval_mode(True)

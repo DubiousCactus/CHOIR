@@ -14,10 +14,10 @@ from typing import Dict, Optional
 
 import torch
 
-from src.multiview_tester import MultiViewTester
+from src.base_tester import BaseTester
 
 
-class SeqDDPMTester(MultiViewTester):
+class SeqDDPMTester(BaseTester):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conditional = kwargs.get("conditional", False)
