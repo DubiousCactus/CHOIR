@@ -66,6 +66,7 @@ class TOCHInference(torch.nn.Module):
         model_path: Optional[str] = None,
         latent_size: int = 64,
         num_init: int = 1,
+        scale_center_path: Optional[str] = None,
     ):
         super().__init__()
         self.coarse_lr = 0.1
@@ -98,15 +99,16 @@ class TOCHInference(torch.nn.Module):
             self.mano = pkl.load(f, encoding="latin-1")
             mano_mesh = Mesh(self.mano["v_template"], self.mano["f"])
             J_regressor = torch.tensor(self.mano["J_regressor"].todense()).float()
-        # Loaded from the data/grab/scale_center.pkl file of the repo:
-        # scale, center = 5.180721556271635, np.array(
-        #    [-0.09076019, -0.02022504, -0.05842724]
-        # )
-        # mano_mesh.v = mano_mesh.v * scale + center
-        with open("/home/moralest/toch/data/grab/scale_center.pkl", "rb") as f:
-            scale, center = pkl.load(f)
-            mano_mesh.v = mano_mesh.v * scale + center
-            self.mano_mesh = seal(mano_mesh)
+        # The MANO template used by TOCH is rescaled with constants from TOCH's
+        # data/grab/scale_center.pkl (scale, center):
+        if scale_center_path is not None:
+            with open(scale_center_path, "rb") as f:
+                scale, center = pkl.load(f)
+        else:
+            scale = 5.180721556271635
+            center = np.array([-0.09076019, -0.02022504, -0.05842724])
+        mano_mesh.v = mano_mesh.v * scale + center
+        self.mano_mesh = seal(mano_mesh)
 
         object_paths = []
         for f in os.listdir(processed_data_path):

@@ -294,6 +294,7 @@ model_store(
         mano_models_path=MISSING,
         latent_size=64,
         num_init=10,
+        scale_center_path=None,
     ),
     name="toch",
 )
