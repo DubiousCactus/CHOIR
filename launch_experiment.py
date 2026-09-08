@@ -24,7 +24,6 @@ import conf.experiment  # Must import the config to add all components to the st
 import wandb
 from conf import project as project_conf
 from dataset.toch_loaders import ContactPoseDataset_Eval
-from model.aggregate_ved import Aggregate_VED
 from model.diffusion_model import BPSDiffusionModel, ContactsBPSDiffusionModel
 from model.TOCH.toch_wrapper import TOCHInference
 from src.base_trainer import BaseTrainer
@@ -70,19 +69,7 @@ def launch_experiment(
     )
 
     "============ Partials instantiation ============"
-    if model.func is Aggregate_VED:
-        model_inst = model(
-            bps_dim=just(dataset).bps_dim,
-            remapped_bps_distances=just(
-                dataset
-            ).remap_bps_distances,  # Whether to use sigmoid in last layer
-            predict_anchor_orientation=just(training_loss).predict_anchor_orientation
-            or just(training_loss).predict_anchor_position,
-            predict_mano=just(training_loss).predict_mano,
-            # predict_deltas=just(training_loss).temporal,
-            frame_to_predict="last" if just(training_loss).temporal else "average",
-        )  # Use just() to get the config out of the Zen-Partial
-    elif model.func in [BPSDiffusionModel, ContactsBPSDiffusionModel]:
+    if model.func in [BPSDiffusionModel, ContactsBPSDiffusionModel]:
         model_inst = model(bps_dim=just(dataset).bps_dim)
     elif model.func is TOCHInference:
         model_inst = model(processed_data_path=just(dataset).processed_root)

@@ -28,7 +28,7 @@ from trimesh import Trimesh
 
 from conf import project as project_conf
 from model.affine_mano import AffineMANO
-from src.multiview_trainer import MultiViewTrainer
+from src.base_trainer import BaseTrainer
 from utils import colorize, to_cuda, to_cuda_
 from utils.anim import ScenePicAnim
 from utils.dataset import lower_tril_cholesky_to_covmat
@@ -52,7 +52,7 @@ from utils.visualization import (
 )
 
 
-class MultiViewTester(MultiViewTrainer):
+class MultiViewTester(BaseTrainer):
     def __init__(
         self,
         run_name: str,

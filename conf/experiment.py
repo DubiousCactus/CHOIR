@@ -33,8 +33,6 @@ from dataset.grab import GRABDataset
 from dataset.oakink import OakInkDataset
 from dataset.toch_loaders import ContactPoseDataset_Eval
 from launch_experiment import launch_experiment
-from model.aggregate_ved import Aggregate_VED
-from model.baseline import BaselineModel
 from model.diffusion_model import (
     BPSDiffusionModel,
     ContactsBPSDiffusionModel,
@@ -61,7 +59,6 @@ from src.multiview_ddpm_baseline_trainer import MultiViewDDPMBaselineTrainer
 from src.multiview_ddpm_tester import MultiViewDDPMTester
 from src.multiview_ddpm_trainer import MultiViewDDPMTrainer
 from src.multiview_tester import MultiViewTester
-from src.multiview_trainer import MultiViewTrainer
 from src.seq_ddpm_tester import SeqDDPMTester
 from src.toch_tester import TOCHTester
 
@@ -196,51 +193,6 @@ model_store = store(group="model")
 # Not that encoder_input_dim depend on dataset.img_dim, so we need to use a partial to set them in
 # the launch_experiment function.
 
-
-@dataclass
-class BaselineModelConf:
-    bps_dim: int
-    encoder_layer_dims: Tuple[int] = (2048, 1024, 512, 256)
-    decoder_layer_dims: Tuple[int] = (256, 512, 1024)
-    latent_dim: int = 128
-    predict_anchor_orientation: bool = MISSING
-    predict_mano: bool = MISSING
-    share_decoder_for_all_tasks: bool = True
-
-
-model_store(
-    pbuilds(
-        BaselineModel,
-        builds_bases=(BaselineModelConf,),
-        bps_dim=MISSING,
-    ),
-    name="baseline",
-)
-
-model_store(
-    pbuilds(
-        Aggregate_VED,
-        builds_bases=(BaselineModelConf,),
-        bps_dim=MISSING,
-        remapped_bps_distances=MISSING,  # Sigmoid if so
-        batch_norm=True,
-        decoder_use_obj=False,
-        skip_connections=True,
-        residual_connections=True,
-        encoder_dropout=False,
-        decoder_dropout=False,
-        predict_deltas=False,
-        frame_to_predict=MISSING,
-        encoder_layer_dims=(512, 512, 512),
-        decoder_layer_dims=(1024, 1024, 1024),
-        choir_encoder_dims=(2048, 2048, 2048, 2048),
-        choir_embedding_dim=256,
-        aggregator="mean",
-        agg_heads=8,
-        agg_kq_dim=1024,
-    ),
-    name="agg_ved",
-)
 
 
 model_store(
@@ -497,7 +449,6 @@ class RunConfig:
     viz_num_samples: int = 5
     load_from: Optional[str] = None
     training_mode: bool = True
-    fine_tune: bool = False
     save_predictions: bool = False
     max_observations: int = 1  # For testing
     # As ideas changed and I had to try many things quickly, I became increasingly lazy and this
@@ -524,7 +475,6 @@ run_store(RunConfig, name="default")
 
 trainer_store = store(group="trainer")
 trainer_store(pbuilds(BaseTrainer, populate_full_signature=True), name="base")
-trainer_store(pbuilds(MultiViewTrainer, populate_full_signature=True), name="multiview")
 trainer_store(pbuilds(DDPMTrainer, populate_full_signature=True), name="ddpm")
 trainer_store(
     pbuilds(MultiViewDDPMTrainer, populate_full_signature=True), name="ddpm_multiview"
@@ -544,7 +494,6 @@ trainer_store(
 
 tester_store = store(group="tester")
 tester_store(pbuilds(BaseTester, populate_full_signature=True), name="base")
-tester_store(pbuilds(MultiViewTester, populate_full_signature=True), name="multiview")
 tester_store(pbuilds(DDPMTester, populate_full_signature=True), name="ddpm")
 tester_store(
     pbuilds(MultiViewDDPMTester, populate_full_signature=True), name="ddpm_multiview"
@@ -579,7 +528,7 @@ Experiment = builds(
         {"tester": "base"},
         {"dataset": "contactpose"},
         {"data_loader": "default"},
-        {"model": "baseline"},
+        {"model": "contact_bps_ddpm"},
         {"optimizer": "adam"},
         {"scheduler": "step"},
         {"run": "default"},
@@ -1275,111 +1224,6 @@ experiment_store(
         bases=(Experiment,),
     ),
     name="cddpm",
-)
-
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "agg_ved"},
-            {"override /trainer": "multiview"},
-            {"override /tester": "multiview"},
-        ],
-        dataset=dict(perturbation_level=2),
-        training_loss=dict(multi_view=True),
-        data_loader=dict(batch_size=32),
-        model=dict(latent_dim=128),
-        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
-        # decoder_layer_dims=(128, 256, 512, 1024)),
-        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
-        bases=(Experiment,),
-    ),
-    name="multiview",
-)
-
-
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "agg_ved"},
-            {"override /trainer": "multiview"},
-            {"override /tester": "multiview"},
-        ],
-        dataset=dict(
-            perturbation_level=2,
-            max_views_per_grasp=4,
-            use_contactopt_splits=True,
-            augment=False,
-        ),
-        training_loss=dict(multi_view=True),
-        data_loader=dict(batch_size=32),
-        model=dict(latent_dim=128),
-        # model=dict(latent_dim=16, encoder_layer_dims=(4096, 2048, 1024, 512, 256),
-        # decoder_layer_dims=(128, 256, 512, 1024)),
-        # model=dict(encoder_layer_dims=(1024, 512, 256), decoder_layer_dims=(256, 512),
-        bases=(Experiment,),
-    ),
-    name="multiview_contactopt_replica",
-)
-
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "agg_ved"},
-            {"override /trainer": "multiview"},
-            {"override /tester": "multiview"},
-        ],
-        dataset=dict(
-            perturbation_level=2,
-            max_views_per_grasp=4,
-            use_contactopt_splits=False,
-            use_improved_contactopt_splits=True,
-            augment=True,
-            n_augs=20,
-        ),
-        training_loss=dict(multi_view=True, kl_w=1e-11, use_kl_scheduler=True),
-        data_loader=dict(batch_size=64, num_workers=4, prefetch_factor=2),
-        model=dict(
-            latent_dim=128,
-            encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
-            decoder_layer_dims=(1024, 1024, 1024),
-            residual_connections=True,
-        ),
-        bases=(Experiment,),
-    ),
-    name="multiview_contactopt",
-)
-
-
-experiment_store(
-    make_config(
-        hydra_defaults=[
-            "_self_",
-            {"override /model": "agg_ved"},
-            {"override /trainer": "multiview"},
-            {"override /tester": "multiview"},
-            {"override /dataset": "grab"},
-        ],
-        dataset=dict(
-            perturbation_level=1,
-            min_views_per_grasp=2,
-            max_views_per_grasp=15,
-            use_affine_mano=True,
-            static_grasps_only=False,
-        ),
-        training_loss=dict(multi_view=True, temporal=True),
-        data_loader=dict(batch_size=32),  # , n_batches=100),
-        model=dict(
-            latent_dim=128,
-            # encoder_layer_dims=(1024, 1024, 1024, 1024, 1024),
-            # decoder_layer_dims=(2048, 2048, 2048),
-            aggregator="attention_pytorch",
-        ),
-        bases=(Experiment,),
-    ),
-    name="multiview_grab",
 )
 
 
